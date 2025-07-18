@@ -96,7 +96,7 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --all --check
-  
+
   # Check crates correctly propagate features
   feature-propagation:
     runs-on: ubuntu-latest
