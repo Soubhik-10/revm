@@ -1,20 +1,31 @@
 //! Account and storage state.
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(not(feature = "std"), no_std)]
+extern crate alloc;
 
 mod account_info;
 mod types;
 pub use bytecode;
 
 pub use account_info::AccountInfo;
-pub use bytecode::Bytecode;
-pub use primitives;
-pub use types::{EvmState, EvmStorage, TransientStorage};
-
+use alloc::collections::{BTreeMap, BTreeSet};
 use bitflags::bitflags;
+pub use bytecode::Bytecode;
 use core::hash::Hash;
+pub use primitives;
 use primitives::hardfork::SpecId;
 use primitives::{HashMap, StorageKey, StorageValue};
+pub use types::{EvmState, EvmStorage, TransientStorage};
+
+/// `StorageAccess` keeps a record of storage_reads and storage_writes as per Eip-7928
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct StorageAccess {
+    /// tx_index → read_keys
+    pub reads: BTreeMap<u64, BTreeSet<StorageKey>>,
+    /// tx_index → key → (pre, post)
+    pub writes: BTreeMap<u64, BTreeMap<StorageKey, (StorageValue, StorageValue)>>,
+}
 
 /// Account type used inside Journal to track changed to state.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -28,6 +39,8 @@ pub struct Account {
     pub storage: EvmStorage,
     /// Account status flags
     pub status: AccountStatus,
+    /// Storage access information for this account.
+    pub storage_access: StorageAccess,
 }
 
 impl Account {
@@ -38,6 +51,7 @@ impl Account {
             storage: HashMap::default(),
             transaction_id,
             status: AccountStatus::LoadedAsNotExisting,
+            storage_access: StorageAccess::default(),
         }
     }
 
@@ -255,6 +269,7 @@ impl From<AccountInfo> for Account {
             storage: HashMap::default(),
             transaction_id: 0,
             status: AccountStatus::empty(),
+            storage_access: StorageAccess::default(),
         }
     }
 }
