@@ -29,6 +29,10 @@
       },
       "status": "Touched",
       "storage": {},
+      "storage_access": {
+        "reads": {},
+        "writes": {}
+      },
       "transaction_id": 0
     },
     "0xffffffffffffffffffffffffffffffffffffffff": {
@@ -56,6 +60,10 @@
       },
       "status": "Cold",
       "storage": {},
+      "storage_access": {
+        "reads": {},
+        "writes": {}
+      },
       "transaction_id": 0
     }
   }

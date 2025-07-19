@@ -45,6 +45,10 @@
       },
       "status": "Touched | LoadedAsNotExisting",
       "storage": {},
+      "storage_access": {
+        "reads": {},
+        "writes": {}
+      },
       "transaction_id": 1
     },
     "0x000000000000000000000000000000000000ffff": {
@@ -70,6 +74,10 @@
       },
       "status": "Touched | LoadedAsNotExisting",
       "storage": {},
+      "storage_access": {
+        "reads": {},
+        "writes": {}
+      },
       "transaction_id": 0
     },
     "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
@@ -95,6 +103,10 @@
       },
       "status": "Touched",
       "storage": {},
+      "storage_access": {
+        "reads": {},
+        "writes": {}
+      },
       "transaction_id": 1
     },
     "0xffffffffffffffffffffffffffffffffffffffff": {
@@ -120,6 +132,10 @@
       },
       "status": "SelfDestructed | Touched",
       "storage": {},
+      "storage_access": {
+        "reads": {},
+        "writes": {}
+      },
       "transaction_id": 1
     }
   }
