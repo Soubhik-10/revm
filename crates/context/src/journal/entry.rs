@@ -382,6 +382,18 @@ impl JournalEntryTr for JournalEntry {
                     .get_mut(&key)
                     .unwrap()
                     .present_value = had_value;
+
+                if let Some(account) = state.get_mut(&address) {
+                    let tx_index = account.transaction_id as u64;
+
+                    if let Some(writes_for_tx) = account.storage_access.writes.get_mut(&tx_index) {
+                        writes_for_tx.remove(&key);
+
+                        if writes_for_tx.is_empty() {
+                            account.storage_access.writes.remove(&tx_index);
+                        }
+                    }
+                }
             }
             JournalEntry::TransientStorageChange {
                 address,
