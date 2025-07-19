@@ -300,10 +300,7 @@ mod test {
         let state = result.state;
         // As per the EIP it should be stored in writes since sstore first changes 0->66(writes) then  change 66->0(writes).
         let expected_storage_access = StorageAccess {
-            reads: {
-                let reads = BTreeMap::new();
-                reads
-            },
+            reads: { BTreeMap::new() },
             writes: {
                 let mut writes = BTreeMap::new();
                 writes.insert(
@@ -375,14 +372,8 @@ mod test {
 
         // As per the EIP it should not be stored.
         let expected_storage_access = StorageAccess {
-            reads: {
-                let reads = BTreeMap::new();
-                reads
-            },
-            writes: {
-                let writes = BTreeMap::new();
-                writes
-            },
+            reads: { BTreeMap::new() },
+            writes: { BTreeMap::new() },
         };
         let result = evm
             .transact(
@@ -447,14 +438,8 @@ mod test {
         let storage_access = &state.get(&signer.address()).unwrap().storage_access;
         // As per the EIP it should not be stored.
         let expected_storage_access = StorageAccess {
-            reads: {
-                let reads = BTreeMap::new();
-                reads
-            },
-            writes: {
-                let writes = BTreeMap::new();
-                writes
-            },
+            reads: { BTreeMap::new() },
+            writes: { BTreeMap::new() },
         };
         let auth_acc = state.get(&signer.address()).unwrap();
         assert_eq!(auth_acc.info.code, Some(Bytecode::new_eip7702(FFADDRESS)));
