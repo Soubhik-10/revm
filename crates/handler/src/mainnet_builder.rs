@@ -73,10 +73,15 @@ impl MainContext for Context<BlockEnv, TxEnv, CfgEnv, EmptyDB, Journal<EmptyDB>,
 
 #[cfg(test)]
 mod test {
+    use std::collections::{BTreeMap, BTreeSet};
+
     use crate::ExecuteEvm;
     use crate::{MainBuilder, MainContext};
     use alloy_signer::{Either, SignerSync};
     use alloy_signer_local::PrivateKeySigner;
+    use bytecode::opcode::{
+        BALANCE, DUP1, DUP2, DUP3, EXTCODEHASH, EXTCODESIZE, PUSH2, PUSH20, SLOAD, STATICCALL, STOP,
+    };
     use bytecode::{
         opcode::{PUSH1, SSTORE},
         Bytecode,
@@ -86,6 +91,7 @@ mod test {
     use database::{BenchmarkDB, EEADDRESS, FFADDRESS};
     use primitives::{hardfork::SpecId, TxKind, U256};
     use primitives::{StorageKey, StorageValue};
+    use state::StorageAccess;
 
     #[test]
     fn sanity_eip7702_tx() {
@@ -130,5 +136,329 @@ mod test {
                 .present_value,
             StorageValue::from(1)
         );
+    }
+
+    #[test]
+    fn storage_access_sstore_write_read_same_slot() {
+        let signer = PrivateKeySigner::random();
+
+        let auth = Authorization {
+            chain_id: U256::ZERO,
+            nonce: 0,
+            address: FFADDRESS,
+        };
+        let signature = signer.sign_hash_sync(&auth.signature_hash()).unwrap();
+        let auth = auth.into_signed(signature);
+
+        //SSTORE 0x42 in 0x01 and SLOAD 0x01
+        let bytecode = Bytecode::new_legacy(
+            vec![PUSH1, 0x42, PUSH1, 0x01, SSTORE, PUSH1, 0x01, SLOAD, STOP].into(),
+        );
+
+        let ctx = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::PRAGUE)
+            .with_db(BenchmarkDB::new_bytecode(bytecode));
+
+        let mut evm = ctx.build_mainnet();
+
+        let result = evm
+            .transact(
+                TxEnv::builder()
+                    .gas_limit(100_000)
+                    .authorization_list(vec![Either::Left(auth)])
+                    .caller(EEADDRESS)
+                    .kind(TxKind::Call(signer.address()))
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+
+        let state = result.state;
+        // As per the EIP it should be stored in both writes and reads.
+        let expected_storage_access = StorageAccess {
+            reads: {
+                let mut reads = BTreeMap::new();
+                reads.insert(0u64, BTreeSet::from([U256::from(1)]));
+                reads
+            },
+            writes: {
+                let mut writes = BTreeMap::new();
+                writes.insert(
+                    0u64,
+                    BTreeMap::from([(U256::from(1), (U256::ZERO, U256::from(66)))]),
+                );
+                writes
+            },
+        };
+        let storage_access = &state.get(&signer.address()).unwrap().storage_access;
+        let auth_acc = state.get(&signer.address()).unwrap();
+        assert_eq!(auth_acc.info.code, Some(Bytecode::new_eip7702(FFADDRESS)));
+        assert_eq!(auth_acc.info.nonce, 1);
+        assert_eq!(*storage_access, expected_storage_access)
+    }
+
+    #[test]
+    fn storage_access_sstore_write_same_value() {
+        let signer = PrivateKeySigner::random();
+
+        let auth = Authorization {
+            chain_id: U256::ZERO,
+            nonce: 0,
+            address: FFADDRESS,
+        };
+        let signature = signer.sign_hash_sync(&auth.signature_hash()).unwrap();
+        let auth = auth.into_signed(signature);
+
+        //SSTORE 0x42 in 0x01 and change it again to 0x42
+        let bytecode = Bytecode::new_legacy(
+            vec![
+                PUSH1, 0x42, PUSH1, 0x01, SSTORE, PUSH1, 0x42, PUSH1, 0x01, SSTORE, STOP,
+            ]
+            .into(),
+        );
+
+        let ctx = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::PRAGUE)
+            .with_db(BenchmarkDB::new_bytecode(bytecode));
+
+        let mut evm = ctx.build_mainnet();
+
+        let result = evm
+            .transact(
+                TxEnv::builder()
+                    .gas_limit(100_000)
+                    .authorization_list(vec![Either::Left(auth)])
+                    .caller(EEADDRESS)
+                    .kind(TxKind::Call(signer.address()))
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+
+        let state = result.state;
+        // As per the EIP it should be stored in reads and writes since sstore first changes 0->66(writes) then try to change 66->66(reads).
+        let expected_storage_access = StorageAccess {
+            reads: {
+                let mut reads = BTreeMap::new();
+                reads.insert(0u64, BTreeSet::from([U256::from(1)]));
+                reads
+            },
+            writes: {
+                let mut writes = BTreeMap::new();
+                writes.insert(
+                    0u64,
+                    BTreeMap::from([(U256::from(1), (U256::ZERO, U256::from(66)))]),
+                );
+                writes
+            },
+        };
+        let storage_access = &state.get(&signer.address()).unwrap().storage_access;
+        let auth_acc = state.get(&signer.address()).unwrap();
+        assert_eq!(auth_acc.info.code, Some(Bytecode::new_eip7702(FFADDRESS)));
+        assert_eq!(auth_acc.info.nonce, 1);
+        assert_eq!(*storage_access, expected_storage_access)
+    }
+
+    #[test]
+    fn storage_access_sstore_with_zero() {
+        let signer = PrivateKeySigner::random();
+
+        let auth = Authorization {
+            chain_id: U256::ZERO,
+            nonce: 0,
+            address: FFADDRESS,
+        };
+        let signature = signer.sign_hash_sync(&auth.signature_hash()).unwrap();
+        let auth = auth.into_signed(signature);
+
+        //SSTORE 0x42 in 0x01 and change it  to 0x00
+        let bytecode = Bytecode::new_legacy(
+            vec![
+                PUSH1, 0x42, PUSH1, 0x01, SSTORE, PUSH1, 0x00, PUSH1, 0x01, SSTORE, STOP,
+            ]
+            .into(),
+        );
+
+        let ctx = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::PRAGUE)
+            .with_db(BenchmarkDB::new_bytecode(bytecode));
+
+        let mut evm = ctx.build_mainnet();
+
+        let result = evm
+            .transact(
+                TxEnv::builder()
+                    .gas_limit(100_000)
+                    .authorization_list(vec![Either::Left(auth)])
+                    .caller(EEADDRESS)
+                    .kind(TxKind::Call(signer.address()))
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+
+        let state = result.state;
+        // As per the EIP it should be stored in writes since sstore first changes 0->66(writes) then  change 66->0(writes).
+        let expected_storage_access = StorageAccess {
+            reads: {
+                let reads = BTreeMap::new();
+                reads
+            },
+            writes: {
+                let mut writes = BTreeMap::new();
+                writes.insert(
+                    0u64,
+                    BTreeMap::from([(U256::from(1), (U256::from(66), U256::ZERO))]),
+                );
+                writes
+            },
+        };
+        let storage_access = &state.get(&signer.address()).unwrap().storage_access;
+        let auth_acc = state.get(&signer.address()).unwrap();
+        assert_eq!(auth_acc.info.code, Some(Bytecode::new_eip7702(FFADDRESS)));
+        assert_eq!(auth_acc.info.nonce, 1);
+        assert_eq!(*storage_access, expected_storage_access)
+    }
+
+    #[test]
+    fn storage_access_unchanged() {
+        let signer = PrivateKeySigner::random();
+
+        let auth = Authorization {
+            chain_id: U256::ZERO,
+            nonce: 0,
+            address: FFADDRESS,
+        };
+        let signature = signer.sign_hash_sync(&auth.signature_hash()).unwrap();
+        let auth = auth.into_signed(signature);
+
+        // PUSH20 ADDRESS AND EXTCODEHASH,EXTCODESIZE,BALANCE
+        let bytecode = Bytecode::new_legacy(
+            vec![
+                PUSH20,
+                0xFF,
+                0xFF,
+                0xFF,
+                0xFF,
+                0xFF,
+                0xFF,
+                0xFF,
+                0xFF,
+                0xFF,
+                0xFF,
+                0xFF,
+                0xFF,
+                0xFF,
+                0xFF,
+                0xFF,
+                0xFF,
+                0xFF,
+                0xFF,
+                0xFF,
+                0xFF,
+                DUP1,
+                EXTCODEHASH,
+                DUP2,
+                EXTCODESIZE,
+                DUP3,
+                BALANCE,
+                STOP,
+            ]
+            .into(),
+        );
+
+        let ctx = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::PRAGUE)
+            .with_db(BenchmarkDB::new_bytecode(bytecode));
+
+        let mut evm = ctx.build_mainnet();
+
+        // As per the EIP it should not be stored.
+        let expected_storage_access = StorageAccess {
+            reads: {
+                let reads = BTreeMap::new();
+                reads
+            },
+            writes: {
+                let writes = BTreeMap::new();
+                writes
+            },
+        };
+        let result = evm
+            .transact(
+                TxEnv::builder()
+                    .gas_limit(100_000)
+                    .authorization_list(vec![Either::Left(auth)])
+                    .caller(EEADDRESS)
+                    .kind(TxKind::Call(signer.address()))
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+
+        let state = result.state;
+        let auth_acc = state.get(&signer.address()).unwrap();
+        let storage_access = &state.get(&signer.address()).unwrap().storage_access;
+        assert_eq!(auth_acc.info.code, Some(Bytecode::new_eip7702(FFADDRESS)));
+        assert_eq!(auth_acc.info.nonce, 1);
+        assert_eq!(*storage_access, expected_storage_access)
+    }
+
+    #[test]
+    fn storage_access_with_staticcall() {
+        let signer = PrivateKeySigner::random();
+
+        let auth = Authorization {
+            chain_id: U256::ZERO,
+            nonce: 0,
+            address: FFADDRESS,
+        };
+        let signature = signer.sign_hash_sync(&auth.signature_hash()).unwrap();
+        let auth = auth.into_signed(signature);
+
+        //Passes STATICCALL
+        let bytecode = Bytecode::new_legacy(
+            vec![
+                PUSH1, 0x20, PUSH1, 0x00, PUSH1, 0x20, PUSH1, 0x00, PUSH20, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x12, 0x34, PUSH2, 0xFF, 0xFF, STATICCALL, STOP,
+            ]
+            .into(),
+        );
+        let ctx = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::PRAGUE)
+            .with_db(BenchmarkDB::new_bytecode(bytecode));
+
+        let mut evm = ctx.build_mainnet();
+
+        let result = evm
+            .transact(
+                TxEnv::builder()
+                    .gas_limit(100_000)
+                    .authorization_list(vec![Either::Left(auth)])
+                    .caller(EEADDRESS)
+                    .kind(TxKind::Call(signer.address()))
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+
+        let state = result.state;
+        let storage_access = &state.get(&signer.address()).unwrap().storage_access;
+        // As per the EIP it should not be stored.
+        let expected_storage_access = StorageAccess {
+            reads: {
+                let reads = BTreeMap::new();
+                reads
+            },
+            writes: {
+                let writes = BTreeMap::new();
+                writes
+            },
+        };
+        let auth_acc = state.get(&signer.address()).unwrap();
+        assert_eq!(auth_acc.info.code, Some(Bytecode::new_eip7702(FFADDRESS)));
+        assert_eq!(auth_acc.info.nonce, 1);
+        assert_eq!(*storage_access, expected_storage_access);
     }
 }
