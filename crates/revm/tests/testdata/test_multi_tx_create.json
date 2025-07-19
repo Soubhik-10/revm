@@ -62,7 +62,11 @@
       },
       "transaction_id": 2,
       "storage": {},
-      "status": "Touched | LoadedAsNotExisting"
+      "status": "Touched | LoadedAsNotExisting",
+      "storage_access":{
+                "reads":{},
+              "writes":{}
+          }
     },
     "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
       "info": {
@@ -87,7 +91,11 @@
       },
       "transaction_id": 2,
       "storage": {},
-      "status": "Touched"
+      "status": "Touched",
+      "storage_access":{
+                "reads":{},
+              "writes":{}
+          }
     },
     "0x000000000000000000000000000000000000ffff": {
       "info": {
@@ -112,7 +120,11 @@
       },
       "transaction_id": 1,
       "storage": {},
-      "status": "Touched | LoadedAsNotExisting"
+      "status": "Touched | LoadedAsNotExisting",
+      "storage_access":{
+                "reads":{},
+              "writes":{}
+          }
     },
     "0x84bcbaa99ae6d1f7f70b37d5f6c27c9631eeb2f2": {
       "info": {
@@ -139,7 +151,11 @@
       },
       "transaction_id": 2,
       "storage": {},
-      "status": "Created | CreatedLocal | SelfDestructed | Touched | LoadedAsNotExisting"
+      "status": "Created | CreatedLocal | SelfDestructed | Touched | LoadedAsNotExisting",
+      "storage_access":{
+                "reads":{},
+              "writes":{}
+          }
     }
   }
 ]

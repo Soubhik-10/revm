@@ -34,7 +34,11 @@
       },
       "transaction_id": 0,
       "storage": {},
-      "status": "Touched | LoadedAsNotExisting"
+      "status": "Touched | LoadedAsNotExisting",
+      "storage_access":{
+                "reads":{},
+              "writes":{}
+          }
     }
   }
 }
