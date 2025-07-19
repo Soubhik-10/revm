@@ -713,6 +713,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
                 self.transaction_id,
                 address,
                 storage_key,
+                false,
             )?;
         }
         Ok(load)
@@ -729,6 +730,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         db: &mut DB,
         address: Address,
         key: StorageKey,
+        from_sstore: bool,
     ) -> Result<StateLoad<StorageValue>, DB::Error> {
         // assume acc is warm
         let account = self.state.get_mut(&address).unwrap();
@@ -740,6 +742,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             self.transaction_id,
             address,
             key,
+            from_sstore,
         )
     }
 
@@ -757,7 +760,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         new: StorageValue,
     ) -> Result<StateLoad<SStoreResult>, DB::Error> {
         // assume that acc exists and load the slot.
-        let present = self.sload(db, address, key)?;
+        let present = self.sload(db, address, key, true)?;
 
         // get original_value and present_value first, then reborrow mutably later
         let (original_value, present_value, is_cold) = {
@@ -766,10 +769,15 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
             // new value is same as present, we don't need to do anything
             if slot.present_value == new {
+                let original_value = slot.original_value();
+                let present_value = slot.present_value;
+                let acc = self.state.get_mut(&address).unwrap();
+                set_storage_access_reads(acc, self.transaction_id, key);
+
                 return Ok(StateLoad::new(
                     SStoreResult {
-                        original_value: slot.original_value(),
-                        present_value: slot.present_value,
+                        original_value,
+                        present_value,
                         new_value: new,
                     },
                     present.is_cold,
@@ -862,6 +870,7 @@ pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
     transaction_id: usize,
     address: Address,
     key: StorageKey,
+    from_sstore: bool,
 ) -> Result<StateLoad<StorageValue>, DB::Error> {
     let is_newly_created = account.is_created();
     let (value, is_cold) = match account.storage.entry(key) {
@@ -890,7 +899,9 @@ pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
     }
 
     // Set `StorageChange` for reads here
-    set_storage_access_reads(account, transaction_id, key);
+    if !from_sstore {
+        set_storage_access_reads(account, transaction_id, key);
+    }
 
     Ok(StateLoad::new(value, is_cold))
 }
@@ -922,13 +933,6 @@ fn set_storage_change_write(
         .entry(tx_index)
         .or_default()
         .insert(key, (pre_value, post_value));
-    // Slots both read and written (with changed values) appear only in storage_changes.
-    if let Some(reads) = account.storage_access.reads.get_mut(&tx_index) {
-        reads.remove(&key);
-        if reads.is_empty() {
-            account.storage_access.reads.remove(&tx_index);
-        }
-    }
 }
 
 fn set_storage_access_reads(account: &mut Account, transaction_id: usize, key: StorageKey) {
