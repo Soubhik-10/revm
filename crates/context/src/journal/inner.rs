@@ -792,22 +792,19 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             (slot.original_value(), slot.present_value, present.is_cold)
         };
 
-        #[cfg(feature = "glamsterdam")]
-        {
-            let acc = self.state.get_mut(&address).unwrap();
+        let acc = self.state.get_mut(&address).unwrap();
 
-            // if there is no original value in dirty return present value, that is our original.
-            let slot = acc.storage.get_mut(&key).unwrap();
-        }
+        // if there is no original value in dirty return present value, that is our original.
+        let slot = acc.storage.get_mut(&key).unwrap();
 
         self.journal
             .push(ENTRY::storage_changed(address, key, present_value));
+
+        // insert value into present state.
+        slot.present_value = new;
         #[cfg(feature = "glamsterdam")]
-        {
-            // insert value into present state.
-            slot.present_value = new;
-            set_storage_change_write(acc, self.transaction_id, key, present_value, new);
-        }
+        set_storage_change_write(acc, self.transaction_id, key, present_value, new);
+
         Ok(StateLoad::new(
             SStoreResult {
                 original_value,
