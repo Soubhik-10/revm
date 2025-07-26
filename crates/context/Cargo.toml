@@ -64,6 +64,7 @@ dev = [
 	"optional_no_base_fee",
 	"optional_priority_fee_check",
 ]
+glamsterdam = []
 memory_limit = []
 optional_balance_check = []
 optional_block_gas_limit = []
