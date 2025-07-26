@@ -46,6 +46,7 @@ alloy-signer-local.workspace = true
 
 [features]
 default = ["std"]
+glamsterdam = []
 std = [
 	"serde?/std",
 	"alloy-eip7702/std",
