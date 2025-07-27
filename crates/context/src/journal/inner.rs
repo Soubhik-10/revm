@@ -772,12 +772,9 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
                 let original_value = slot.original_value();
                 let present_value = slot.present_value;
 
-                #[cfg(feature = "glamsterdam")]
-                {
-                    let acc = self.state.get_mut(&address).unwrap();
+                let acc = self.state.get_mut(&address).unwrap();
 
-                    set_storage_access_reads(acc, self.transaction_id, key);
-                }
+                set_storage_access_reads(acc, self.transaction_id, key);
 
                 return Ok(StateLoad::new(
                     SStoreResult {
@@ -802,7 +799,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
         // insert value into present state.
         slot.present_value = new;
-        #[cfg(feature = "glamsterdam")]
+
         set_storage_change_write(acc, self.transaction_id, key, present_value, new);
 
         Ok(StateLoad::new(
@@ -905,13 +902,12 @@ pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
         // add it to journal as cold loaded.
         journal.push(ENTRY::storage_warmed(address, key));
     }
-    #[cfg(feature = "glamsterdam")]
-    {
-        // Set `StorageChange` for reads here
-        if !from_sstore {
-            set_storage_access_reads(account, transaction_id, key);
-        }
+
+    // Set `StorageChange` for reads here
+    if !from_sstore {
+        set_storage_access_reads(account, transaction_id, key);
     }
+
     Ok(StateLoad::new(value, is_cold))
 }
 
@@ -928,7 +924,6 @@ fn reset_preloaded_addresses(
     warm_preloaded_addresses.clone_from(precompiles);
 }
 
-#[cfg(feature = "glamsterdam")]
 fn set_storage_change_write(
     account: &mut Account,
     transaction_id: usize,
@@ -945,7 +940,6 @@ fn set_storage_change_write(
         .insert(key, (pre_value, post_value));
 }
 
-#[cfg(feature = "glamsterdam")]
 fn set_storage_access_reads(account: &mut Account, transaction_id: usize, key: StorageKey) {
     let tx_index = transaction_id as u64;
     account

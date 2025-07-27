@@ -73,14 +73,13 @@ impl MainContext for Context<BlockEnv, TxEnv, CfgEnv, EmptyDB, Journal<EmptyDB>,
 
 #[cfg(test)]
 mod test {
-    #[cfg(feature = "glamsterdam")]
+
     use std::collections::{BTreeMap, BTreeSet};
 
     use crate::ExecuteEvm;
     use crate::{MainBuilder, MainContext};
     use alloy_signer::{Either, SignerSync};
     use alloy_signer_local::PrivateKeySigner;
-    #[cfg(feature = "glamsterdam")]
     use bytecode::opcode::{
         BALANCE, DUP1, DUP2, DUP3, EXTCODEHASH, EXTCODESIZE, PUSH2, PUSH20, REVERT, SLOAD,
         STATICCALL, STOP,
@@ -94,7 +93,6 @@ mod test {
     use database::{BenchmarkDB, EEADDRESS, FFADDRESS};
     use primitives::{hardfork::SpecId, TxKind, U256};
     use primitives::{StorageKey, StorageValue};
-    #[cfg(feature = "glamsterdam")]
     use state::StorageAccess;
 
     #[test]
@@ -142,7 +140,6 @@ mod test {
         );
     }
 
-    #[cfg(feature = "glamsterdam")]
     #[test]
     fn storage_access_sstore_write_read_same_slot() {
         let signer = PrivateKeySigner::random();
@@ -202,7 +199,6 @@ mod test {
         assert_eq!(*storage_access, expected_storage_access)
     }
 
-    #[cfg(feature = "glamsterdam")]
     #[test]
     fn storage_access_sstore_write_same_value() {
         let signer = PrivateKeySigner::random();
@@ -266,7 +262,6 @@ mod test {
     }
 
     #[test]
-    #[cfg(feature = "glamsterdam")]
     fn storage_access_sstore_with_zero() {
         let signer = PrivateKeySigner::random();
 
@@ -324,7 +319,6 @@ mod test {
         assert_eq!(*storage_access, expected_storage_access)
     }
 
-    #[cfg(feature = "glamsterdam")]
     #[test]
     fn storage_access_unchanged() {
         let signer = PrivateKeySigner::random();
@@ -403,7 +397,6 @@ mod test {
         assert_eq!(*storage_access, expected_storage_access)
     }
 
-    #[cfg(feature = "glamsterdam")]
     #[test]
     fn storage_access_with_staticcall() {
         let signer = PrivateKeySigner::random();
@@ -456,7 +449,6 @@ mod test {
         assert_eq!(*storage_access, expected_storage_access);
     }
 
-    #[cfg(feature = "glamsterdam")]
     #[test]
     fn storage_access_with_revert() {
         let signer = PrivateKeySigner::random();
