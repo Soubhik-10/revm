@@ -713,6 +713,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
                 self.transaction_id,
                 address,
                 storage_key,
+                #[cfg(feature = "glamsterdam")]
                 false,
             )?;
         }
@@ -730,7 +731,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         db: &mut DB,
         address: Address,
         key: StorageKey,
-        from_sstore: bool,
+        #[cfg(feature = "glamsterdam")] from_sstore: bool,
     ) -> Result<StateLoad<StorageValue>, DB::Error> {
         // assume acc is warm
         let account = self.state.get_mut(&address).unwrap();
@@ -742,6 +743,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             self.transaction_id,
             address,
             key,
+            #[cfg(feature = "glamsterdam")]
             from_sstore,
         )
     }
@@ -751,7 +753,9 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     /// And returns (original,present,new) slot value.
     ///
     /// **Note**: Account should already be present in our state.
+    /// This is for glamsterdam.
     #[inline]
+    #[cfg(feature = "glamsterdam")]
     pub fn sstore<DB: Database>(
         &mut self,
         db: &mut DB,
@@ -772,12 +776,9 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
                 let original_value = slot.original_value();
                 let present_value = slot.present_value;
 
-                #[cfg(feature = "glamsterdam")]
-                {
-                    let acc = self.state.get_mut(&address).unwrap();
+                let acc = self.state.get_mut(&address).unwrap();
 
-                    set_storage_access_reads(acc, self.transaction_id, key);
-                }
+                set_storage_access_reads(acc, self.transaction_id, key);
 
                 return Ok(StateLoad::new(
                     SStoreResult {
@@ -802,8 +803,68 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
         // insert value into present state.
         slot.present_value = new;
-        #[cfg(feature = "glamsterdam")]
         set_storage_change_write(acc, self.transaction_id, key, present_value, new);
+
+        Ok(StateLoad::new(
+            SStoreResult {
+                original_value,
+                present_value,
+                new_value: new,
+            },
+            is_cold,
+        ))
+    }
+
+    /// Stores storage slot.
+    ///
+    /// And returns (original,present,new) slot value.
+    ///
+    /// **Note**: Account should already be present in our state.
+    #[inline]
+    #[cfg(not(feature = "glamsterdam"))]
+    pub fn sstore<DB: Database>(
+        &mut self,
+        db: &mut DB,
+        address: Address,
+        key: StorageKey,
+        new: StorageValue,
+    ) -> Result<StateLoad<SStoreResult>, DB::Error> {
+        // assume that acc exists and load the slot.
+        let present = self.sload(db, address, key)?;
+
+        // get original_value and present_value first, then reborrow mutably later
+        let (original_value, present_value, is_cold) = {
+            let acc = self.state.get(&address).unwrap();
+            let slot = acc.storage.get(&key).unwrap();
+
+            // new value is same as present, we don't need to do anything
+            if slot.present_value == new {
+                let original_value = slot.original_value();
+                let present_value = slot.present_value;
+
+                return Ok(StateLoad::new(
+                    SStoreResult {
+                        original_value,
+                        present_value,
+                        new_value: new,
+                    },
+                    present.is_cold,
+                ));
+            }
+
+            (slot.original_value(), slot.present_value, present.is_cold)
+        };
+
+        let acc = self.state.get_mut(&address).unwrap();
+
+        // if there is no original value in dirty return present value, that is our original.
+        let slot = acc.storage.get_mut(&key).unwrap();
+
+        self.journal
+            .push(ENTRY::storage_changed(address, key, present_value));
+
+        // insert value into present state.
+        slot.present_value = new;
 
         Ok(StateLoad::new(
             SStoreResult {
@@ -870,7 +931,9 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 }
 
 /// Loads storage slot with account.
+/// This is for glamsterdam.
 #[inline]
+#[cfg(feature = "glamsterdam")]
 pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
     account: &mut Account,
     db: &mut DB,
@@ -905,13 +968,53 @@ pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
         // add it to journal as cold loaded.
         journal.push(ENTRY::storage_warmed(address, key));
     }
-    #[cfg(feature = "glamsterdam")]
-    {
-        // Set `StorageChange` for reads here
-        if !from_sstore {
-            set_storage_access_reads(account, transaction_id, key);
-        }
+
+    // Set `StorageChange` for reads here
+    if !from_sstore {
+        set_storage_access_reads(account, transaction_id, key);
     }
+
+    Ok(StateLoad::new(value, is_cold))
+}
+
+/// Loads storage slot with account.
+/// This is not for glamsterdam.
+#[inline]
+#[cfg(not(feature = "glamsterdam"))]
+pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
+    account: &mut Account,
+    db: &mut DB,
+    journal: &mut Vec<ENTRY>,
+    transaction_id: usize,
+    address: Address,
+    key: StorageKey,
+) -> Result<StateLoad<StorageValue>, DB::Error> {
+    let is_newly_created = account.is_created();
+    let (value, is_cold) = match account.storage.entry(key) {
+        Entry::Occupied(occ) => {
+            let slot = occ.into_mut();
+            let is_cold = slot.mark_warm_with_transaction_id(transaction_id);
+            (slot.present_value, is_cold)
+        }
+        Entry::Vacant(vac) => {
+            // if storage was cleared, we don't need to ping db.
+            let value = if is_newly_created {
+                StorageValue::ZERO
+            } else {
+                db.storage(address, key)?
+            };
+
+            vac.insert(EvmStorageSlot::new(value, transaction_id));
+
+            (value, true)
+        }
+    };
+
+    if is_cold {
+        // add it to journal as cold loaded.
+        journal.push(ENTRY::storage_warmed(address, key));
+    }
+
     Ok(StateLoad::new(value, is_cold))
 }
 
