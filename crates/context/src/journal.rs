@@ -103,12 +103,23 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         &mut self.database
     }
 
+    #[cfg(not(feature = "glamsterdam"))]
     fn sload(
         &mut self,
         address: Address,
         key: StorageKey,
     ) -> Result<StateLoad<StorageValue>, <Self::Database as Database>::Error> {
-        self.inner.sload(&mut self.database, address, key, false)
+        self.inner.sload(&mut self.database, address, key)
+    }
+
+    #[cfg(feature = "glamsterdam")]
+    fn sload(
+        &mut self,
+        address: Address,
+        key: StorageKey,
+    ) -> Result<StateLoad<StorageValue>, <Self::Database as Database>::Error> {
+        self.inner
+            .sload_with_account(&mut self.database, address, key, false)
     }
 
     fn sstore(
