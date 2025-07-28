@@ -797,7 +797,6 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         key: StorageKey,
         new: StorageValue,
     ) -> Result<StateLoad<SStoreResult>, DB::Error> {
-        println!("hii glamsterdam");
         // assume that acc exists and load the slot.
         let present = self.sload(db, address, key, true)?;
 
@@ -865,7 +864,6 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         key: StorageKey,
         new: StorageValue,
     ) -> Result<StateLoad<SStoreResult>, DB::Error> {
-        println!("hii");
         // assume that acc exists and load the slot.
         let present = self.sload(db, address, key)?;
         let acc = self.state.get_mut(&address).unwrap();
