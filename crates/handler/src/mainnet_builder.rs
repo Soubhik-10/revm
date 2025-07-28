@@ -547,8 +547,8 @@ mod test {
             .unwrap_or_default()
             .balance;
 
-        println!("Sender Balance (before):   {sender_balance_before}");
-        println!("Recipient Balance (before): {recipient_balance_before}" );
+        println!("Sender Balance (before):   {}", sender_balance_before);
+        println!("Recipient Balance (before): {}", recipient_balance_before);
 
         let result = evm
             .transact(
@@ -573,12 +573,12 @@ mod test {
             .unwrap_or_default()
             .balance;
 
-        println!("Sender Balance (after):   {sender_balance_after}");
-        println!("Recipient Balance (after): {recipient_balance_after}");
+        println!("Sender Balance (after):   {}", sender_balance_after);
+        println!("Recipient Balance (after): {}", recipient_balance_after);
 
         let result_balance_change = &result.state.get(&sender).unwrap().balance_change;
-        println!("Balance Change of sender: {result_balance_change:?}");
+        println!("Balance Change of sender: {:?}", result_balance_change);
         let result_balance_change = &result.state.get(&recipient).unwrap().balance_change;
-        println!("Balance Change of recipient: {result_balance_change:?}" );
+        println!("Balance Change of recipient: {:?}", result_balance_change);
     }
 }
