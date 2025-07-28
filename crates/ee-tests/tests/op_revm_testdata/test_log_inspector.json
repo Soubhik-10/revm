@@ -17,70 +17,10 @@
     }
   },
   "state": {
-<<<<<<< HEAD:crates/ee-tests/tests/op_revm_testdata/test_log_inspector.json
-=======
-    "0xffffffffffffffffffffffffffffffffffffffff": {
-      "info": {
-        "balance": "0x2386f26fc10000",
-        "nonce": 1,
-        "code_hash": "0x8013c386d5a03c3fa0a6ccbfefcf7d91471dedba2bb94eefef57f916e5929a8d",
-        "code": {
-          "LegacyAnalyzed": {
-            "bytecode": "0x600080a000",
-            "original_len": 5,
-            "jump_table": {
-              "order": "bitvec::order::Lsb0",
-              "head": {
-                "width": 8,
-                "index": 0
-              },
-              "bits": 5,
-              "data": [
-                0
-              ]
-            }
-          }
-        }
-      },
-      "transaction_id": 0,
-      "storage": {},
-      "status": "Touched",
-      "storage_access":{
-                "reads":{},
-              "writes":{}
-          }
-    },
-    "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
-      "info": {
-        "balance": "0x2386f26fc10000",
-        "nonce": 1,
-        "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
-        "code": {
-          "LegacyAnalyzed": {
-            "bytecode": "0x00",
-            "original_len": 0,
-            "jump_table": {
-              "order": "bitvec::order::Lsb0",
-              "head": {
-                "width": 8,
-                "index": 0
-              },
-              "bits": 0,
-              "data": []
-            }
-          }
-        }
-      },
-      "transaction_id": 0,
-      "storage": {},
-      "status": "Touched",
-      "storage_access":{
-                "reads":{},
-              "writes":{}
-          }
-    },
->>>>>>> 8e316e39 (fixes):crates/op-revm/tests/testdata/test_log_inspector.json
     "0x0000000000000000000000000000000000000000": {
+      "balance_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x0",
         "code": {
@@ -97,73 +37,22 @@
             },
             "original_len": 0
           }
-<<<<<<< HEAD:crates/ee-tests/tests/op_revm_testdata/test_log_inspector.json
         },
-=======
-        }
-      },
-      "transaction_id": 0,
-      "storage": {},
-      "status": "Touched | LoadedAsNotExisting",
-      "storage_access":{
-                "reads":{},
-              "writes":{}
-          }
-    },
-    "0x420000000000000000000000000000000000001a": {
-      "info": {
-        "balance": "0x0",
-        "nonce": 0,
->>>>>>> 8e316e39 (fixes):crates/op-revm/tests/testdata/test_log_inspector.json
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0
       },
       "status": "Touched | LoadedAsNotExisting",
       "storage": {},
-<<<<<<< HEAD:crates/ee-tests/tests/op_revm_testdata/test_log_inspector.json
       "storage_access": {
         "reads": {},
         "writes": {}
       },
       "transaction_id": 0
-=======
-      "status": "Touched | LoadedAsNotExisting",
-      "storage_access":{
-                "reads":{},
-              "writes":{}
-          }
-    },
-    "0x420000000000000000000000000000000000001b": {
-      "info": {
-        "balance": "0x0",
-        "nonce": 0,
-        "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
-        "code": {
-          "LegacyAnalyzed": {
-            "bytecode": "0x00",
-            "original_len": 0,
-            "jump_table": {
-              "order": "bitvec::order::Lsb0",
-              "head": {
-                "width": 8,
-                "index": 0
-              },
-              "bits": 0,
-              "data": []
-            }
-          }
-        }
-      },
-      "transaction_id": 0,
-      "storage": {},
-      "status": "Touched | LoadedAsNotExisting",
-      "storage_access":{
-                "reads":{},
-              "writes":{}
-          }
->>>>>>> 8e316e39 (fixes):crates/op-revm/tests/testdata/test_log_inspector.json
     },
     "0x4200000000000000000000000000000000000019": {
+      "balance_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x0",
         "code": {
@@ -186,7 +75,6 @@
       },
       "status": "Touched | LoadedAsNotExisting",
       "storage": {},
-<<<<<<< HEAD:crates/ee-tests/tests/op_revm_testdata/test_log_inspector.json
       "storage_access": {
         "reads": {},
         "writes": {}
@@ -194,6 +82,9 @@
       "transaction_id": 0
     },
     "0x420000000000000000000000000000000000001a": {
+      "balance_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x0",
         "code": {
@@ -223,6 +114,9 @@
       "transaction_id": 0
     },
     "0x420000000000000000000000000000000000001b": {
+      "balance_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x0",
         "code": {
@@ -252,6 +146,9 @@
       "transaction_id": 0
     },
     "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
+      "balance_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x2386f26fc10000",
         "code": {
@@ -281,6 +178,9 @@
       "transaction_id": 0
     },
     "0xffffffffffffffffffffffffffffffffffffffff": {
+      "balance_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x2386f26fc10000",
         "code": {
@@ -310,13 +210,6 @@
         "writes": {}
       },
       "transaction_id": 0
-=======
-      "status": "Touched | LoadedAsNotExisting",
-      "storage_access":{
-                "reads":{},
-              "writes":{}
-          }
->>>>>>> 8e316e39 (fixes):crates/op-revm/tests/testdata/test_log_inspector.json
     }
   }
 }

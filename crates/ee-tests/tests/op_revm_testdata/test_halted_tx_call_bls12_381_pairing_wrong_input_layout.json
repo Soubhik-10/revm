@@ -8,97 +8,10 @@
     }
   },
   "state": {
-<<<<<<< HEAD:crates/ee-tests/tests/op_revm_testdata/test_halted_tx_call_bls12_381_pairing_wrong_input_layout.json
-=======
-    "0x4200000000000000000000000000000000000019": {
-      "info": {
-        "balance": "0x0",
-        "nonce": 0,
-        "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
-        "code": {
-          "LegacyAnalyzed": {
-            "bytecode": "0x00",
-            "original_len": 0,
-            "jump_table": {
-              "order": "bitvec::order::Lsb0",
-              "head": {
-                "width": 8,
-                "index": 0
-              },
-              "bits": 0,
-              "data": []
-            }
-          }
-        }
-      },
-      "transaction_id": 0,
-      "storage": {},
-      "status": "Touched | LoadedAsNotExisting",
-      "storage_access":{
-                "reads":{},
-              "writes":{}
-          }
-    },
-    "0x420000000000000000000000000000000000001a": {
-      "info": {
-        "balance": "0x0",
-        "nonce": 0,
-        "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
-        "code": {
-          "LegacyAnalyzed": {
-            "bytecode": "0x00",
-            "original_len": 0,
-            "jump_table": {
-              "order": "bitvec::order::Lsb0",
-              "head": {
-                "width": 8,
-                "index": 0
-              },
-              "bits": 0,
-              "data": []
-            }
-          }
-        }
-      },
-      "transaction_id": 0,
-      "storage": {},
-      "status": "Touched | LoadedAsNotExisting",
-      "storage_access":{
-                "reads":{},
-              "writes":{}
-          }
-    },
-    "0x420000000000000000000000000000000000001b": {
-      "info": {
-        "balance": "0x0",
-        "nonce": 0,
-        "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
-        "code": {
-          "LegacyAnalyzed": {
-            "bytecode": "0x00",
-            "original_len": 0,
-            "jump_table": {
-              "order": "bitvec::order::Lsb0",
-              "head": {
-                "width": 8,
-                "index": 0
-              },
-              "bits": 0,
-              "data": []
-            }
-          }
-        }
-      },
-      "transaction_id": 0,
-      "storage": {},
-      "status": "Touched | LoadedAsNotExisting",
-      "storage_access":{
-                "reads":{},
-              "writes":{}
-          }
-    },
->>>>>>> 8e316e39 (fixes):crates/op-revm/tests/testdata/test_halted_tx_call_bls12_381_pairing_wrong_input_layout.json
     "0x0000000000000000000000000000000000000000": {
+      "balance_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x0",
         "code": {
@@ -121,21 +34,16 @@
       },
       "status": "Touched | LoadedAsNotExisting",
       "storage": {},
-<<<<<<< HEAD:crates/ee-tests/tests/op_revm_testdata/test_halted_tx_call_bls12_381_pairing_wrong_input_layout.json
       "storage_access": {
         "reads": {},
         "writes": {}
       },
       "transaction_id": 0
-=======
-      "status": "Touched | LoadedAsNotExisting",
-      "storage_access":{
-                "reads":{},
-              "writes":{}
-          }
->>>>>>> 8e316e39 (fixes):crates/op-revm/tests/testdata/test_halted_tx_call_bls12_381_pairing_wrong_input_layout.json
     },
     "0x000000000000000000000000000000000000000f": {
+      "balance_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x0",
         "code": {
@@ -158,7 +66,6 @@
       },
       "status": "LoadedAsNotExisting",
       "storage": {},
-<<<<<<< HEAD:crates/ee-tests/tests/op_revm_testdata/test_halted_tx_call_bls12_381_pairing_wrong_input_layout.json
       "storage_access": {
         "reads": {},
         "writes": {}
@@ -166,6 +73,9 @@
       "transaction_id": 0
     },
     "0x4200000000000000000000000000000000000019": {
+      "balance_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x0",
         "code": {
@@ -195,6 +105,9 @@
       "transaction_id": 0
     },
     "0x420000000000000000000000000000000000001a": {
+      "balance_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x0",
         "code": {
@@ -224,6 +137,9 @@
       "transaction_id": 0
     },
     "0x420000000000000000000000000000000000001b": {
+      "balance_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x0",
         "code": {
@@ -251,13 +167,6 @@
         "writes": {}
       },
       "transaction_id": 0
-=======
-      "status": "LoadedAsNotExisting",
-      "storage_access":{
-                "reads":{},
-              "writes":{}
-          }
->>>>>>> 8e316e39 (fixes):crates/op-revm/tests/testdata/test_halted_tx_call_bls12_381_pairing_wrong_input_layout.json
     }
   }
 }
