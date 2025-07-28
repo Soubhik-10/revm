@@ -360,25 +360,53 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         self.load_account(db, to)?;
 
         // sub balance from
-        let from_account = self.state.get_mut(&from).unwrap();
-        Self::touch_account(&mut self.journal, from, from_account);
-        let from_balance = &mut from_account.info.balance;
+        let (pre_from_balance, post_from_balance) = {
+            let from_account = self.state.get_mut(&from).unwrap();
+            Self::touch_account(&mut self.journal, from, from_account);
+            let from_balance = &mut from_account.info.balance;
 
-        let Some(from_balance_decr) = from_balance.checked_sub(balance) else {
-            return Ok(Some(TransferError::OutOfFunds));
+            let Some(decreased) = from_balance.checked_sub(balance) else {
+                return Ok(Some(TransferError::OutOfFunds));
+            };
+
+            let pre = *from_balance;
+            *from_balance = decreased;
+            (pre, decreased)
         };
-        *from_balance = from_balance_decr;
 
         // add balance to
-        let to_account = &mut self.state.get_mut(&to).unwrap();
-        Self::touch_account(&mut self.journal, to, to_account);
-        let to_balance = &mut to_account.info.balance;
-        let Some(to_balance_incr) = to_balance.checked_add(balance) else {
-            return Ok(Some(TransferError::OverflowPayment));
-        };
-        *to_balance = to_balance_incr;
-        // Overflow of U256 balance is not possible to happen on mainnet. We don't bother to return funds from from_acc.
+        let (pre_to_balance, post_to_balance) = {
+            let to_account = self.state.get_mut(&to).unwrap();
+            Self::touch_account(&mut self.journal, to, to_account);
+            let to_balance = &mut to_account.info.balance;
 
+            let Some(increased) = to_balance.checked_add(balance) else {
+                return Ok(Some(TransferError::OverflowPayment));
+            };
+
+            let pre = *to_balance;
+            *to_balance = increased;
+            (pre, increased)
+        };
+
+        // record balance changes after borrows are done
+        let from_account = self.state.get_mut(&from).unwrap();
+        set_balance_change(
+            from_account,
+            self.transaction_id,
+            pre_from_balance,
+            post_from_balance,
+        );
+
+        let to_account = self.state.get_mut(&to).unwrap();
+        set_balance_change(
+            to_account,
+            self.transaction_id,
+            pre_to_balance,
+            post_to_balance,
+        );
+
+        // Overflow of U256 balance is not possible to happen on mainnet. We don't bother to return funds from from_acc.
         self.journal
             .push(ENTRY::balance_transfer(from, to, balance));
 
@@ -1076,4 +1104,19 @@ fn set_storage_access_reads(account: &mut Account, transaction_id: usize, key: S
         .entry(tx_index)
         .or_default()
         .insert(key);
+}
+
+fn set_balance_change(
+    account: &mut Account,
+    transaction_id: usize,
+    pre_value: U256,
+    post_value: U256,
+) {
+    let tx_index = transaction_id as u64;
+    account
+        .balance_change
+        .change
+        .entry(tx_index)
+        .or_default()
+        .insert((pre_value, post_value));
 }

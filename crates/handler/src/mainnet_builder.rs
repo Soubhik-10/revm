@@ -88,9 +88,9 @@ mod test {
         opcode::{PUSH1, SSTORE},
         Bytecode,
     };
-    use context::{Context, TxEnv};
+    use context::{Context, ContextTr, Database, TxEnv};
     use context_interface::transaction::Authorization;
-    use database::{BenchmarkDB, EEADDRESS, FFADDRESS};
+    use database::{BenchmarkDB, DatabaseCommit, BENCH_CALLER, BENCH_TARGET, EEADDRESS, FFADDRESS};
     use primitives::{hardfork::SpecId, TxKind, U256};
     use primitives::{StorageKey, StorageValue};
     use state::StorageAccess;
@@ -499,5 +499,86 @@ mod test {
         assert_eq!(auth_acc.info.code, Some(Bytecode::new_eip7702(FFADDRESS)));
         assert_eq!(auth_acc.info.nonce, 1);
         assert_eq!(*storage_access, expected_storage_access);
+    }
+
+    #[test]
+    fn transfer_check() {
+        //         === OUTPUT ===
+        //         running 1 test
+        // test mainnet_builder::test::transfer_check ... ok
+
+        // successes:
+
+        // ---- mainnet_builder::test::transfer_check stdout ----
+        // Sender Balance (before):   3000000000
+        // Recipient Balance (before): 3000000000
+        // Sender Balance (after):   2999978000
+        // Recipient Balance (after): 3000001000
+        // Balance Change: BalanceChange { change: {0: {(2983222784, 2983221784)}} }
+        // Balance Change: BalanceChange { change: {0: {(3000000000, 3000001000)}} }
+
+        // successes:
+        //     mainnet_builder::test::transfer_check
+        let recipient = BENCH_TARGET;
+        let sender = BENCH_CALLER;
+
+        let mut db = database::InMemoryDB::default();
+        db.insert_account_info(
+            BENCH_TARGET,
+            state::AccountInfo::from_balance(U256::from(3_000_000_000u32)),
+        );
+
+        db.insert_account_info(
+            BENCH_CALLER,
+            state::AccountInfo::from_balance(U256::from(3_000_000_000u32)),
+        );
+
+        let ctx = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::PRAGUE)
+            .with_db(db.clone());
+
+        let mut evm = ctx.build_mainnet();
+
+        let sender_balance_before = evm.db_mut().basic(sender).unwrap().unwrap().balance;
+        let recipient_balance_before = evm
+            .db_mut()
+            .basic(recipient)
+            .unwrap()
+            .unwrap_or_default()
+            .balance;
+
+        println!("Sender Balance (before):   {}", sender_balance_before);
+        println!("Recipient Balance (before): {}", recipient_balance_before);
+
+        let result = evm
+            .transact(
+                TxEnv::builder()
+                    .caller(sender)
+                    .kind(TxKind::Call(recipient))
+                    .value(U256::from(1000))
+                    .gas_price(1)
+                    .gas_priority_fee(None)
+                    .nonce(0)
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        evm.db_mut().commit(result.clone().state);
+
+        let sender_balance_after = evm.db_mut().basic(sender).unwrap().unwrap().balance;
+        let recipient_balance_after = evm
+            .db_mut()
+            .basic(recipient)
+            .unwrap()
+            .unwrap_or_default()
+            .balance;
+
+        println!("Sender Balance (after):   {}", sender_balance_after);
+        println!("Recipient Balance (after): {}", recipient_balance_after);
+
+        let result_balance_change = &result.state.get(&sender).unwrap().balance_change;
+        println!("Balance Change of sender: {:?}", result_balance_change);
+        let result_balance_change = &result.state.get(&recipient).unwrap().balance_change;
+        println!("Balance Change of recipient: {:?}", result_balance_change);
     }
 }

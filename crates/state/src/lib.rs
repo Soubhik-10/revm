@@ -14,7 +14,7 @@ pub use bytecode::Bytecode;
 use core::hash::Hash;
 pub use primitives;
 use primitives::hardfork::SpecId;
-use primitives::{HashMap, StorageKey, StorageValue};
+use primitives::{HashMap, StorageKey, StorageValue, U256};
 pub use types::{EvmState, EvmStorage, TransientStorage};
 
 /// `StorageAccess` keeps a record of storage_reads and storage_writes as per Eip-7928
@@ -25,6 +25,14 @@ pub struct StorageAccess {
     pub reads: BTreeMap<u64, BTreeSet<StorageKey>>,
     /// tx_index → key → (pre, post)
     pub writes: BTreeMap<u64, BTreeMap<StorageKey, (StorageValue, StorageValue)>>,
+}
+
+/// `BalanceChange` keeps a record of pre_balance and post_balance as per Eip-7928
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BalanceChange {
+    /// tx_index → (pre, post)
+    pub change: BTreeMap<u64, BTreeSet<(U256, U256)>>,
 }
 
 /// Account type used inside Journal to track changed to state.
@@ -41,6 +49,8 @@ pub struct Account {
     pub status: AccountStatus,
     /// Storage access information for this account.
     pub storage_access: StorageAccess,
+    /// Balance change information for this account.
+    pub balance_change: BalanceChange,
 }
 
 impl Account {
@@ -52,6 +62,7 @@ impl Account {
             transaction_id,
             status: AccountStatus::LoadedAsNotExisting,
             storage_access: StorageAccess::default(),
+            balance_change: BalanceChange::default(),
         }
     }
 
@@ -270,6 +281,7 @@ impl From<AccountInfo> for Account {
             transaction_id: 0,
             status: AccountStatus::empty(),
             storage_access: StorageAccess::default(),
+            balance_change: BalanceChange::default(),
         }
     }
 }
