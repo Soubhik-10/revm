@@ -713,6 +713,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
                 self.transaction_id,
                 address,
                 storage_key,
+                false,
             )?;
         }
         Ok(load)
@@ -729,6 +730,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         db: &mut DB,
         address: Address,
         key: StorageKey,
+        from_sstore: bool,
     ) -> Result<StateLoad<StorageValue>, DB::Error> {
         // assume acc is warm
         let account = self.state.get_mut(&address).unwrap();
@@ -740,6 +742,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             self.transaction_id,
             address,
             key,
+            from_sstore,
         )
     }
 
@@ -757,35 +760,55 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         new: StorageValue,
     ) -> Result<StateLoad<SStoreResult>, DB::Error> {
         // assume that acc exists and load the slot.
-        let present = self.sload(db, address, key)?;
+        let present = self.sload(db, address, key, true)?;
+
+        // get original_value and present_value first, then reborrow mutably later
+        let (original_value, present_value, is_cold) = {
+            let acc = self.state.get(&address).unwrap();
+            let slot = acc.storage.get(&key).unwrap();
+
+            // new value is same as present, we don't need to do anything
+            if slot.present_value == new {
+                let original_value = slot.original_value();
+                let present_value = slot.present_value;
+
+                let acc = self.state.get_mut(&address).unwrap();
+
+                set_storage_access_reads(acc, self.transaction_id, key);
+
+                return Ok(StateLoad::new(
+                    SStoreResult {
+                        original_value,
+                        present_value,
+                        new_value: new,
+                    },
+                    present.is_cold,
+                ));
+            }
+
+            (slot.original_value(), slot.present_value, present.is_cold)
+        };
+
         let acc = self.state.get_mut(&address).unwrap();
 
         // if there is no original value in dirty return present value, that is our original.
         let slot = acc.storage.get_mut(&key).unwrap();
 
-        // new value is same as present, we don't need to do anything
-        if present.data == new {
-            return Ok(StateLoad::new(
-                SStoreResult {
-                    original_value: slot.original_value(),
-                    present_value: present.data,
-                    new_value: new,
-                },
-                present.is_cold,
-            ));
-        }
-
         self.journal
-            .push(ENTRY::storage_changed(address, key, present.data));
+            .push(ENTRY::storage_changed(address, key, present_value));
+
         // insert value into present state.
         slot.present_value = new;
+
+        set_storage_change_write(acc, self.transaction_id, key, present_value, new);
+
         Ok(StateLoad::new(
             SStoreResult {
-                original_value: slot.original_value(),
-                present_value: present.data,
+                original_value,
+                present_value,
                 new_value: new,
             },
-            present.is_cold,
+            is_cold,
         ))
     }
 
@@ -852,6 +875,7 @@ pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
     transaction_id: usize,
     address: Address,
     key: StorageKey,
+    from_sstore: bool,
 ) -> Result<StateLoad<StorageValue>, DB::Error> {
     let is_newly_created = account.is_created();
     let (value, is_cold) = match account.storage.entry(key) {
@@ -879,6 +903,11 @@ pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
         journal.push(ENTRY::storage_warmed(address, key));
     }
 
+    // Set `StorageChange` for reads here
+    if !from_sstore {
+        set_storage_access_reads(account, transaction_id, key);
+    }
+
     Ok(StateLoad::new(value, is_cold))
 }
 
@@ -893,4 +922,30 @@ fn reset_preloaded_addresses(
         return;
     }
     warm_preloaded_addresses.clone_from(precompiles);
+}
+
+fn set_storage_change_write(
+    account: &mut Account,
+    transaction_id: usize,
+    key: StorageKey,
+    pre_value: StorageValue,
+    post_value: StorageValue,
+) {
+    let tx_index = transaction_id as u64;
+    account
+        .storage_access
+        .writes
+        .entry(tx_index)
+        .or_default()
+        .insert(key, (pre_value, post_value));
+}
+
+fn set_storage_access_reads(account: &mut Account, transaction_id: usize, key: StorageKey) {
+    let tx_index = transaction_id as u64;
+    account
+        .storage_access
+        .reads
+        .entry(tx_index)
+        .or_default()
+        .insert(key);
 }

@@ -29,7 +29,11 @@
       },
       "transaction_id": 0,
       "storage": {},
-      "status": "Touched"
+      "status": "Touched",
+      "storage_access":{
+                "reads":{},
+              "writes":{}
+          }
     },
     "0xffffffffffffffffffffffffffffffffffffffff": {
       "info": {
@@ -56,7 +60,11 @@
       },
       "transaction_id": 0,
       "storage": {},
-      "status": "Cold"
+      "status": "Cold",
+      "storage_access":{
+                "reads":{},
+              "writes":{}
+          }
     }
   }
 }
