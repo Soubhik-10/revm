@@ -706,6 +706,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         }
 
         for storage_key in storage_keys.into_iter() {
+            #[cfg(feature = "glamsterdam")]
             sload_with_account(
                 load.data,
                 db,
@@ -714,6 +715,15 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
                 address,
                 storage_key,
                 false,
+            )?;
+            #[cfg(not(feature = "glamsterdam"))]
+            sload_with_account(
+                load.data,
+                db,
+                &mut self.journal,
+                self.transaction_id,
+                address,
+                storage_key,
             )?;
         }
         Ok(load)
@@ -724,6 +734,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     /// # Panics
     ///
     /// Panics if the account is not present in the state.
+    #[cfg(feature = "glamsterdam")]
     #[inline]
     pub fn sload<DB: Database>(
         &mut self,
@@ -746,11 +757,38 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         )
     }
 
+    /// Loads storage slot.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the account is not present in the state.
+    #[cfg(not(feature = "glamsterdam"))]
+    #[inline]
+    pub fn sload<DB: Database>(
+        &mut self,
+        db: &mut DB,
+        address: Address,
+        key: StorageKey,
+    ) -> Result<StateLoad<StorageValue>, DB::Error> {
+        // assume acc is warm
+        let account = self.state.get_mut(&address).unwrap();
+        // only if account is created in this tx we can assume that storage is empty.
+        sload_with_account(
+            account,
+            db,
+            &mut self.journal,
+            self.transaction_id,
+            address,
+            key,
+        )
+    }
+
     /// Stores storage slot.
     ///
     /// And returns (original,present,new) slot value.
     ///
     /// **Note**: Account should already be present in our state.
+    #[cfg(feature = "glamsterdam")]
     #[inline]
     pub fn sstore<DB: Database>(
         &mut self,
@@ -759,6 +797,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         key: StorageKey,
         new: StorageValue,
     ) -> Result<StateLoad<SStoreResult>, DB::Error> {
+        println!("hii glamsterdam");
         // assume that acc exists and load the slot.
         let present = self.sload(db, address, key, true)?;
 
@@ -809,6 +848,54 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
                 new_value: new,
             },
             is_cold,
+        ))
+    }
+
+    /// Stores storage slot.
+    ///
+    /// And returns (original,present,new) slot value.
+    ///
+    /// **Note**: Account should already be present in our state.
+    #[cfg(not(feature = "glamsterdam"))]
+    #[inline]
+    pub fn sstore<DB: Database>(
+        &mut self,
+        db: &mut DB,
+        address: Address,
+        key: StorageKey,
+        new: StorageValue,
+    ) -> Result<StateLoad<SStoreResult>, DB::Error> {
+        println!("hii");
+        // assume that acc exists and load the slot.
+        let present = self.sload(db, address, key)?;
+        let acc = self.state.get_mut(&address).unwrap();
+
+        // if there is no original value in dirty return present value, that is our original.
+        let slot = acc.storage.get_mut(&key).unwrap();
+
+        // new value is same as present, we don't need to do anything
+        if present.data == new {
+            return Ok(StateLoad::new(
+                SStoreResult {
+                    original_value: slot.original_value(),
+                    present_value: present.data,
+                    new_value: new,
+                },
+                present.is_cold,
+            ));
+        }
+
+        self.journal
+            .push(ENTRY::storage_changed(address, key, present.data));
+        // insert value into present state.
+        slot.present_value = new;
+        Ok(StateLoad::new(
+            SStoreResult {
+                original_value: slot.original_value(),
+                present_value: present.data,
+                new_value: new,
+            },
+            present.is_cold,
         ))
     }
 
@@ -867,6 +954,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 }
 
 /// Loads storage slot with account.
+#[cfg(feature = "glamsterdam")]
 #[inline]
 pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
     account: &mut Account,
@@ -911,6 +999,46 @@ pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
     Ok(StateLoad::new(value, is_cold))
 }
 
+/// Loads storage slot with account.
+#[inline]
+#[cfg(not(feature = "glamsterdam"))]
+pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
+    account: &mut Account,
+    db: &mut DB,
+    journal: &mut Vec<ENTRY>,
+    transaction_id: usize,
+    address: Address,
+    key: StorageKey,
+) -> Result<StateLoad<StorageValue>, DB::Error> {
+    let is_newly_created = account.is_created();
+    let (value, is_cold) = match account.storage.entry(key) {
+        Entry::Occupied(occ) => {
+            let slot = occ.into_mut();
+            let is_cold = slot.mark_warm_with_transaction_id(transaction_id);
+            (slot.present_value, is_cold)
+        }
+        Entry::Vacant(vac) => {
+            // if storage was cleared, we don't need to ping db.
+            let value = if is_newly_created {
+                StorageValue::ZERO
+            } else {
+                db.storage(address, key)?
+            };
+
+            vac.insert(EvmStorageSlot::new(value, transaction_id));
+
+            (value, true)
+        }
+    };
+
+    if is_cold {
+        // add it to journal as cold loaded.
+        journal.push(ENTRY::storage_warmed(address, key));
+    }
+
+    Ok(StateLoad::new(value, is_cold))
+}
+
 fn reset_preloaded_addresses(
     warm_preloaded_addresses: &mut HashSet<Address>,
     precompiles: &HashSet<Address>,
@@ -924,6 +1052,7 @@ fn reset_preloaded_addresses(
     warm_preloaded_addresses.clone_from(precompiles);
 }
 
+#[cfg(feature = "glamsterdam")]
 fn set_storage_change_write(
     account: &mut Account,
     transaction_id: usize,
@@ -940,6 +1069,7 @@ fn set_storage_change_write(
         .insert(key, (pre_value, post_value));
 }
 
+#[cfg(feature = "glamsterdam")]
 fn set_storage_access_reads(account: &mut Account, transaction_id: usize, key: StorageKey) {
     let tx_index = transaction_id as u64;
     account

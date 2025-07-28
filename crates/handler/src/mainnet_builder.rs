@@ -141,6 +141,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "glamsterdam")]
     fn storage_access_sstore_write_read_same_slot() {
         let signer = PrivateKeySigner::random();
 
@@ -200,6 +201,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "glamsterdam")]
     fn storage_access_sstore_write_same_value() {
         let signer = PrivateKeySigner::random();
 
@@ -262,6 +264,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "glamsterdam")]
     fn storage_access_sstore_with_zero() {
         let signer = PrivateKeySigner::random();
 
@@ -320,6 +323,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "glamsterdam")]
     fn storage_access_unchanged() {
         let signer = PrivateKeySigner::random();
 
@@ -398,6 +402,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "glamsterdam")]
     fn storage_access_with_staticcall() {
         let signer = PrivateKeySigner::random();
 
@@ -450,6 +455,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "glamsterdam")]
     fn storage_access_with_revert() {
         let signer = PrivateKeySigner::random();
 
