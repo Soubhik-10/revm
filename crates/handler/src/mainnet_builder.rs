@@ -548,7 +548,7 @@ mod test {
             .balance;
 
         println!("Sender Balance (before):   {sender_balance_before}");
-        println!("Recipient Balance (before): {recipient_balance_before}");
+        println!("Recipient Balance (before): {recipient_balance_before}" );
 
         let result = evm
             .transact(
@@ -579,6 +579,6 @@ mod test {
         let result_balance_change = &result.state.get(&sender).unwrap().balance_change;
         println!("Balance Change of sender: {result_balance_change:?}");
         let result_balance_change = &result.state.get(&recipient).unwrap().balance_change;
-        println!("Balance Change of recipient: {result_balance_change:?}");
+        println!("Balance Change of recipient: {result_balance_change:?}" );
     }
 }
