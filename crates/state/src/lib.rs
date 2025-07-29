@@ -33,7 +33,7 @@ pub struct StorageAccess {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BalanceChange {
     /// tx_index → (pre_balance , post_balance)
-    pub change: HashMap<TxIndex, (U256,U256)>,
+    pub change: HashMap<TxIndex, (U256, U256)>,
 }
 /// Account type used inside Journal to track changed to state.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

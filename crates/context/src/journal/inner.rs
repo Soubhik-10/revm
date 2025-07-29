@@ -340,149 +340,122 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         self.journal.push(ENTRY::nonce_changed(address));
     }
 
-    // /// Transfers balance from two accounts. Returns error if sender balance is not enough.
-    // #[inline]
-    // pub fn transfer<DB: Database>(
-    //     &mut self,
-    //     db: &mut DB,
-    //     from: Address,
-    //     to: Address,
-    //     balance: U256,
-    // ) -> Result<Option<TransferError>, DB::Error> {
-    //     if balance.is_zero() {
-    //         self.load_account(db, to)?;
-    //         let to_account = self.state.get_mut(&to).unwrap();
-    //         Self::touch_account(&mut self.journal, to, to_account);
-    //         return Ok(None);
-    //     }
-    //     // load accounts
-    //     self.load_account(db, from)?;
-    //     self.load_account(db, to)?;
-
-    //     // sub balance from
-    //     let (pre_from_balance, post_from_balance) = {
-    //         let from_account = self.state.get_mut(&from).unwrap();
-    //         Self::touch_account(&mut self.journal, from, from_account);
-    //         let from_balance = &mut from_account.info.balance;
-
-    //         let Some(decreased) = from_balance.checked_sub(balance) else {
-    //             return Ok(Some(TransferError::OutOfFunds));
-    //         };
-
-    //         let pre = *from_balance;
-    //         *from_balance = decreased;
-    //         (pre, decreased)
-    //     };
-
-    //     // add balance to
-    //     let (pre_to_balance, post_to_balance) = {
-    //         let to_account = self.state.get_mut(&to).unwrap();
-    //         Self::touch_account(&mut self.journal, to, to_account);
-    //         let to_balance = &mut to_account.info.balance;
-
-    //         let Some(increased) = to_balance.checked_add(balance) else {
-    //             return Ok(Some(TransferError::OverflowPayment));
-    //         };
-
-    //         let pre = *to_balance;
-    //         *to_balance = increased;
-    //         (pre, increased)
-    //     };
-
-    //     // record balance changes after borrows are done
-    //     let from_account = self.state.get_mut(&from).unwrap();
-    //     set_balance_change(
-    //         from_account,
-    //         self.transaction_id,
-    //         pre_from_balance,
-    //         post_from_balance,
-    //     );
-
-    //     let to_account = self.state.get_mut(&to).unwrap();
-    //     set_balance_change(
-    //         to_account,
-    //         self.transaction_id,
-    //         pre_to_balance,
-    //         post_to_balance,
-    //     );
-
-    //     // Overflow of U256 balance is not possible to happen on mainnet. We don't bother to return funds from from_acc.
-    //     self.journal
-    //         .push(ENTRY::balance_transfer(from, to, balance));
-
-    //     Ok(None)
-    // }
-
     /// Transfers balance from two accounts. Returns error if sender balance is not enough.
-  #[inline]
-pub fn transfer<DB: Database>(
-    &mut self,
-    db: &mut DB,
-    from: Address,
-    to: Address,
-    balance: U256,
-) -> Result<Option<TransferError>, DB::Error> {
-    if balance.is_zero() {
+    #[cfg(not(feature = "glamsterdam"))]
+    #[inline]
+    pub fn transfer<DB: Database>(
+        &mut self,
+        db: &mut DB,
+        from: Address,
+        to: Address,
+        balance: U256,
+    ) -> Result<Option<TransferError>, DB::Error> {
+        if balance.is_zero() {
+            self.load_account(db, to)?;
+            let to_account = self.state.get_mut(&to).unwrap();
+            Self::touch_account(&mut self.journal, to, to_account);
+            return Ok(None);
+        }
+        // load accounts
+        self.load_account(db, from)?;
         self.load_account(db, to)?;
-        let to_account = self.state.get_mut(&to).unwrap();
-        Self::touch_account(&mut self.journal, to, to_account);
-        return Ok(None);
-    }
 
-    // Load accounts
-    self.load_account(db, from)?;
-    self.load_account(db, to)?;
-
-    // First, check if balance changes are possible (no mutation yet)
-    let (pre_from_balance, from_balance_decr) = {
-        let from_account = self.state.get(&from).unwrap();
-        let from_balance = from_account.info.balance;
-        let Some(decr) = from_balance.checked_sub(balance) else {
-            return Ok(Some(TransferError::OutOfFunds));
-        };
-        (from_balance, decr)
-    };
-
-    let (pre_to_balance, to_balance_incr) = {
-        let to_account = self.state.get(&to).unwrap();
-        let to_balance = to_account.info.balance;
-        let Some(incr) = to_balance.checked_add(balance) else {
-            return Ok(Some(TransferError::OverflowPayment));
-        };
-        (to_balance, incr)
-    };
-
-    // Now safe to mutate both accounts
-    {
+        // sub balance from
         let from_account = self.state.get_mut(&from).unwrap();
         Self::touch_account(&mut self.journal, from, from_account);
-        from_account.info.balance = from_balance_decr;
-        from_account
-            .balance_change
-            .change
-            .entry(self.transaction_id as u64)
-            .and_modify(|entry| entry.1 = from_balance_decr)
-            .or_insert((pre_from_balance, from_balance_decr));
-    }
+        let from_balance = &mut from_account.info.balance;
 
-    {
-        let to_account = self.state.get_mut(&to).unwrap();
+        let Some(from_balance_decr) = from_balance.checked_sub(balance) else {
+            return Ok(Some(TransferError::OutOfFunds));
+        };
+        *from_balance = from_balance_decr;
+
+        // add balance to
+        let to_account = &mut self.state.get_mut(&to).unwrap();
         Self::touch_account(&mut self.journal, to, to_account);
-        to_account.info.balance = to_balance_incr;
-        to_account
-            .balance_change
-            .change
-            .entry(self.transaction_id as u64)
-            .and_modify(|entry| entry.1 = to_balance_incr)
-            .or_insert((pre_to_balance, to_balance_incr));
+        let to_balance = &mut to_account.info.balance;
+        let Some(to_balance_incr) = to_balance.checked_add(balance) else {
+            return Ok(Some(TransferError::OverflowPayment));
+        };
+        *to_balance = to_balance_incr;
+        // Overflow of U256 balance is not possible to happen on mainnet. We don't bother to return funds from from_acc.
+
+        self.journal
+            .push(ENTRY::balance_transfer(from, to, balance));
+
+        Ok(None)
     }
 
-    // Push journal entry
-    self.journal
-        .push(ENTRY::balance_transfer(from, to, balance));
+    /// Transfers balance from two accounts. Returns error if sender balance is not enough.(FOR GLAMSTERDAM)
+    #[cfg(feature = "glamsterdam")]
+    #[inline]
+    pub fn transfer<DB: Database>(
+        &mut self,
+        db: &mut DB,
+        from: Address,
+        to: Address,
+        balance: U256,
+    ) -> Result<Option<TransferError>, DB::Error> {
+        if balance.is_zero() {
+            self.load_account(db, to)?;
+            let to_account = self.state.get_mut(&to).unwrap();
+            Self::touch_account(&mut self.journal, to, to_account);
+            return Ok(None);
+        }
 
-    Ok(None)
-}
+        // Load accounts
+        self.load_account(db, from)?;
+        self.load_account(db, to)?;
+
+        // Check if balance changes are possible
+        let (pre_from_balance, from_balance_decr) = {
+            let from_account = self.state.get(&from).unwrap();
+            let from_balance = from_account.info.balance;
+            let Some(decr) = from_balance.checked_sub(balance) else {
+                return Ok(Some(TransferError::OutOfFunds));
+            };
+            (from_balance, decr)
+        };
+
+        let (pre_to_balance, to_balance_incr) = {
+            let to_account = self.state.get(&to).unwrap();
+            let to_balance = to_account.info.balance;
+            let Some(incr) = to_balance.checked_add(balance) else {
+                return Ok(Some(TransferError::OverflowPayment));
+            };
+            (to_balance, incr)
+        };
+
+        {
+            let from_account = self.state.get_mut(&from).unwrap();
+            Self::touch_account(&mut self.journal, from, from_account);
+            from_account.info.balance = from_balance_decr;
+            from_account
+                .balance_change
+                .change
+                .entry(self.transaction_id as u64)
+                .and_modify(|entry| entry.1 = from_balance_decr)
+                .or_insert((pre_from_balance, from_balance_decr));
+        }
+
+        {
+            let to_account = self.state.get_mut(&to).unwrap();
+            Self::touch_account(&mut self.journal, to, to_account);
+            to_account.info.balance = to_balance_incr;
+            to_account
+                .balance_change
+                .change
+                .entry(self.transaction_id as u64)
+                .and_modify(|entry| entry.1 = to_balance_incr)
+                .or_insert((pre_to_balance, to_balance_incr));
+        }
+
+        // Push journal entry
+        self.journal
+            .push(ENTRY::balance_transfer(from, to, balance));
+
+        Ok(None)
+    }
 
     /// Creates account or returns false if collision is detected.
     ///
@@ -832,7 +805,7 @@ pub fn transfer<DB: Database>(
     ///
     /// # Panics
     ///
-    /// Panics if the account is not present in the state.
+    /// Panics if the account is not present in the state.(FOR GLAMSTERDAM)
     #[cfg(feature = "glamsterdam")]
     #[inline]
     pub fn sload<DB: Database>(
@@ -886,7 +859,7 @@ pub fn transfer<DB: Database>(
     ///
     /// And returns (original,present,new) slot value.
     ///
-    /// **Note**: Account should already be present in our state.
+    /// **Note**: Account should already be present in our state.(FOR GLAMSTERDAM)
     #[cfg(feature = "glamsterdam")]
     #[inline]
     pub fn sstore<DB: Database>(
@@ -1050,7 +1023,7 @@ pub fn transfer<DB: Database>(
     }
 }
 
-/// Loads storage slot with account.
+/// Loads storage slot with account.(FOR GLAMSTERDAM)
 #[cfg(feature = "glamsterdam")]
 #[inline]
 pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
@@ -1149,6 +1122,7 @@ fn reset_preloaded_addresses(
     warm_preloaded_addresses.clone_from(precompiles);
 }
 
+/// Sets storage change write for the account.(FOR GLAMSTERDAM)
 #[cfg(feature = "glamsterdam")]
 fn set_storage_change_write(
     account: &mut Account,
@@ -1166,6 +1140,7 @@ fn set_storage_change_write(
         .insert(key, (pre_value, post_value));
 }
 
+/// Sets storage access reads for the account.(FOR GLAMSTERDAM)
 #[cfg(feature = "glamsterdam")]
 fn set_storage_access_reads(account: &mut Account, transaction_id: usize, key: StorageKey) {
     let tx_index = transaction_id as u64;
@@ -1176,18 +1151,3 @@ fn set_storage_access_reads(account: &mut Account, transaction_id: usize, key: S
         .or_default()
         .insert(key);
 }
-
-// fn set_balance_change(
-//     account: &mut Account,
-//     transaction_id: usize,
-//     pre_value: U256,
-//     post_value: U256,
-// ) {
-//     let tx_index = transaction_id as u64;
-//     account
-//         .balance_change
-//         .change
-//         .entry(tx_index)
-//         .or_default()
-//         .insert((pre_value, post_value));
-// }

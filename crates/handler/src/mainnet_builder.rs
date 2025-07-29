@@ -502,6 +502,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "glamsterdam")]
     fn transfer_check() {
         //         === OUTPUT ===
         //         running 1 test

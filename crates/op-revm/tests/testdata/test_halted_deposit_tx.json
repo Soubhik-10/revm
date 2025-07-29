@@ -30,10 +30,14 @@
       "transaction_id": 0,
       "storage": {},
       "status": "Touched",
-      "storage_access":{
-                "reads":{},
-              "writes":{}
-          }
+      "storage_access": {
+    "reads": {},
+    "writes": {}
+  },
+  "balance_change": {
+    "change": {}
+  }
+
     },
     "0xffffffffffffffffffffffffffffffffffffffff": {
       "info": {
@@ -61,10 +65,14 @@
       "transaction_id": 0,
       "storage": {},
       "status": "Cold",
-      "storage_access":{
-                "reads":{},
-              "writes":{}
-          }
+      "storage_access": {
+    "reads": {},
+    "writes": {}
+  },
+  "balance_change": {
+    "change": {}
+  }
+
     }
   }
 }

@@ -35,10 +35,14 @@
       "transaction_id": 0,
       "storage": {},
       "status": "Touched | LoadedAsNotExisting",
-      "storage_access":{
-                "reads":{},
-              "writes":{}
-          }
+      "storage_access": {
+    "reads": {},
+    "writes": {}
+  },
+  "balance_change": {
+    "change": {}
+  }
+
     }
   }
 }

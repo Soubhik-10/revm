@@ -23,6 +23,9 @@
   },
   {
     "0x0000000000000000000000000000000000000000": {
+      "balance_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x0",
         "code": {
@@ -52,6 +55,9 @@
       "transaction_id": 1
     },
     "0x000000000000000000000000000000000000ffff": {
+      "balance_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x2386f26fc10000",
         "code": {
@@ -81,6 +87,9 @@
       "transaction_id": 0
     },
     "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
+      "balance_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x2386f26fc10000",
         "code": {
@@ -110,6 +119,9 @@
       "transaction_id": 1
     },
     "0xffffffffffffffffffffffffffffffffffffffff": {
+      "balance_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x0",
         "code": {

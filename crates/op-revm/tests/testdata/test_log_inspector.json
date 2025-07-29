@@ -43,10 +43,14 @@
       "transaction_id": 0,
       "storage": {},
       "status": "Touched",
-      "storage_access":{
-                "reads":{},
-              "writes":{}
-          }
+      "storage_access": {
+    "reads": {},
+    "writes": {}
+  },
+  "balance_change": {
+    "change": {}
+  }
+
     },
     "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
       "info": {
@@ -72,10 +76,14 @@
       "transaction_id": 0,
       "storage": {},
       "status": "Touched",
-      "storage_access":{
-                "reads":{},
-              "writes":{}
-          }
+      "storage_access": {
+    "reads": {},
+    "writes": {}
+  },
+  "balance_change": {
+    "change": {}
+  }
+
     },
     "0x0000000000000000000000000000000000000000": {
       "info": {
@@ -101,10 +109,14 @@
       "transaction_id": 0,
       "storage": {},
       "status": "Touched | LoadedAsNotExisting",
-      "storage_access":{
-                "reads":{},
-              "writes":{}
-          }
+      "storage_access": {
+    "reads": {},
+    "writes": {}
+  },
+  "balance_change": {
+    "change": {}
+  }
+
     },
     "0x420000000000000000000000000000000000001a": {
       "info": {
@@ -130,10 +142,14 @@
       "transaction_id": 0,
       "storage": {},
       "status": "Touched | LoadedAsNotExisting",
-      "storage_access":{
-                "reads":{},
-              "writes":{}
-          }
+      "storage_access": {
+    "reads": {},
+    "writes": {}
+  },
+  "balance_change": {
+    "change": {}
+  }
+
     },
     "0x420000000000000000000000000000000000001b": {
       "info": {
@@ -159,10 +175,14 @@
       "transaction_id": 0,
       "storage": {},
       "status": "Touched | LoadedAsNotExisting",
-      "storage_access":{
-                "reads":{},
-              "writes":{}
-          }
+      "storage_access": {
+    "reads": {},
+    "writes": {}
+  },
+  "balance_change": {
+    "change": {}
+  }
+
     },
     "0x4200000000000000000000000000000000000019": {
       "info": {
@@ -188,10 +208,14 @@
       "transaction_id": 0,
       "storage": {},
       "status": "Touched | LoadedAsNotExisting",
-      "storage_access":{
-                "reads":{},
-              "writes":{}
-          }
+      "storage_access": {
+    "reads": {},
+    "writes": {}
+  },
+  "balance_change": {
+    "change": {}
+  }
+
     }
   }
 }
