@@ -444,8 +444,9 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             .balance_change
             .change
             .entry(self.transaction_id as u64)
-            .or_default()
-            .insert((*from_balance, from_balance_decr));
+            .and_modify(|entry| entry.1 = from_balance_decr)
+            .or_insert((*from_balance, from_balance_decr));
+
         *from_balance = from_balance_decr;
 
         // add balance to
@@ -460,8 +461,8 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             .balance_change
             .change
             .entry(self.transaction_id as u64)
-            .or_default()
-            .insert((*to_balance, to_balance_incr));
+            .and_modify(|entry| entry.1 = to_balance_incr)
+            .or_insert((*to_balance, to_balance_incr));
 
         *to_balance = to_balance_incr;
         // Overflow of U256 balance is not possible to happen on mainnet. We don't bother to return funds from from_acc.
