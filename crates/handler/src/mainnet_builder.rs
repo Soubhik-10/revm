@@ -514,8 +514,8 @@ mod test {
         // Recipient Balance (before): 3000000000
         // Sender Balance (after):   2999978000
         // Recipient Balance (after): 3000001000
-        // Balance Change of sender: BalanceChange { change: {0: 2983221784} }
-        // Balance Change of recipient: BalanceChange { change: {0: 3000001000} }
+        // Balance Change of sender: BalanceChange { change: {0: (2983222784, 2983221784)} }
+        // Balance Change of recipient: BalanceChange { change: {0: (3000000000, 3000001000)} }
 
         // successes:
         //     mainnet_builder::test::transfer_check
