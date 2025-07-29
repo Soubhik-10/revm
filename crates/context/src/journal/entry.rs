@@ -383,6 +383,7 @@ impl JournalEntryTr for JournalEntry {
                     .unwrap()
                     .present_value = had_value;
 
+                #[cfg(feature = "glamsterdam")]
                 if let Some(account) = state.get_mut(&address) {
                     let tx_index = account.transaction_id as u64;
 
