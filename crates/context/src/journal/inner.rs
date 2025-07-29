@@ -428,45 +428,63 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             Self::touch_account(&mut self.journal, to, to_account);
             return Ok(None);
         }
-        // load accounts
+
+        // Load accounts
         self.load_account(db, from)?;
         self.load_account(db, to)?;
 
-        // sub balance from
-        let from_account = self.state.get_mut(&from).unwrap();
-        Self::touch_account(&mut self.journal, from, from_account);
-        let from_balance = &mut from_account.info.balance;
+        //  modify from_account only
+        let pre_from_balance;
+        let from_balance_decr;
+        {
+            let from_account = self.state.get_mut(&from).unwrap();
+            Self::touch_account(&mut self.journal, from, from_account);
+            let from_balance = &mut from_account.info.balance;
 
-        let Some(from_balance_decr) = from_balance.checked_sub(balance) else {
-            return Ok(Some(TransferError::OutOfFunds));
-        };
-        from_account
-            .balance_change
-            .change
-            .entry(self.transaction_id as u64)
-            .and_modify(|entry| entry.1 = from_balance_decr)
-            .or_insert((*from_balance, from_balance_decr));
+            let Some(decr) = from_balance.checked_sub(balance) else {
+                return Ok(Some(TransferError::OutOfFunds));
+            };
 
-        *from_balance = from_balance_decr;
+            pre_from_balance = *from_balance;
+            from_balance_decr = decr;
 
-        // add balance to
-        let to_account = &mut self.state.get_mut(&to).unwrap();
-        Self::touch_account(&mut self.journal, to, to_account);
-        let to_balance = &mut to_account.info.balance;
-        let Some(to_balance_incr) = to_balance.checked_add(balance) else {
-            return Ok(Some(TransferError::OverflowPayment));
-        };
+            from_account
+                .balance_change
+                .change
+                .entry(self.transaction_id as u64)
+                .and_modify(|entry| entry.1 = from_balance_decr)
+                .or_insert((pre_from_balance, from_balance_decr));
 
-        to_account
-            .balance_change
-            .change
-            .entry(self.transaction_id as u64)
-            .and_modify(|entry| entry.1 = to_balance_incr)
-            .or_insert((*to_balance, to_balance_incr));
+            *from_balance = from_balance_decr;
+        }
 
-        *to_balance = to_balance_incr;
-        // Overflow of U256 balance is not possible to happen on mainnet. We don't bother to return funds from from_acc.
+        //  modify to_account only
+        {
+            let to_account = self.state.get_mut(&to).unwrap();
+            Self::touch_account(&mut self.journal, to, to_account);
+            let to_balance = &mut to_account.info.balance;
 
+            let Some(to_balance_incr) = to_balance.checked_add(balance) else {
+                // rollback from_account's balance_change since to_account failed
+                let from_account = self.state.get_mut(&from).unwrap();
+                from_account
+                    .balance_change
+                    .change
+                    .remove(&(self.transaction_id as u64));
+                return Ok(Some(TransferError::OverflowPayment));
+            };
+
+            to_account
+                .balance_change
+                .change
+                .entry(self.transaction_id as u64)
+                .and_modify(|entry| entry.1 = to_balance_incr)
+                .or_insert((*to_balance, to_balance_incr));
+
+            *to_balance = to_balance_incr;
+        }
+
+        // Push journal entry
         self.journal
             .push(ENTRY::balance_transfer(from, to, balance));
 
