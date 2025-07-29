@@ -45,7 +45,7 @@ alloy-signer.workspace = true
 alloy-signer-local.workspace = true
 
 [features]
-default = ["std","glamsterdam"]
+default = ["std"]
 glamsterdam = ["context/glamsterdam"]
 std = [
 	"serde?/std",

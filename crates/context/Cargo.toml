@@ -36,7 +36,7 @@ serde = { workspace = true, features = ["derive", "rc"], optional = true }
 database.workspace = true
 
 [features]
-default = ["std","glamsterdam"]
+default = ["std"]
 std = [
 	"serde?/std",
 	"bytecode/std",
