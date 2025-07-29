@@ -433,55 +433,45 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         self.load_account(db, from)?;
         self.load_account(db, to)?;
 
-        //  modify from_account only
-        let pre_from_balance;
-        let from_balance_decr;
-        {
-            let from_account = self.state.get_mut(&from).unwrap();
-            Self::touch_account(&mut self.journal, from, from_account);
-            let from_balance = &mut from_account.info.balance;
-
+        // Check if from has enough balance
+        let from_balance_decr = {
+            let from_account = self.state.get(&from).unwrap();
+            let from_balance = from_account.info.balance;
             let Some(decr) = from_balance.checked_sub(balance) else {
                 return Ok(Some(TransferError::OutOfFunds));
             };
+            decr
+        };
 
-            pre_from_balance = *from_balance;
-            from_balance_decr = decr;
+        // Check if to can receive balance
+        let to_balance_incr = {
+            let to_account = self.state.get(&to).unwrap();
+            let to_balance = to_account.info.balance;
+            let Some(incr) = to_balance.checked_add(balance) else {
+                return Ok(Some(TransferError::OverflowPayment));
+            };
+            incr
+        };
 
+        // Apply balance changes and store only post-balance
+        {
+            let from_account = self.state.get_mut(&from).unwrap();
+            Self::touch_account(&mut self.journal, from, from_account);
+            from_account.info.balance = from_balance_decr;
             from_account
                 .balance_change
                 .change
-                .entry(self.transaction_id as u64)
-                .and_modify(|entry| entry.1 = from_balance_decr)
-                .or_insert((pre_from_balance, from_balance_decr));
-
-            *from_balance = from_balance_decr;
+                .insert(self.transaction_id as u64, from_balance_decr);
         }
 
-        //  modify to_account only
         {
             let to_account = self.state.get_mut(&to).unwrap();
             Self::touch_account(&mut self.journal, to, to_account);
-            let to_balance = &mut to_account.info.balance;
-
-            let Some(to_balance_incr) = to_balance.checked_add(balance) else {
-                // rollback from_account's balance_change since to_account failed
-                let from_account = self.state.get_mut(&from).unwrap();
-                from_account
-                    .balance_change
-                    .change
-                    .remove(&(self.transaction_id as u64));
-                return Ok(Some(TransferError::OverflowPayment));
-            };
-
+            to_account.info.balance = to_balance_incr;
             to_account
                 .balance_change
                 .change
-                .entry(self.transaction_id as u64)
-                .and_modify(|entry| entry.1 = to_balance_incr)
-                .or_insert((*to_balance, to_balance_incr));
-
-            *to_balance = to_balance_incr;
+                .insert(self.transaction_id as u64, to_balance_incr);
         }
 
         // Push journal entry
