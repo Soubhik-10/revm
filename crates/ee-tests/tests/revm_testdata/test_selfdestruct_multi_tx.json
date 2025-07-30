@@ -24,16 +24,7 @@
   {
     "0x0000000000000000000000000000000000000000": {
       "balance_change": {
-        "change": {
-          "0": [
-            "0x0",
-            "0x0"
-          ],
-          "1": [
-            "0x0",
-            "0x0"
-          ]
-        }
+        "change": {}
       },
       "info": {
         "balance": "0x0",
@@ -55,7 +46,7 @@
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0
       },
-      "status": "LoadedAsNotExisting",
+      "status": "Touched | LoadedAsNotExisting",
       "storage": {},
       "storage_access": {
         "reads": {},
@@ -65,12 +56,7 @@
     },
     "0x000000000000000000000000000000000000ffff": {
       "balance_change": {
-        "change": {
-          "0": [
-            "0x0",
-            "0x2386f26fc10000"
-          ]
-        }
+        "change": {}
       },
       "info": {
         "balance": "0x2386f26fc10000",
@@ -102,16 +88,7 @@
     },
     "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
       "balance_change": {
-        "change": {
-          "0": [
-            "0x2386f26fc10000",
-            "0x2386f26fc10000"
-          ],
-          "1": [
-            "0x2386f26fc10000",
-            "0x2386f26fc10000"
-          ]
-        }
+        "change": {}
       },
       "info": {
         "balance": "0x2386f26fc10000",
@@ -143,12 +120,7 @@
     },
     "0xffffffffffffffffffffffffffffffffffffffff": {
       "balance_change": {
-        "change": {
-          "0": [
-            "0x2386f26fc10000",
-            "0x0"
-          ]
-        }
+        "change": {}
       },
       "info": {
         "balance": "0x0",

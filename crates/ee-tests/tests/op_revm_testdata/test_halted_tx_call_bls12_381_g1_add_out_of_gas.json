@@ -12,12 +12,7 @@
   "state": {
     "0x0000000000000000000000000000000000000000": {
       "balance_change": {
-        "change": {
-          "0": [
-            "0x0",
-            "0x0"
-          ]
-        }
+        "change": {}
       },
       "info": {
         "balance": "0x0",
@@ -81,12 +76,7 @@
     },
     "0x4200000000000000000000000000000000000019": {
       "balance_change": {
-        "change": {
-          "0": [
-            "0x0",
-            "0x0"
-          ]
-        }
+        "change": {}
       },
       "info": {
         "balance": "0x0",
@@ -108,7 +98,7 @@
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0
       },
-      "status": "LoadedAsNotExisting",
+      "status": "Touched | LoadedAsNotExisting",
       "storage": {},
       "storage_access": {
         "reads": {},
@@ -118,12 +108,7 @@
     },
     "0x420000000000000000000000000000000000001a": {
       "balance_change": {
-        "change": {
-          "0": [
-            "0x0",
-            "0x0"
-          ]
-        }
+        "change": {}
       },
       "info": {
         "balance": "0x0",
@@ -145,7 +130,7 @@
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0
       },
-      "status": "LoadedAsNotExisting",
+      "status": "Touched | LoadedAsNotExisting",
       "storage": {},
       "storage_access": {
         "reads": {},
@@ -155,12 +140,7 @@
     },
     "0x420000000000000000000000000000000000001b": {
       "balance_change": {
-        "change": {
-          "0": [
-            "0x0",
-            "0x0"
-          ]
-        }
+        "change": {}
       },
       "info": {
         "balance": "0x0",
@@ -182,7 +162,7 @@
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0
       },
-      "status": "LoadedAsNotExisting",
+      "status": "Touched | LoadedAsNotExisting",
       "storage": {},
       "storage_access": {
         "reads": {},
