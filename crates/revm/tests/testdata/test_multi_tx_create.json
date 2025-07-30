@@ -39,7 +39,7 @@
     }
   },
   {
-    "0x000000000000000000000000000000000000ffff": {
+    "0x0000000000000000000000000000000000000000": {
       "info": {
         "balance": "0x0",
         "nonce": 0,
@@ -60,7 +60,7 @@
           }
         }
       },
-      "transaction_id": 1,
+      "transaction_id": 2,
       "storage": {},
       "status": "Touched | LoadedAsNotExisting",
       "storage_access": {
@@ -137,7 +137,7 @@
         "change": {}
       }
     },
-    "0x0000000000000000000000000000000000000000": {
+    "0x000000000000000000000000000000000000ffff": {
       "info": {
         "balance": "0x0",
         "nonce": 0,
@@ -158,7 +158,7 @@
           }
         }
       },
-      "transaction_id": 2,
+      "transaction_id": 1,
       "storage": {},
       "status": "Touched | LoadedAsNotExisting",
       "storage_access": {
