@@ -22,80 +22,6 @@
     }
   },
   {
-    "0x0000000000000000000000000000000000000000": {
-      "info": {
-        "balance": "0x0",
-        "nonce": 0,
-        "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
-        "code": {
-          "LegacyAnalyzed": {
-            "bytecode": "0x00",
-            "original_len": 0,
-            "jump_table": {
-              "order": "bitvec::order::Lsb0",
-              "head": {
-                "width": 8,
-                "index": 0
-              },
-              "bits": 0,
-              "data": []
-            }
-          }
-        }
-      },
-      "transaction_id": 1,
-      "storage": {},
-      "status": "Touched | LoadedAsNotExisting",
-      "storage_access": {
-        "reads": {},
-        "writes": {}
-      },
-       "balance_change": {
-        "change": {
-          "0": [
-            "0x0",
-            "0x0"
-          ]
-        }
-      }
-    },
-    "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
-      "info": {
-        "balance": "0x2386f26fc10000",
-        "nonce": 2,
-        "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
-        "code": {
-          "LegacyAnalyzed": {
-            "bytecode": "0x00",
-            "original_len": 0,
-            "jump_table": {
-              "order": "bitvec::order::Lsb0",
-              "head": {
-                "width": 8,
-                "index": 0
-              },
-              "bits": 0,
-              "data": []
-            }
-          }
-        }
-      },
-      "transaction_id": 1,
-      "storage": {},
-      "status": "Touched",
-      "storage_access": {
-        "reads": {},
-        "writes": {}
-      },
-       "balance_change": {
-        "change": {
-          "0": [
-            "0x0",
-            "0x0"
-          ]
-        }
-      }
-    },
     "0xffffffffffffffffffffffffffffffffffffffff": {
       "info": {
         "balance": "0x0",
@@ -124,13 +50,8 @@
         "reads": {},
         "writes": {}
       },
-       "balance_change": {
-        "change": {
-          "0": [
-            "0x0",
-            "0x0"
-          ]
-        }
+      "balance_change": {
+        "change": {}
       }
     },
     "0x000000000000000000000000000000000000ffff": {
@@ -161,13 +82,72 @@
         "reads": {},
         "writes": {}
       },
-       "balance_change": {
-        "change": {
-          "0": [
-            "0x0",
-            "0x0"
-          ]
+      "balance_change": {
+        "change": {}
+      }
+    },
+    "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
+      "info": {
+        "balance": "0x2386f26fc10000",
+        "nonce": 2,
+        "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+        "code": {
+          "LegacyAnalyzed": {
+            "bytecode": "0x00",
+            "original_len": 0,
+            "jump_table": {
+              "order": "bitvec::order::Lsb0",
+              "head": {
+                "width": 8,
+                "index": 0
+              },
+              "bits": 0,
+              "data": []
+            }
+          }
         }
+      },
+      "transaction_id": 1,
+      "storage": {},
+      "status": "Touched",
+      "storage_access": {
+        "reads": {},
+        "writes": {}
+      },
+      "balance_change": {
+        "change": {}
+      }
+    },
+    "0x0000000000000000000000000000000000000000": {
+      "info": {
+        "balance": "0x0",
+        "nonce": 0,
+        "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+        "code": {
+          "LegacyAnalyzed": {
+            "bytecode": "0x00",
+            "original_len": 0,
+            "jump_table": {
+              "order": "bitvec::order::Lsb0",
+              "head": {
+                "width": 8,
+                "index": 0
+              },
+              "bits": 0,
+              "data": []
+            }
+          }
+        }
+      },
+      "transaction_id": 1,
+      "storage": {},
+      "status": "Touched | LoadedAsNotExisting",
+      "storage_access": {
+        "reads": {},
+        "writes": {}
+      },
+      "balance_change": {
+        "change": {}
       }
     }
   }
