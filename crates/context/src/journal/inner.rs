@@ -308,9 +308,38 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         }
     }
 
+    #[cfg(not(feature = "glamsterdam"))]
     /// Increments the balance of the account.
     ///
     /// Mark account as touched.
+    #[inline]
+    pub fn balance_incr<DB: Database>(
+        &mut self,
+        db: &mut DB,
+        address: Address,
+        balance: U256,
+    ) -> Result<(), DB::Error> {
+        let account = self.load_account(db, address)?.data;
+        let old_balance = account.info.balance;
+        account.info.balance = account.info.balance.saturating_add(balance);
+
+        // march account as touched.
+        if !account.is_touched() {
+            account.mark_touch();
+            self.journal.push(ENTRY::account_touched(address));
+        }
+
+        // add journal entry for balance increment.
+        self.journal
+            .push(ENTRY::balance_changed(address, old_balance));
+        Ok(())
+    }
+
+    #[cfg(feature = "glamsterdam")]
+    /// Increments the balance of the account.
+    ///
+    /// Mark account as touched.
+    /// FOR GLAMSTERDAM
     #[inline]
     pub fn balance_incr<DB: Database>(
         &mut self,
@@ -586,6 +615,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             });
     }
 
+    #[cfg(not(feature = "glamsterdam"))]
     /// Performs selfdestruct action.
     /// Transfers balance from address to target. Check if target exist/is_cold
     ///
@@ -597,6 +627,90 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     ///  * <https://github.com/ethereum/go-ethereum/blob/141cd425310b503c5678e674a8c3872cf46b7086/core/vm/instructions.go#L832-L833>
     ///  * <https://github.com/ethereum/go-ethereum/blob/141cd425310b503c5678e674a8c3872cf46b7086/core/state/statedb.go#L449>
     ///  * <https://eips.ethereum.org/EIPS/eip-6780>
+    #[inline]
+    pub fn selfdestruct<DB: Database>(
+        &mut self,
+        db: &mut DB,
+        address: Address,
+        target: Address,
+    ) -> Result<StateLoad<SelfDestructResult>, DB::Error> {
+        let spec = self.spec;
+        let account_load = self.load_account(db, target)?;
+        let is_cold = account_load.is_cold;
+        let is_empty = account_load.state_clear_aware_is_empty(spec);
+
+        if address != target {
+            // Both accounts are loaded before this point, `address` as we execute its contract.
+            // and `target` at the beginning of the function.
+            let acc_balance = self.state.get(&address).unwrap().info.balance;
+
+            let target_account = self.state.get_mut(&target).unwrap();
+            Self::touch_account(&mut self.journal, target, target_account);
+            target_account.info.balance += acc_balance;
+        }
+
+        let acc = self.state.get_mut(&address).unwrap();
+        let balance = acc.info.balance;
+
+        let destroyed_status = if !acc.is_selfdestructed() {
+            SelfdestructionRevertStatus::GloballySelfdestroyed
+        } else if !acc.is_selfdestructed_locally() {
+            SelfdestructionRevertStatus::LocallySelfdestroyed
+        } else {
+            SelfdestructionRevertStatus::RepeatedSelfdestruction
+        };
+
+        let is_cancun_enabled = spec.is_enabled_in(CANCUN);
+
+        // EIP-6780 (Cancun hard-fork): selfdestruct only if contract is created in the same tx
+        let journal_entry = if acc.is_created_locally() || !is_cancun_enabled {
+            acc.mark_selfdestructed_locally();
+            acc.info.balance = U256::ZERO;
+            Some(ENTRY::account_destroyed(
+                address,
+                target,
+                destroyed_status,
+                balance,
+            ))
+        } else if address != target {
+            acc.info.balance = U256::ZERO;
+            Some(ENTRY::balance_transfer(address, target, balance))
+        } else {
+            // State is not changed:
+            // * if we are after Cancun upgrade and
+            // * Selfdestruct account that is created in the same transaction and
+            // * Specify the target is same as selfdestructed account. The balance stays unchanged.
+            None
+        };
+
+        if let Some(entry) = journal_entry {
+            self.journal.push(entry);
+        };
+
+        Ok(StateLoad {
+            data: SelfDestructResult {
+                had_value: !balance.is_zero(),
+                target_exists: !is_empty,
+                previously_destroyed: destroyed_status
+                    == SelfdestructionRevertStatus::RepeatedSelfdestruction,
+            },
+            is_cold,
+        })
+    }
+
+    #[cfg(feature = "glamsterdam")]
+    /// Performs selfdestruct action.
+    /// Transfers balance from address to target. Check if target exist/is_cold
+    ///
+    /// Note: Balance will be lost if address and target are the same BUT when
+    /// current spec enables Cancun, this happens only when the account associated to address
+    /// is created in the same tx
+    ///
+    /// # References:
+    ///  * <https://github.com/ethereum/go-ethereum/blob/141cd425310b503c5678e674a8c3872cf46b7086/core/vm/instructions.go#L832-L833>
+    ///  * <https://github.com/ethereum/go-ethereum/blob/141cd425310b503c5678e674a8c3872cf46b7086/core/state/statedb.go#L449>
+    ///  * <https://eips.ethereum.org/EIPS/eip-6780>
+    /// FOR GLAMSTERDAM
     #[inline]
     pub fn selfdestruct<DB: Database>(
         &mut self,

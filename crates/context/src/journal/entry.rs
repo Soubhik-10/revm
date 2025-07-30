@@ -287,6 +287,129 @@ impl JournalEntryTr for JournalEntry {
         JournalEntry::CodeChange { address }
     }
 
+    #[cfg(not(feature = "glamsterdam"))]
+    fn revert(
+        self,
+        state: &mut EvmState,
+        transient_storage: Option<&mut TransientStorage>,
+        is_spurious_dragon_enabled: bool,
+    ) {
+        match self {
+            JournalEntry::AccountWarmed { address } => {
+                state.get_mut(&address).unwrap().mark_cold();
+            }
+            JournalEntry::AccountTouched { address } => {
+                if is_spurious_dragon_enabled && address == PRECOMPILE3 {
+                    return;
+                }
+                // remove touched status
+                state.get_mut(&address).unwrap().unmark_touch();
+            }
+            JournalEntry::AccountDestroyed {
+                address,
+                target,
+                destroyed_status,
+                had_balance,
+            } => {
+                let account = state.get_mut(&address).unwrap();
+                // set previous state of selfdestructed flag, as there could be multiple
+                // selfdestructs in one transaction.
+                match destroyed_status {
+                    SelfdestructionRevertStatus::GloballySelfdestroyed => {
+                        account.unmark_selfdestruct();
+                        account.unmark_selfdestructed_locally();
+                    }
+                    SelfdestructionRevertStatus::LocallySelfdestroyed => {
+                        account.unmark_selfdestructed_locally();
+                    }
+                    // do nothing on repeated selfdestruction
+                    SelfdestructionRevertStatus::RepeatedSelfdestruction => (),
+                }
+
+                account.info.balance += had_balance;
+
+                if address != target {
+                    let target = state.get_mut(&target).unwrap();
+                    target.info.balance -= had_balance;
+                }
+            }
+            JournalEntry::BalanceChange {
+                address,
+                old_balance,
+            } => {
+                let account = state.get_mut(&address).unwrap();
+                account.info.balance = old_balance;
+            }
+            JournalEntry::BalanceTransfer { from, to, balance } => {
+                // we don't need to check overflow and underflow when adding and subtracting the balance.
+                let from = state.get_mut(&from).unwrap();
+                from.info.balance += balance;
+                let to = state.get_mut(&to).unwrap();
+                to.info.balance -= balance;
+            }
+            JournalEntry::NonceChange { address } => {
+                state.get_mut(&address).unwrap().info.nonce -= 1;
+            }
+            JournalEntry::AccountCreated {
+                address,
+                is_created_globally,
+            } => {
+                let account = &mut state.get_mut(&address).unwrap();
+                account.unmark_created_locally();
+                if is_created_globally {
+                    account.unmark_created();
+                }
+                // only account that have nonce == 0 can be created so it is safe to set it to 0.
+                account.info.nonce = 0;
+            }
+            JournalEntry::StorageWarmed { address, key } => {
+                state
+                    .get_mut(&address)
+                    .unwrap()
+                    .storage
+                    .get_mut(&key)
+                    .unwrap()
+                    .mark_cold();
+            }
+            JournalEntry::StorageChanged {
+                address,
+                key,
+                had_value,
+            } => {
+                state
+                    .get_mut(&address)
+                    .unwrap()
+                    .storage
+                    .get_mut(&key)
+                    .unwrap()
+                    .present_value = had_value;
+            }
+            JournalEntry::TransientStorageChange {
+                address,
+                key,
+                had_value,
+            } => {
+                let Some(transient_storage) = transient_storage else {
+                    return;
+                };
+                let tkey = (address, key);
+                if had_value.is_zero() {
+                    // if previous value is zero, remove it
+                    transient_storage.remove(&tkey);
+                } else {
+                    // if not zero, reinsert old value to transient storage.
+                    transient_storage.insert(tkey, had_value);
+                }
+            }
+            JournalEntry::CodeChange { address } => {
+                let acc = state.get_mut(&address).unwrap();
+                acc.info.code_hash = KECCAK_EMPTY;
+                acc.info.code = None;
+            }
+        }
+    }
+
+    #[cfg(feature = "glamsterdam")]
     fn revert(
         self,
         state: &mut EvmState,
@@ -419,7 +542,6 @@ impl JournalEntryTr for JournalEntry {
                     .unwrap()
                     .present_value = had_value;
 
-                #[cfg(feature = "glamsterdam")]
                 if let Some(account) = state.get_mut(&address) {
                     let tx_index = account.transaction_id as u64;
 

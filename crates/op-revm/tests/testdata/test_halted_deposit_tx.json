@@ -35,13 +35,8 @@
     "writes": {}
   },
   "balance_change": {
-  "change": {
-    "0": [
-      "0x0",
-      "0x0"
-    ]
+    "change": {}
   }
-}
 
     },
     "0xffffffffffffffffffffffffffffffffffffffff": {
@@ -75,13 +70,8 @@
     "writes": {}
   },
   "balance_change": {
-  "change": {
-    "0": [
-      "0x0",
-      "0x0"
-    ]
+    "change": {}
   }
-}
 
     }
   }
