@@ -40,8 +40,13 @@
     "writes": {}
   },
   "balance_change": {
-    "change": {}
+  "change": {
+    "0": [
+      "0x0",
+      "0x0"
+    ]
   }
+}
 
     }
   }
