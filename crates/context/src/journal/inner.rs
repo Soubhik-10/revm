@@ -318,19 +318,34 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         address: Address,
         balance: U256,
     ) -> Result<(), DB::Error> {
-        let account = self.load_account(db, address)?.data;
-        let old_balance = account.info.balance;
-        account.info.balance = account.info.balance.saturating_add(balance);
+        let tx_id = self.transaction_id as u64;
+
+        let (old_balance, new_balance, touched);
+        {
+            let account = self.load_account(db, address)?.data;
+            old_balance = account.info.balance;
+            new_balance = old_balance.saturating_add(balance);
+            account.info.balance = new_balance;
+            touched = account.is_touched();
+        }
 
         // march account as touched.
-        if !account.is_touched() {
-            account.mark_touch();
+        if !touched {
             self.journal.push(ENTRY::account_touched(address));
         }
 
         // add journal entry for balance increment.
         self.journal
             .push(ENTRY::balance_changed(address, old_balance));
+
+        let account = self.state.get_mut(&address).unwrap();
+        account
+            .balance_change
+            .change
+            .entry(tx_id)
+            .and_modify(|entry| entry.1 = new_balance)
+            .or_insert((old_balance, new_balance));
+
         Ok(())
     }
 
@@ -601,7 +616,16 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
             let target_account = self.state.get_mut(&target).unwrap();
             Self::touch_account(&mut self.journal, target, target_account);
+            let pre_balance = target_account.info.balance;
             target_account.info.balance += acc_balance;
+            let post_balance = target_account.info.balance;
+
+            target_account
+                .balance_change
+                .change
+                .entry(self.transaction_id as u64)
+                .and_modify(|entry| entry.1 = post_balance)
+                .or_insert((pre_balance, post_balance));
         }
 
         let acc = self.state.get_mut(&address).unwrap();
@@ -621,6 +645,11 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         let journal_entry = if acc.is_created_locally() || !is_cancun_enabled {
             acc.mark_selfdestructed_locally();
             acc.info.balance = U256::ZERO;
+            acc.balance_change
+                .change
+                .entry(self.transaction_id as u64)
+                .and_modify(|entry| entry.1 = U256::ZERO)
+                .or_insert((balance, U256::ZERO));
             Some(ENTRY::account_destroyed(
                 address,
                 target,
@@ -629,6 +658,15 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             ))
         } else if address != target {
             acc.info.balance = U256::ZERO;
+            let pre_balance = balance;
+            let post_balance = U256::ZERO;
+
+            acc.balance_change
+                .change
+                .entry(self.transaction_id as u64)
+                .and_modify(|entry| entry.1 = post_balance)
+                .or_insert((pre_balance, post_balance));
+
             Some(ENTRY::balance_transfer(address, target, balance))
         } else {
             // State is not changed:
