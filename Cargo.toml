@@ -37,7 +37,7 @@ members = [
     "examples/custom_precompile_journal",
 ]
 resolver = "2"
-default-members = ["crates/revm"]
+default-members = ["crates/revm", "crates/op-revm"]
 
 [workspace.dependencies]
 # revm

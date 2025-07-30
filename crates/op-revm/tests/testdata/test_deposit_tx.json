@@ -39,8 +39,13 @@
         "reads": {},
         "writes": {}
       },
-      "balance_change": {
-        "change": {}
+       "balance_change": {
+        "change": {
+          "0": [
+            "0x0",
+            "0x0"
+          ]
+        }
       }
     }
   }

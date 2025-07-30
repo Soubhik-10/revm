@@ -67,8 +67,13 @@
         "reads": {},
         "writes": {}
       },
-      "balance_change": {
-        "change": {}
+       "balance_change": {
+        "change": {
+          "0": [
+            "0x0",
+            "0x0"
+          ]
+        }
       }
     },
     "0x84bcbaa99ae6d1f7f70b37d5f6c27c9631eeb2f2": {
@@ -101,8 +106,13 @@
         "reads": {},
         "writes": {}
       },
-      "balance_change": {
-        "change": {}
+       "balance_change": {
+        "change": {
+          "0": [
+            "0x0",
+            "0x0"
+          ]
+        }
       }
     },
     "0x0000000000000000000000000000000000000000": {
@@ -133,8 +143,13 @@
         "reads": {},
         "writes": {}
       },
-      "balance_change": {
-        "change": {}
+       "balance_change": {
+        "change": {
+          "0": [
+            "0x0",
+            "0x0"
+          ]
+        }
       }
     },
     "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
@@ -165,8 +180,13 @@
         "reads": {},
         "writes": {}
       },
-      "balance_change": {
-        "change": {}
+       "balance_change": {
+        "change": {
+          "0": [
+            "0x0",
+            "0x0"
+          ]
+        }
       }
     }
   }

@@ -39,8 +39,13 @@
         "reads": {},
         "writes": {}
       },
-      "balance_change": {
-        "change": {}
+       "balance_change": {
+        "change": {
+          "0": [
+            "0x0",
+            "0x0"
+          ]
+        }
       }
     },
     "0x0000000000000000000000000000000000000100": {
@@ -71,8 +76,13 @@
         "reads": {},
         "writes": {}
       },
-      "balance_change": {
-        "change": {}
+       "balance_change": {
+        "change": {
+          "0": [
+            "0x0",
+            "0x0"
+          ]
+        }
       }
     },
     "0x4200000000000000000000000000000000000019": {
@@ -103,8 +113,13 @@
         "reads": {},
         "writes": {}
       },
-      "balance_change": {
-        "change": {}
+       "balance_change": {
+        "change": {
+          "0": [
+            "0x0",
+            "0x0"
+          ]
+        }
       }
     },
     "0x420000000000000000000000000000000000001b": {
@@ -135,8 +150,13 @@
         "reads": {},
         "writes": {}
       },
-      "balance_change": {
-        "change": {}
+       "balance_change": {
+        "change": {
+          "0": [
+            "0x0",
+            "0x0"
+          ]
+        }
       }
     },
     "0x0000000000000000000000000000000000000000": {
@@ -167,8 +187,13 @@
         "reads": {},
         "writes": {}
       },
-      "balance_change": {
-        "change": {}
+       "balance_change": {
+        "change": {
+          "0": [
+            "0x0",
+            "0x0"
+          ]
+        }
       }
     }
   }
