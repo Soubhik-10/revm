@@ -710,7 +710,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     ///  * <https://github.com/ethereum/go-ethereum/blob/141cd425310b503c5678e674a8c3872cf46b7086/core/vm/instructions.go#L832-L833>
     ///  * <https://github.com/ethereum/go-ethereum/blob/141cd425310b503c5678e674a8c3872cf46b7086/core/state/statedb.go#L449>
     ///  * <https://eips.ethereum.org/EIPS/eip-6780>
-    /// FOR GLAMSTERDAM
+    ///    FOR GLAMSTERDAM
     #[inline]
     pub fn selfdestruct<DB: Database>(
         &mut self,
