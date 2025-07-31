@@ -308,6 +308,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         }
     }
 
+    #[cfg(not(feature = "glamsterdam"))]
     /// Increments the balance of the account.
     ///
     /// Mark account as touched.
@@ -334,6 +335,49 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         Ok(())
     }
 
+    #[cfg(feature = "glamsterdam")]
+    /// Increments the balance of the account.
+    ///
+    /// Mark account as touched.
+    /// FOR GLAMSTERDAM
+    #[inline]
+    pub fn balance_incr<DB: Database>(
+        &mut self,
+        db: &mut DB,
+        address: Address,
+        balance: U256,
+    ) -> Result<(), DB::Error> {
+        let tx_id = self.transaction_id as u64;
+
+        let (old_balance, new_balance, touched);
+        {
+            let account = self.load_account(db, address)?.data;
+            old_balance = account.info.balance;
+            new_balance = old_balance.saturating_add(balance);
+            account.info.balance = new_balance;
+            touched = account.is_touched();
+        }
+
+        // march account as touched.
+        if !touched {
+            self.journal.push(ENTRY::account_touched(address));
+        }
+
+        // add journal entry for balance increment.
+        self.journal
+            .push(ENTRY::balance_changed(address, old_balance));
+
+        let account = self.state.get_mut(&address).unwrap();
+        account
+            .balance_change
+            .change
+            .entry(tx_id)
+            .and_modify(|entry| entry.1 = new_balance)
+            .or_insert((old_balance, new_balance));
+
+        Ok(())
+    }
+
     /// Increments the nonce of the account.
     #[inline]
     pub fn nonce_bump_journal_entry(&mut self, address: Address) {
@@ -341,6 +385,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     }
 
     /// Transfers balance from two accounts. Returns error if sender balance is not enough.
+    #[cfg(not(feature = "glamsterdam"))]
     #[inline]
     pub fn transfer<DB: Database>(
         &mut self,
@@ -379,6 +424,77 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         *to_balance = to_balance_incr;
         // Overflow of U256 balance is not possible to happen on mainnet. We don't bother to return funds from from_acc.
 
+        self.journal
+            .push(ENTRY::balance_transfer(from, to, balance));
+
+        Ok(None)
+    }
+
+    /// Transfers balance from two accounts. Returns error if sender balance is not enough.(FOR GLAMSTERDAM)
+    #[cfg(feature = "glamsterdam")]
+    #[inline]
+    pub fn transfer<DB: Database>(
+        &mut self,
+        db: &mut DB,
+        from: Address,
+        to: Address,
+        balance: U256,
+    ) -> Result<Option<TransferError>, DB::Error> {
+        if balance.is_zero() {
+            self.load_account(db, to)?;
+            let to_account = self.state.get_mut(&to).unwrap();
+            Self::touch_account(&mut self.journal, to, to_account);
+            return Ok(None);
+        }
+
+        // Load accounts
+        self.load_account(db, from)?;
+        self.load_account(db, to)?;
+
+        // Check if balance changes are possible
+        let (pre_from_balance, from_balance_decr) = {
+            let from_account = self.state.get(&from).unwrap();
+            let from_balance = from_account.info.balance;
+            let Some(decr) = from_balance.checked_sub(balance) else {
+                return Ok(Some(TransferError::OutOfFunds));
+            };
+            (from_balance, decr)
+        };
+
+        let (pre_to_balance, to_balance_incr) = {
+            let to_account = self.state.get(&to).unwrap();
+            let to_balance = to_account.info.balance;
+            let Some(incr) = to_balance.checked_add(balance) else {
+                return Ok(Some(TransferError::OverflowPayment));
+            };
+            (to_balance, incr)
+        };
+
+        {
+            let from_account = self.state.get_mut(&from).unwrap();
+            Self::touch_account(&mut self.journal, from, from_account);
+            from_account.info.balance = from_balance_decr;
+            from_account
+                .balance_change
+                .change
+                .entry(self.transaction_id as u64)
+                .and_modify(|entry| entry.1 = from_balance_decr)
+                .or_insert((pre_from_balance, from_balance_decr));
+        }
+
+        {
+            let to_account = self.state.get_mut(&to).unwrap();
+            Self::touch_account(&mut self.journal, to, to_account);
+            to_account.info.balance = to_balance_incr;
+            to_account
+                .balance_change
+                .change
+                .entry(self.transaction_id as u64)
+                .and_modify(|entry| entry.1 = to_balance_incr)
+                .or_insert((pre_to_balance, to_balance_incr));
+        }
+
+        // Push journal entry
         self.journal
             .push(ENTRY::balance_transfer(from, to, balance));
 
@@ -499,6 +615,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             });
     }
 
+    #[cfg(not(feature = "glamsterdam"))]
     /// Performs selfdestruct action.
     /// Transfers balance from address to target. Check if target exist/is_cold
     ///
@@ -557,6 +674,113 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             ))
         } else if address != target {
             acc.info.balance = U256::ZERO;
+            Some(ENTRY::balance_transfer(address, target, balance))
+        } else {
+            // State is not changed:
+            // * if we are after Cancun upgrade and
+            // * Selfdestruct account that is created in the same transaction and
+            // * Specify the target is same as selfdestructed account. The balance stays unchanged.
+            None
+        };
+
+        if let Some(entry) = journal_entry {
+            self.journal.push(entry);
+        };
+
+        Ok(StateLoad {
+            data: SelfDestructResult {
+                had_value: !balance.is_zero(),
+                target_exists: !is_empty,
+                previously_destroyed: destroyed_status
+                    == SelfdestructionRevertStatus::RepeatedSelfdestruction,
+            },
+            is_cold,
+        })
+    }
+
+    #[cfg(feature = "glamsterdam")]
+    /// Performs selfdestruct action.
+    /// Transfers balance from address to target. Check if target exist/is_cold
+    ///
+    /// Note: Balance will be lost if address and target are the same BUT when
+    /// current spec enables Cancun, this happens only when the account associated to address
+    /// is created in the same tx
+    ///
+    /// # References:
+    ///  * <https://github.com/ethereum/go-ethereum/blob/141cd425310b503c5678e674a8c3872cf46b7086/core/vm/instructions.go#L832-L833>
+    ///  * <https://github.com/ethereum/go-ethereum/blob/141cd425310b503c5678e674a8c3872cf46b7086/core/state/statedb.go#L449>
+    ///  * <https://eips.ethereum.org/EIPS/eip-6780>
+    ///    FOR GLAMSTERDAM
+    #[inline]
+    pub fn selfdestruct<DB: Database>(
+        &mut self,
+        db: &mut DB,
+        address: Address,
+        target: Address,
+    ) -> Result<StateLoad<SelfDestructResult>, DB::Error> {
+        let spec = self.spec;
+        let account_load = self.load_account(db, target)?;
+        let is_cold = account_load.is_cold;
+        let is_empty = account_load.state_clear_aware_is_empty(spec);
+
+        if address != target {
+            // Both accounts are loaded before this point, `address` as we execute its contract.
+            // and `target` at the beginning of the function.
+            let acc_balance = self.state.get(&address).unwrap().info.balance;
+
+            let target_account = self.state.get_mut(&target).unwrap();
+            Self::touch_account(&mut self.journal, target, target_account);
+            let pre_balance = target_account.info.balance;
+            target_account.info.balance += acc_balance;
+            let post_balance = target_account.info.balance;
+
+            target_account
+                .balance_change
+                .change
+                .entry(self.transaction_id as u64)
+                .and_modify(|entry| entry.1 = post_balance)
+                .or_insert((pre_balance, post_balance));
+        }
+
+        let acc = self.state.get_mut(&address).unwrap();
+        let balance = acc.info.balance;
+
+        let destroyed_status = if !acc.is_selfdestructed() {
+            SelfdestructionRevertStatus::GloballySelfdestroyed
+        } else if !acc.is_selfdestructed_locally() {
+            SelfdestructionRevertStatus::LocallySelfdestroyed
+        } else {
+            SelfdestructionRevertStatus::RepeatedSelfdestruction
+        };
+
+        let is_cancun_enabled = spec.is_enabled_in(CANCUN);
+
+        // EIP-6780 (Cancun hard-fork): selfdestruct only if contract is created in the same tx
+        let journal_entry = if acc.is_created_locally() || !is_cancun_enabled {
+            acc.mark_selfdestructed_locally();
+            acc.info.balance = U256::ZERO;
+            acc.balance_change
+                .change
+                .entry(self.transaction_id as u64)
+                .and_modify(|entry| entry.1 = U256::ZERO)
+                .or_insert((balance, U256::ZERO));
+            Some(ENTRY::account_destroyed(
+                address,
+                target,
+                destroyed_status,
+                balance,
+            ))
+        } else if address != target {
+            acc.info.balance = U256::ZERO;
+            let pre_balance = balance;
+            let post_balance = U256::ZERO;
+
+            acc.balance_change
+                .change
+                .entry(self.transaction_id as u64)
+                .and_modify(|entry| entry.1 = post_balance)
+                .or_insert((pre_balance, post_balance));
+
             Some(ENTRY::balance_transfer(address, target, balance))
         } else {
             // State is not changed:
@@ -706,6 +930,17 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         }
 
         for storage_key in storage_keys.into_iter() {
+            #[cfg(feature = "glamsterdam")]
+            sload_with_account(
+                load.data,
+                db,
+                &mut self.journal,
+                self.transaction_id,
+                address,
+                storage_key,
+                false,
+            )?;
+            #[cfg(not(feature = "glamsterdam"))]
             sload_with_account(
                 load.data,
                 db,
@@ -722,7 +957,36 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     ///
     /// # Panics
     ///
+    /// Panics if the account is not present in the state.(FOR GLAMSTERDAM)
+    #[cfg(feature = "glamsterdam")]
+    #[inline]
+    pub fn sload<DB: Database>(
+        &mut self,
+        db: &mut DB,
+        address: Address,
+        key: StorageKey,
+        from_sstore: bool,
+    ) -> Result<StateLoad<StorageValue>, DB::Error> {
+        // assume acc is warm
+        let account = self.state.get_mut(&address).unwrap();
+        // only if account is created in this tx we can assume that storage is empty.
+        sload_with_account(
+            account,
+            db,
+            &mut self.journal,
+            self.transaction_id,
+            address,
+            key,
+            from_sstore,
+        )
+    }
+
+    /// Loads storage slot.
+    ///
+    /// # Panics
+    ///
     /// Panics if the account is not present in the state.
+    #[cfg(not(feature = "glamsterdam"))]
     #[inline]
     pub fn sload<DB: Database>(
         &mut self,
@@ -747,7 +1011,75 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     ///
     /// And returns (original,present,new) slot value.
     ///
+    /// **Note**: Account should already be present in our state.(FOR GLAMSTERDAM)
+    #[cfg(feature = "glamsterdam")]
+    #[inline]
+    pub fn sstore<DB: Database>(
+        &mut self,
+        db: &mut DB,
+        address: Address,
+        key: StorageKey,
+        new: StorageValue,
+    ) -> Result<StateLoad<SStoreResult>, DB::Error> {
+        // assume that acc exists and load the slot.
+        let present = self.sload(db, address, key, true)?;
+
+        // get original_value and present_value first, then reborrow mutably later
+        let (original_value, present_value, is_cold) = {
+            let acc = self.state.get(&address).unwrap();
+            let slot = acc.storage.get(&key).unwrap();
+
+            // new value is same as present, we don't need to do anything
+            if slot.present_value == new {
+                let original_value = slot.original_value();
+                let present_value = slot.present_value;
+
+                let acc = self.state.get_mut(&address).unwrap();
+
+                set_storage_access_reads(acc, self.transaction_id, key);
+
+                return Ok(StateLoad::new(
+                    SStoreResult {
+                        original_value,
+                        present_value,
+                        new_value: new,
+                    },
+                    present.is_cold,
+                ));
+            }
+
+            (slot.original_value(), slot.present_value, present.is_cold)
+        };
+
+        let acc = self.state.get_mut(&address).unwrap();
+
+        // if there is no original value in dirty return present value, that is our original.
+        let slot = acc.storage.get_mut(&key).unwrap();
+
+        self.journal
+            .push(ENTRY::storage_changed(address, key, present_value));
+
+        // insert value into present state.
+        slot.present_value = new;
+
+        set_storage_change_write(acc, self.transaction_id, key, present_value, new);
+
+        Ok(StateLoad::new(
+            SStoreResult {
+                original_value,
+                present_value,
+                new_value: new,
+            },
+            is_cold,
+        ))
+    }
+
+    /// Stores storage slot.
+    ///
+    /// And returns (original,present,new) slot value.
+    ///
     /// **Note**: Account should already be present in our state.
+    #[cfg(not(feature = "glamsterdam"))]
     #[inline]
     pub fn sstore<DB: Database>(
         &mut self,
@@ -843,8 +1175,55 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     }
 }
 
+/// Loads storage slot with account.(FOR GLAMSTERDAM)
+#[cfg(feature = "glamsterdam")]
+#[inline]
+pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
+    account: &mut Account,
+    db: &mut DB,
+    journal: &mut Vec<ENTRY>,
+    transaction_id: usize,
+    address: Address,
+    key: StorageKey,
+    from_sstore: bool,
+) -> Result<StateLoad<StorageValue>, DB::Error> {
+    let is_newly_created = account.is_created();
+    let (value, is_cold) = match account.storage.entry(key) {
+        Entry::Occupied(occ) => {
+            let slot = occ.into_mut();
+            let is_cold = slot.mark_warm_with_transaction_id(transaction_id);
+            (slot.present_value, is_cold)
+        }
+        Entry::Vacant(vac) => {
+            // if storage was cleared, we don't need to ping db.
+            let value = if is_newly_created {
+                StorageValue::ZERO
+            } else {
+                db.storage(address, key)?
+            };
+
+            vac.insert(EvmStorageSlot::new(value, transaction_id));
+
+            (value, true)
+        }
+    };
+
+    if is_cold {
+        // add it to journal as cold loaded.
+        journal.push(ENTRY::storage_warmed(address, key));
+    }
+
+    // Set `StorageChange` for reads here
+    if !from_sstore {
+        set_storage_access_reads(account, transaction_id, key);
+    }
+
+    Ok(StateLoad::new(value, is_cold))
+}
+
 /// Loads storage slot with account.
 #[inline]
+#[cfg(not(feature = "glamsterdam"))]
 pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
     account: &mut Account,
     db: &mut DB,
@@ -893,4 +1272,34 @@ fn reset_preloaded_addresses(
         return;
     }
     warm_preloaded_addresses.clone_from(precompiles);
+}
+
+/// Sets storage change write for the account.(FOR GLAMSTERDAM)
+#[cfg(feature = "glamsterdam")]
+fn set_storage_change_write(
+    account: &mut Account,
+    transaction_id: usize,
+    key: StorageKey,
+    pre_value: StorageValue,
+    post_value: StorageValue,
+) {
+    let tx_index = transaction_id as u64;
+    account
+        .storage_access
+        .writes
+        .entry(tx_index)
+        .or_default()
+        .insert(key, (pre_value, post_value));
+}
+
+/// Sets storage access reads for the account.(FOR GLAMSTERDAM)
+#[cfg(feature = "glamsterdam")]
+fn set_storage_access_reads(account: &mut Account, transaction_id: usize, key: StorageKey) {
+    let tx_index = transaction_id as u64;
+    account
+        .storage_access
+        .reads
+        .entry(tx_index)
+        .or_default()
+        .insert(key);
 }

@@ -157,11 +157,6 @@ where
             )?;
         }
 
-        // Bump the nonce for calls. Nonce for CREATE will be bumped in `handle_create`.
-        if tx.kind().is_call() {
-            caller_account.info.nonce = caller_account.info.nonce.saturating_add(1);
-        }
-
         let max_balance_spending = tx.max_balance_spending()?.saturating_add(additional_cost);
 
         // old balance is journaled before mint is incremented.
@@ -174,11 +169,7 @@ where
 
         // Check if account has enough balance for `gas_limit * max_fee`` and value transfer.
         // Transfer will be done inside `*_inner` functions.
-        if is_balance_check_disabled {
-            // Make sure the caller's balance is at least the value of the transaction.
-            // this is not consensus critical, and it is used in testing.
-            new_balance = caller_account.info.balance.max(tx.value());
-        } else if !is_deposit && max_balance_spending > new_balance {
+        if !is_deposit && max_balance_spending > new_balance && !is_balance_check_disabled {
             // skip max balance check for deposit transactions.
             // this check for deposit was skipped previously in `validate_tx_against_state` function
             return Err(InvalidTransaction::LackOfFundForMaxFee {
@@ -186,28 +177,38 @@ where
                 balance: Box::new(new_balance),
             }
             .into());
-        } else {
-            let effective_balance_spending =
-                tx.effective_balance_spending(basefee, blob_price).expect(
-                    "effective balance is always smaller than max balance so it can't overflow",
-                );
+        }
 
-            // subtracting max balance spending with value that is going to be deducted later in the call.
-            let gas_balance_spending = effective_balance_spending - tx.value();
+        let effective_balance_spending = tx
+            .effective_balance_spending(basefee, blob_price)
+            .expect("effective balance is always smaller than max balance so it can't overflow");
 
-            // If the transaction is not a deposit transaction, subtract the L1 data fee from the
-            // caller's balance directly after minting the requested amount of ETH.
-            // Additionally deduct the operator fee from the caller's account.
-            //
-            // In case of deposit additional cost will be zero.
-            let op_gas_balance_spending = gas_balance_spending.saturating_add(additional_cost);
+        // subtracting max balance spending with value that is going to be deducted later in the call.
+        let gas_balance_spending = effective_balance_spending - tx.value();
 
-            new_balance = new_balance.saturating_sub(op_gas_balance_spending);
+        // If the transaction is not a deposit transaction, subtract the L1 data fee from the
+        // caller's balance directly after minting the requested amount of ETH.
+        // Additionally deduct the operator fee from the caller's account.
+        //
+        // In case of deposit additional cost will be zero.
+        let op_gas_balance_spending = gas_balance_spending.saturating_add(additional_cost);
+
+        new_balance = new_balance.saturating_sub(op_gas_balance_spending);
+
+        if is_balance_check_disabled {
+            // Make sure the caller's balance is at least the value of the transaction.
+            // this is not consensus critical, and it is used in testing.
+            new_balance = new_balance.max(tx.value());
         }
 
         // Touch account so we know it is changed.
         caller_account.mark_touch();
         caller_account.info.balance = new_balance;
+
+        // Bump the nonce for calls. Nonce for CREATE will be bumped in `handle_create`.
+        if tx.kind().is_call() {
+            caller_account.info.nonce = caller_account.info.nonce.saturating_add(1);
+        }
 
         // NOTE: all changes to the caller account should journaled so in case of error
         // we can revert the changes.
@@ -1107,5 +1108,38 @@ mod tests {
         // Check that the caller was reimbursed the correct amount of ETH.
         let account = evm.ctx().journal_mut().load_account(SENDER).unwrap();
         assert_eq!(account.info.balance, expected_refund);
+    }
+
+    #[test]
+    fn test_tx_low_balance_nonce_unchanged() {
+        let ctx = Context::op().with_tx(
+            OpTransaction::builder()
+                .base(TxEnv::builder().value(U256::from(1000)))
+                .build_fill(),
+        );
+
+        let mut evm = ctx.build_op();
+
+        let handler =
+            OpHandler::<_, EVMError<_, OpTransactionError>, EthFrame<EthInterpreter>>::new();
+
+        let result = handler.validate_against_state_and_deduct_caller(&mut evm);
+
+        assert!(matches!(
+            result.err().unwrap(),
+            EVMError::Transaction(OpTransactionError::Base(
+                InvalidTransaction::LackOfFundForMaxFee { .. }
+            ))
+        ));
+        assert_eq!(
+            evm.0
+                .ctx
+                .journal_mut()
+                .load_account(Address::ZERO)
+                .unwrap()
+                .info
+                .nonce,
+            0
+        );
     }
 }

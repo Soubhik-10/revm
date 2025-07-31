@@ -14,11 +14,11 @@ use primitives::Bytes;
 ///
 /// # Bytecode Padding
 ///
-/// All legacy bytecode is padded with 33 zero bytes at the end. This padding ensures the
-/// bytecode always ends with a valid STOP (0x00) opcode. The reason for 33 bytes padding (and not one byte)
-/// is handling the edge cases  where a PUSH32 opcode appears at the end of the original
-/// bytecode without enough remaining bytes for its immediate data. Original bytecode length
-/// is stored in order to be able to copy original bytecode.
+/// Legacy bytecode can be padded with up to 33 zero bytes at the end. This padding ensures that:
+/// - the bytecode always ends with a valid STOP (0x00) opcode.
+/// - there aren't incomplete immediates, meaning we can skip bounds checks in `PUSH*` instructions.
+///
+/// The non-padded length is stored in order to be able to copy the original bytecode.
 ///
 /// # Gas safety
 ///
@@ -29,11 +29,11 @@ use primitives::Bytes;
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LegacyAnalyzedBytecode {
-    /// Bytecode with 33 zero bytes padding
+    /// The potentially padded bytecode.
     bytecode: Bytes,
-    /// Original bytes length
+    /// The original bytecode length.
     original_len: usize,
-    /// Jump table
+    /// The jump table.
     jump_table: JumpTable,
 }
 
@@ -49,7 +49,18 @@ impl Default for LegacyAnalyzedBytecode {
 }
 
 impl LegacyAnalyzedBytecode {
+    /// Analyzes the bytecode.
+    ///
+    /// See [`LegacyAnalyzedBytecode`] for more details.
+    pub fn analyze(bytecode: Bytes) -> Self {
+        let original_len = bytecode.len();
+        let (jump_table, padded_bytecode) = super::analysis::analyze_legacy(bytecode);
+        Self::new(padded_bytecode, original_len, jump_table)
+    }
+
     /// Creates new analyzed bytecode.
+    ///
+    /// Prefer instantiating using [`analyze`](Self::analyze) instead.
     ///
     /// # Panics
     ///
@@ -57,23 +68,23 @@ impl LegacyAnalyzedBytecode {
     /// * If jump table length is less than `original_len`.
     /// * If last bytecode byte is not `0x00` or if bytecode is empty.
     pub fn new(bytecode: Bytes, original_len: usize, jump_table: JumpTable) -> Self {
-        if original_len > bytecode.len() {
-            panic!("original_len is greater than bytecode length");
-        }
-        if original_len > jump_table.len() {
-            panic!(
-                "jump table length {} is less than original length {}",
-                jump_table.len(),
-                original_len
+        assert!(
+            original_len <= bytecode.len(),
+            "original_len is greater than bytecode length"
+        );
+        assert!(
+            original_len <= jump_table.len(),
+            "jump table length is less than original length"
+        );
+        assert!(!bytecode.is_empty(), "bytecode cannot be empty");
+
+        if let Some(&last_opcode) = bytecode.last() {
+            assert!(
+                opcode::OpCode::info_by_op(last_opcode)
+                    .map(|o| o.is_terminating())
+                    .unwrap_or(false),
+                "last bytecode byte should be terminating"
             );
-        }
-
-        if bytecode.is_empty() {
-            panic!("bytecode cannot be empty");
-        }
-
-        if bytecode.last() != Some(&opcode::STOP) {
-            panic!("last bytecode byte should be STOP (0x00)");
         }
 
         Self {
@@ -137,7 +148,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "jump table length 1 is less than original length 2")]
+    #[should_panic(expected = "jump table length is less than original length")]
     fn test_panic_on_short_jump_table() {
         let bytecode = Bytes::from_static(&[opcode::PUSH1, 0x01]);
         let bytecode = LegacyRawBytecode(bytecode).into_analyzed();
@@ -146,18 +157,18 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "last bytecode byte should be STOP (0x00)")]
-    fn test_panic_on_non_stop_bytecode() {
-        let bytecode = Bytes::from_static(&[opcode::PUSH1, 0x01]);
-        let jump_table = JumpTable::new(bitvec![u8, Lsb0; 0; 2]);
-        let _ = LegacyAnalyzedBytecode::new(bytecode, 2, jump_table);
-    }
-
-    #[test]
     #[should_panic(expected = "bytecode cannot be empty")]
     fn test_panic_on_empty_bytecode() {
         let bytecode = Bytes::from_static(&[]);
         let jump_table = JumpTable::new(bitvec![u8, Lsb0; 0; 0]);
         let _ = LegacyAnalyzedBytecode::new(bytecode, 0, jump_table);
+    }
+
+    #[test]
+    #[should_panic(expected = "last bytecode byte should be terminating")]
+    fn test_panic_on_non_stop_bytecode() {
+        let bytecode = Bytes::from_static(&[opcode::PUSH1, 0x01]);
+        let jump_table = JumpTable::new(bitvec![u8, Lsb0; 0; 2]);
+        let _ = LegacyAnalyzedBytecode::new(bytecode, 2, jump_table);
     }
 }

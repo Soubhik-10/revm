@@ -1,6 +1,7 @@
 //! Modexp precompile added in [`EIP-198`](https://eips.ethereum.org/EIPS/eip-198)
 //! and reprices in berlin hardfork with [`EIP-2565`](https://eips.ethereum.org/EIPS/eip-2565).
 use crate::{
+    crypto,
     utilities::{left_pad, left_pad_vec, right_pad_vec, right_pad_with_offset},
     PrecompileError, PrecompileOutput, PrecompileResult, PrecompileWithAddress,
 };
@@ -21,7 +22,7 @@ pub const OSAKA: PrecompileWithAddress = PrecompileWithAddress(crate::u64_to_add
 
 #[cfg(feature = "gmp")]
 /// GMP-based modular exponentiation implementation
-fn modexp(base: &[u8], exponent: &[u8], modulus: &[u8]) -> Vec<u8> {
+pub(crate) fn modexp(base: &[u8], exponent: &[u8], modulus: &[u8]) -> Vec<u8> {
     use rug::{integer::Order::Msf, Integer};
     // Convert byte slices to GMP integers
     let base_int = Integer::from_digits(base, Msf);
@@ -39,7 +40,7 @@ fn modexp(base: &[u8], exponent: &[u8], modulus: &[u8]) -> Vec<u8> {
 }
 
 #[cfg(not(feature = "gmp"))]
-fn modexp(base: &[u8], exponent: &[u8], modulus: &[u8]) -> Vec<u8> {
+pub(crate) fn modexp(base: &[u8], exponent: &[u8], modulus: &[u8]) -> Vec<u8> {
     aurora_engine_modexp::modexp(base, exponent, modulus)
 }
 
@@ -158,7 +159,7 @@ where
     debug_assert_eq!(modulus.len(), mod_len);
 
     // Call the modexp.
-    let output = modexp(base, exponent, modulus);
+    let output = crypto().modexp(base, exponent, modulus)?;
 
     // Left pad the result to modulus length. bytes will always by less or equal to modulus length.
     Ok(PrecompileOutput::new(
@@ -201,7 +202,7 @@ pub fn berlin_gas_calc(base_len: u64, exp_len: u64, mod_len: u64, exp_highp: &U2
 /// 2. Increase cost when exponent is larger than 32 bytes
 /// 3. Increase cost when base or modulus is larger than 32 bytes
 pub fn osaka_gas_calc(base_len: u64, exp_len: u64, mod_len: u64, exp_highp: &U256) -> u64 {
-    gas_calc::<500, 16, 3, _>(base_len, exp_len, mod_len, exp_highp, |max_len| -> U256 {
+    gas_calc::<500, 16, 1, _>(base_len, exp_len, mod_len, exp_highp, |max_len| -> U256 {
         if max_len <= 32 {
             return U256::from(16); // multiplication_complexity = 16
         }
@@ -410,8 +411,8 @@ mod tests {
     ];
 
     const OSAKA_GAS: [u64; 19] = [
-        151_198, 1_360, 1_360, 1_360, 500, 500, 682, 500, 500, 2_730, 682, 682, 10_922, 2_730,
-        2_730, 43_690, 10_922, 10_922, 174_762,
+        453_596, 4_080, 4_080, 4_080, 500, 500, 2_048, 512, 512, 8_192, 2_048, 2_048, 32_768,
+        8_192, 8_192, 131_072, 32_768, 32_768, 524_288,
     ];
 
     #[test]

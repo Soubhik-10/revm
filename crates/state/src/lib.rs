@@ -1,21 +1,40 @@
 //! Account and storage state.
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(not(feature = "std"), no_std)]
+extern crate alloc;
 
 mod account_info;
 mod types;
 pub use bytecode;
 
 pub use account_info::AccountInfo;
+use alloc::collections::{BTreeMap, BTreeSet};
+use bitflags::bitflags;
 pub use bytecode::Bytecode;
+use core::hash::Hash;
 pub use primitives;
+use primitives::alloy_primitives::TxIndex;
+use primitives::hardfork::SpecId;
+use primitives::{HashMap, StorageKey, StorageValue, U256};
 pub use types::{EvmState, EvmStorage, TransientStorage};
 
-use bitflags::bitflags;
-use core::hash::Hash;
-use primitives::hardfork::SpecId;
-use primitives::{HashMap, StorageKey, StorageValue};
+/// `StorageAccess` keeps a record of storage_reads and storage_writes as per Eip-7928
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct StorageAccess {
+    /// tx_index → read_keys
+    pub reads: BTreeMap<TxIndex, BTreeSet<StorageKey>>,
+    /// tx_index → key → (pre, post)
+    pub writes: BTreeMap<TxIndex, BTreeMap<StorageKey, (StorageValue, StorageValue)>>,
+}
 
+/// `BalanceChange` keeps a record of pre_balance and post_balance as per Eip-7928
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BalanceChange {
+    /// tx_index → (pre_balance , post_balance)
+    pub change: HashMap<TxIndex, (U256, U256)>,
+}
 /// Account type used inside Journal to track changed to state.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -28,6 +47,10 @@ pub struct Account {
     pub storage: EvmStorage,
     /// Account status flags
     pub status: AccountStatus,
+    /// Storage access information for this account.
+    pub storage_access: StorageAccess,
+    /// Balance change information for this account.
+    pub balance_change: BalanceChange,
 }
 
 impl Account {
@@ -38,6 +61,8 @@ impl Account {
             storage: HashMap::default(),
             transaction_id,
             status: AccountStatus::LoadedAsNotExisting,
+            storage_access: StorageAccess::default(),
+            balance_change: BalanceChange::default(),
         }
     }
 
@@ -255,6 +280,8 @@ impl From<AccountInfo> for Account {
             storage: HashMap::default(),
             transaction_id: 0,
             status: AccountStatus::empty(),
+            storage_access: StorageAccess::default(),
+            balance_change: BalanceChange::default(),
         }
     }
 }

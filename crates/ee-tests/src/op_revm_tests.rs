@@ -1,9 +1,8 @@
 //! Integration tests for the `op-revm` crate.
-mod common;
 
-use common::compare_or_save_testdata;
+use crate::TestdataConfig;
 use op_revm::{
-    precompiles::bn128_pair::GRANITE_MAX_INPUT_SIZE, DefaultOp, L1BlockInfo, OpBuilder,
+    precompiles::bn254_pair::GRANITE_MAX_INPUT_SIZE, DefaultOp, L1BlockInfo, OpBuilder,
     OpHaltReason, OpSpecId, OpTransaction,
 };
 use revm::{
@@ -14,16 +13,34 @@ use revm::{
     },
     context_interface::result::HaltReason,
     database::{BenchmarkDB, EmptyDB, BENCH_CALLER, BENCH_CALLER_BALANCE, BENCH_TARGET},
+    handler::system_call::SYSTEM_ADDRESS,
     interpreter::{
         gas::{calculate_initial_tx_gas, InitialAndFloorGas},
         Interpreter, InterpreterTypes,
     },
-    precompile::{bls12_381_const, bls12_381_utils, bn128, secp256r1, u64_to_address},
-    primitives::{eip7825, Address, Bytes, Log, TxKind, U256},
+    precompile::{bls12_381_const, bls12_381_utils, bn254, secp256r1, u64_to_address},
+    primitives::{bytes, eip7825, Address, Bytes, Log, TxKind, U256},
     state::Bytecode,
-    Context, ExecuteEvm, InspectEvm, Inspector, Journal,
+    Context, ExecuteEvm, InspectEvm, Inspector, Journal, SystemCallEvm,
 };
+use std::path::PathBuf;
 use std::vec::Vec;
+
+// Re-export the constant for testdata directory path
+const TESTS_TESTDATA: &str = "tests/op_revm_testdata";
+
+fn op_revm_testdata_config() -> TestdataConfig {
+    TestdataConfig {
+        testdata_dir: PathBuf::from(TESTS_TESTDATA),
+    }
+}
+
+fn compare_or_save_op_testdata<T>(filename: &str, output: &T)
+where
+    T: serde::Serialize + for<'a> serde::Deserialize<'a> + PartialEq + std::fmt::Debug,
+{
+    crate::compare_or_save_testdata_with_config(filename, output, op_revm_testdata_config());
+}
 
 #[test]
 fn test_deposit_tx() {
@@ -49,7 +66,7 @@ fn test_deposit_tx() {
             .map(|a| a.info.balance),
         Some(U256::from(100))
     );
-    compare_or_save_testdata("test_deposit_tx.json", &output);
+    compare_or_save_op_testdata("test_deposit_tx.json", &output);
 }
 
 #[test]
@@ -90,7 +107,7 @@ fn test_halted_deposit_tx() {
         Some(U256::from(100) + BENCH_CALLER_BALANCE)
     );
 
-    compare_or_save_testdata("test_halted_deposit_tx.json", &output);
+    compare_or_save_op_testdata("test_halted_deposit_tx.json", &output);
 }
 
 fn p256verify_test_tx(
@@ -124,7 +141,7 @@ fn test_tx_call_p256verify() {
     // assert successful call to P256VERIFY
     assert!(output.result.is_success());
 
-    compare_or_save_testdata("test_tx_call_p256verify.json", &output);
+    compare_or_save_op_testdata("test_tx_call_p256verify.json", &output);
 }
 
 #[test]
@@ -158,10 +175,10 @@ fn test_halted_tx_call_p256verify() {
         }
     ));
 
-    compare_or_save_testdata("test_halted_tx_call_p256verify.json", &output);
+    compare_or_save_op_testdata("test_halted_tx_call_p256verify.json", &output);
 }
 
-fn bn128_pair_test_tx(
+fn bn254_pair_test_tx(
     spec: OpSpecId,
 ) -> Context<BlockEnv, OpTransaction<TxEnv>, CfgEnv<OpSpecId>, EmptyDB, Journal<EmptyDB>, L1BlockInfo>
 {
@@ -174,7 +191,7 @@ fn bn128_pair_test_tx(
             OpTransaction::builder()
                 .base(
                     TxEnv::builder()
-                        .kind(TxKind::Call(bn128::pair::ADDRESS))
+                        .kind(TxKind::Call(bn254::pair::ADDRESS))
                         .data(input)
                         .gas_limit(initial_gas),
                 )
@@ -184,8 +201,8 @@ fn bn128_pair_test_tx(
 }
 
 #[test]
-fn test_halted_tx_call_bn128_pair_fjord() {
-    let ctx = bn128_pair_test_tx(OpSpecId::FJORD);
+fn test_halted_tx_call_bn254_pair_fjord() {
+    let ctx = bn254_pair_test_tx(OpSpecId::FJORD);
 
     let mut evm = ctx.build_op();
     let output = evm.replay().unwrap();
@@ -199,12 +216,12 @@ fn test_halted_tx_call_bn128_pair_fjord() {
         }
     ));
 
-    compare_or_save_testdata("test_halted_tx_call_bn128_pair_fjord.json", &output);
+    compare_or_save_op_testdata("test_halted_tx_call_bn254_pair_fjord.json", &output);
 }
 
 #[test]
-fn test_halted_tx_call_bn128_pair_granite() {
-    let ctx = bn128_pair_test_tx(OpSpecId::GRANITE);
+fn test_halted_tx_call_bn254_pair_granite() {
+    let ctx = bn254_pair_test_tx(OpSpecId::GRANITE);
 
     let mut evm = ctx.build_op();
     let output = evm.replay().unwrap();
@@ -218,7 +235,7 @@ fn test_halted_tx_call_bn128_pair_granite() {
         }
     ));
 
-    compare_or_save_testdata("test_halted_tx_call_bn128_pair_granite.json", &output);
+    compare_or_save_op_testdata("test_halted_tx_call_bn254_pair_granite.json", &output);
 }
 
 #[test]
@@ -252,7 +269,7 @@ fn test_halted_tx_call_bls12_381_g1_add_out_of_gas() {
         }
     ));
 
-    compare_or_save_testdata(
+    compare_or_save_op_testdata(
         "test_halted_tx_call_bls12_381_g1_add_out_of_gas.json",
         &output,
     );
@@ -288,7 +305,7 @@ fn test_halted_tx_call_bls12_381_g1_add_input_wrong_size() {
         }
     ));
 
-    compare_or_save_testdata(
+    compare_or_save_op_testdata(
         "test_halted_tx_call_bls12_381_g1_add_input_wrong_size.json",
         &output,
     );
@@ -367,7 +384,7 @@ fn test_halted_tx_call_bls12_381_g1_msm_input_wrong_size() {
         }
     ));
 
-    compare_or_save_testdata(
+    compare_or_save_op_testdata(
         "test_halted_tx_call_bls12_381_g1_msm_input_wrong_size.json",
         &output,
     );
@@ -414,7 +431,7 @@ fn test_halted_tx_call_bls12_381_g1_msm_out_of_gas() {
         }
     ));
 
-    compare_or_save_testdata(
+    compare_or_save_op_testdata(
         "test_halted_tx_call_bls12_381_g1_msm_out_of_gas.json",
         &output,
     );
@@ -436,7 +453,7 @@ fn test_halted_tx_call_bls12_381_g1_msm_wrong_input_layout() {
         }
     ));
 
-    compare_or_save_testdata(
+    compare_or_save_op_testdata(
         "test_halted_tx_call_bls12_381_g1_msm_wrong_input_layout.json",
         &output,
     );
@@ -473,7 +490,7 @@ fn test_halted_tx_call_bls12_381_g2_add_out_of_gas() {
         }
     ));
 
-    compare_or_save_testdata(
+    compare_or_save_op_testdata(
         "test_halted_tx_call_bls12_381_g2_add_out_of_gas.json",
         &output,
     );
@@ -510,7 +527,7 @@ fn test_halted_tx_call_bls12_381_g2_add_input_wrong_size() {
         }
     ));
 
-    compare_or_save_testdata(
+    compare_or_save_op_testdata(
         "test_halted_tx_call_bls12_381_g2_add_input_wrong_size.json",
         &output,
     );
@@ -589,7 +606,7 @@ fn test_halted_tx_call_bls12_381_g2_msm_input_wrong_size() {
         }
     ));
 
-    compare_or_save_testdata(
+    compare_or_save_op_testdata(
         "test_halted_tx_call_bls12_381_g2_msm_input_wrong_size.json",
         &output,
     );
@@ -636,7 +653,7 @@ fn test_halted_tx_call_bls12_381_g2_msm_out_of_gas() {
         }
     ));
 
-    compare_or_save_testdata(
+    compare_or_save_op_testdata(
         "test_halted_tx_call_bls12_381_g2_msm_out_of_gas.json",
         &output,
     );
@@ -658,7 +675,7 @@ fn test_halted_tx_call_bls12_381_g2_msm_wrong_input_layout() {
         }
     ));
 
-    compare_or_save_testdata(
+    compare_or_save_op_testdata(
         "test_halted_tx_call_bls12_381_g2_msm_wrong_input_layout.json",
         &output,
     );
@@ -732,7 +749,7 @@ fn test_halted_tx_call_bls12_381_pairing_input_wrong_size() {
         }
     ));
 
-    compare_or_save_testdata(
+    compare_or_save_op_testdata(
         "test_halted_tx_call_bls12_381_pairing_input_wrong_size.json",
         &output,
     );
@@ -776,7 +793,7 @@ fn test_halted_tx_call_bls12_381_pairing_out_of_gas() {
         }
     ));
 
-    compare_or_save_testdata(
+    compare_or_save_op_testdata(
         "test_halted_tx_call_bls12_381_pairing_out_of_gas.json",
         &output,
     );
@@ -798,7 +815,7 @@ fn test_tx_call_bls12_381_pairing_wrong_input_layout() {
         }
     ));
 
-    compare_or_save_testdata(
+    compare_or_save_op_testdata(
         "test_halted_tx_call_bls12_381_pairing_wrong_input_layout.json",
         &output,
     );
@@ -840,7 +857,7 @@ fn test_halted_tx_call_bls12_381_map_fp_to_g1_out_of_gas() {
         }
     ));
 
-    compare_or_save_testdata(
+    compare_or_save_op_testdata(
         "test_halted_tx_call_bls12_381_map_fp_to_g1_out_of_gas.json",
         &output,
     );
@@ -882,7 +899,7 @@ fn test_halted_tx_call_bls12_381_map_fp_to_g1_input_wrong_size() {
         }
     ));
 
-    compare_or_save_testdata(
+    compare_or_save_op_testdata(
         "test_halted_tx_call_bls12_381_map_fp_to_g1_input_wrong_size.json",
         &output,
     );
@@ -924,7 +941,7 @@ fn test_halted_tx_call_bls12_381_map_fp2_to_g2_out_of_gas() {
         }
     ));
 
-    compare_or_save_testdata(
+    compare_or_save_op_testdata(
         "test_halted_tx_call_bls12_381_map_fp2_to_g2_out_of_gas.json",
         &output,
     );
@@ -966,10 +983,60 @@ fn test_halted_tx_call_bls12_381_map_fp2_to_g2_input_wrong_size() {
         }
     ));
 
-    compare_or_save_testdata(
+    compare_or_save_op_testdata(
         "test_halted_tx_call_bls12_381_map_fp2_to_g2_input_wrong_size.json",
         &output,
     );
+}
+
+#[test]
+#[cfg(feature = "optional_balance_check")]
+fn test_disable_balance_check() {
+    const RETURN_CALLER_BALANCE_BYTECODE: &[u8] = &[
+        opcode::CALLER,
+        opcode::BALANCE,
+        opcode::PUSH1,
+        0x00,
+        opcode::MSTORE,
+        opcode::PUSH1,
+        0x20,
+        opcode::PUSH1,
+        0x00,
+        opcode::RETURN,
+    ];
+
+    let mut evm = Context::op()
+        .modify_cfg_chained(|cfg| cfg.disable_balance_check = true)
+        .with_db(BenchmarkDB::new_bytecode(Bytecode::new_legacy(
+            RETURN_CALLER_BALANCE_BYTECODE.into(),
+        )))
+        .build_op();
+
+    // Construct tx so that effective cost is more than caller balance.
+    let gas_price = 1;
+    let gas_limit = 100_000;
+    // Make sure value doesn't consume all balance since we want to validate that all effective
+    // cost is deducted.
+    let tx_value = BENCH_CALLER_BALANCE - U256::from(1);
+
+    let result = evm
+        .transact_one(
+            OpTransaction::builder()
+                .base(
+                    TxEnv::builder_for_bench()
+                        .gas_price(gas_price)
+                        .gas_limit(gas_limit)
+                        .value(tx_value),
+                )
+                .build_fill(),
+        )
+        .unwrap();
+
+    assert!(result.is_success());
+
+    let returned_balance = U256::from_be_slice(result.output().unwrap().as_ref());
+    let expected_balance = U256::ZERO;
+    assert_eq!(returned_balance, expected_balance);
 }
 
 #[derive(Default, Debug)]
@@ -1020,5 +1087,56 @@ fn test_log_inspector() {
     let inspector = &evm.0.inspector;
     assert!(!inspector.logs.is_empty());
 
-    compare_or_save_testdata("test_log_inspector.json", &output);
+    compare_or_save_op_testdata("test_log_inspector.json", &output);
+}
+
+#[test]
+fn test_system_call_inspection() {
+    use revm::InspectSystemCallEvm;
+
+    let ctx = Context::op();
+
+    let mut evm = ctx.build_op_with_inspector(LogInspector::default());
+
+    // Test system call inspection
+    let result = evm
+        .inspect_one_system_call(BENCH_TARGET, Bytes::default())
+        .unwrap();
+
+    // Should succeed
+    assert!(result.is_success());
+
+    // Test system call inspection with caller
+    let custom_caller = Address::from([0x12; 20]);
+    let result = evm
+        .inspect_one_system_call_with_caller(custom_caller, BENCH_TARGET, Bytes::default())
+        .unwrap();
+
+    // Should also succeed
+    assert!(result.is_success());
+
+    // Test system call inspection with inspector
+    let result = evm
+        .inspect_one_system_call_with_inspector(
+            BENCH_TARGET,
+            Bytes::default(),
+            LogInspector::default(),
+        )
+        .unwrap();
+
+    // Should succeed
+    assert!(result.is_success());
+}
+
+#[test]
+fn test_system_call() {
+    let ctx = Context::op();
+
+    let mut evm = ctx.build_op();
+
+    let _ = evm.system_call_one(BENCH_TARGET, bytes!("0x0001"));
+    let state = evm.finalize();
+
+    assert!(state.get(&SYSTEM_ADDRESS).is_none());
+    assert!(state.get(&BENCH_TARGET).unwrap().is_touched());
 }

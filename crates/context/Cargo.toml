@@ -1,13 +1,14 @@
 [package]
 name = "revm-context"
 description = "Revm context crates"
-version = "8.0.3"
+version = "8.0.4"
 authors.workspace = true
 edition.workspace = true
 keywords.workspace = true
 license.workspace = true
 repository.workspace = true
 readme.workspace = true
+rust-version.workspace = true
 
 [package.metadata.docs.rs]
 all-features = true
@@ -35,7 +36,7 @@ serde = { workspace = true, features = ["derive", "rc"], optional = true }
 database.workspace = true
 
 [features]
-default = ["std"]
+default = ["std","glamsterdam"]
 std = [
 	"serde?/std",
 	"bytecode/std",
@@ -64,6 +65,7 @@ dev = [
 	"optional_no_base_fee",
 	"optional_priority_fee_check",
 ]
+glamsterdam = []
 memory_limit = []
 optional_balance_check = []
 optional_block_gas_limit = []

@@ -27,7 +27,7 @@ fn read_fq(input_be: &[u8]) -> Result<Fq, PrecompileError> {
     input_le.reverse();
 
     Fq::deserialize_uncompressed(&input_le[..])
-        .map_err(|_| PrecompileError::Bn128FieldPointNotAMember)
+        .map_err(|_| PrecompileError::Bn254FieldPointNotAMember)
 }
 /// Reads a Fq2 (quadratic extension field element) from the input slice.
 ///
@@ -64,7 +64,7 @@ fn new_g1_point(px: Fq, py: Fq) -> Result<G1Affine, PrecompileError> {
         // We cannot use `G1Affine::new` because that triggers an assert if the point is not on the curve.
         let point = G1Affine::new_unchecked(px, py);
         if !point.is_on_curve() || !point.is_in_correct_subgroup_assuming_on_curve() {
-            return Err(PrecompileError::Bn128AffineGFailedToCreate);
+            return Err(PrecompileError::Bn254AffineGFailedToCreate);
         }
         Ok(point)
     }
@@ -72,7 +72,7 @@ fn new_g1_point(px: Fq, py: Fq) -> Result<G1Affine, PrecompileError> {
 
 /// Creates a new `G2` point from the given Fq2 coordinates.
 ///
-/// G2 points in BN128 are defined over a quadratic extension field Fq2.
+/// G2 points in BN254 are defined over a quadratic extension field Fq2.
 /// This function takes two Fq2 elements representing the x and y coordinates
 /// and creates a G2 point.
 ///
@@ -89,7 +89,7 @@ fn new_g2_point(x: Fq2, y: Fq2) -> Result<G2Affine, PrecompileError> {
         // We cannot use `G1Affine::new` because that triggers an assert if the point is not on the curve.
         let point = G2Affine::new_unchecked(x, y);
         if !point.is_on_curve() || !point.is_in_correct_subgroup_assuming_on_curve() {
-            return Err(PrecompileError::Bn128AffineGFailedToCreate);
+            return Err(PrecompileError::Bn254AffineGFailedToCreate);
         }
         point
     };
@@ -180,21 +180,33 @@ pub(super) fn read_scalar(input: &[u8]) -> Fr {
 
 /// Performs point addition on two G1 points.
 #[inline]
-pub(super) fn g1_point_add(p1: G1Affine, p2: G1Affine) -> G1Affine {
+pub(crate) fn g1_point_add(p1_bytes: &[u8], p2_bytes: &[u8]) -> Result<[u8; 64], PrecompileError> {
+    let p1 = read_g1_point(p1_bytes)?;
+    let p2 = read_g1_point(p2_bytes)?;
+
     let p1_jacobian: G1Projective = p1.into();
 
     let p3 = p1_jacobian + p2;
+    let output = encode_g1_point(p3.into_affine());
 
-    p3.into_affine()
+    Ok(output)
 }
 
 /// Performs a G1 scalar multiplication.
 #[inline]
-pub(super) fn g1_point_mul(p: G1Affine, fr: Fr) -> G1Affine {
+pub(crate) fn g1_point_mul(
+    point_bytes: &[u8],
+    fr_bytes: &[u8],
+) -> Result<[u8; 64], PrecompileError> {
+    let p = read_g1_point(point_bytes)?;
+    let fr = read_scalar(fr_bytes);
+
     let big_int = fr.into_bigint();
     let result = p.mul_bigint(big_int);
 
-    result.into_affine()
+    let output = encode_g1_point(result.into_affine());
+
+    Ok(output)
 }
 
 /// pairing_check performs a pairing check on a list of G1 and G2 point pairs and
@@ -203,13 +215,25 @@ pub(super) fn g1_point_mul(p: G1Affine, fr: Fr) -> G1Affine {
 /// Note: If the input is empty, this function returns true.
 /// This is different to EIP2537 which disallows the empty input.
 #[inline]
-pub(super) fn pairing_check(pairs: &[(G1Affine, G2Affine)]) -> bool {
-    if pairs.is_empty() {
-        return true;
+pub(crate) fn pairing_check(pairs: &[(&[u8], &[u8])]) -> Result<bool, PrecompileError> {
+    let mut g1_points = Vec::with_capacity(pairs.len());
+    let mut g2_points = Vec::with_capacity(pairs.len());
+
+    for (g1_bytes, g2_bytes) in pairs {
+        let g1 = read_g1_point(g1_bytes)?;
+        let g2 = read_g2_point(g2_bytes)?;
+
+        // Skip pairs where either point is at infinity
+        if !g1.is_zero() && !g2.is_zero() {
+            g1_points.push(g1);
+            g2_points.push(g2);
+        }
     }
 
-    let (g1_points, g2_points): (Vec<G1Affine>, Vec<G2Affine>) = pairs.iter().copied().unzip();
+    if g1_points.is_empty() {
+        return Ok(true);
+    }
 
     let pairing_result = Bn254::multi_pairing(&g1_points, &g2_points);
-    pairing_result.0.is_one()
+    Ok(pairing_result.0.is_one())
 }
