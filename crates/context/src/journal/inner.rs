@@ -366,7 +366,6 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         // add journal entry for balance increment.
         self.journal
             .push(ENTRY::balance_changed(address, old_balance));
-
         let account = self.state.get_mut(&address).unwrap();
         account
             .balance_change
@@ -443,6 +442,12 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         if balance.is_zero() {
             self.load_account(db, to)?;
             let to_account = self.state.get_mut(&to).unwrap();
+            to_account
+                .balance_change
+                .change
+                .entry(self.transaction_id as u64)
+                .and_modify(|entry| entry.1 = to_account.info.balance)
+                .or_insert((to_account.info.balance, to_account.info.balance));
             Self::touch_account(&mut self.journal, to, to_account);
             return Ok(None);
         }
@@ -493,7 +498,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
                 .and_modify(|entry| entry.1 = to_balance_incr)
                 .or_insert((pre_to_balance, to_balance_incr));
         }
-
+        println!("call from transfer: zooooooooooooooooooooooooooooooooooooooooooooo");
         // Push journal entry
         self.journal
             .push(ENTRY::balance_transfer(from, to, balance));

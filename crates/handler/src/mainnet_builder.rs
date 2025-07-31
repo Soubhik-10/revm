@@ -743,7 +743,11 @@ mod test {
             (U256::from(2_983_222_784u64), U256::from(2_999_979_000u64)),
         );
 
-        let expected_recipient_change = primitives::hash_map::HashMap::new();
+        let mut expected_recipient_change = primitives::hash_map::HashMap::new();
+        expected_recipient_change.insert(
+            0,
+            (U256::from(3_000_000_000u64), U256::from(3_000_000_000u64)),
+        );
         assert_eq!(
             result_balance_change_sender,
             &state::BalanceChange {
