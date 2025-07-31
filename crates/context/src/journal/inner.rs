@@ -498,7 +498,6 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
                 .and_modify(|entry| entry.1 = to_balance_incr)
                 .or_insert((pre_to_balance, to_balance_incr));
         }
-        println!("call from transfer: zooooooooooooooooooooooooooooooooooooooooooooo");
         // Push journal entry
         self.journal
             .push(ENTRY::balance_transfer(from, to, balance));
