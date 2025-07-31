@@ -73,17 +73,10 @@ impl MainContext for Context<BlockEnv, TxEnv, CfgEnv, EmptyDB, Journal<EmptyDB>,
 
 #[cfg(test)]
 mod test {
-
-    use std::collections::{BTreeMap, BTreeSet};
-
     use crate::ExecuteEvm;
     use crate::{MainBuilder, MainContext};
     use alloy_signer::{Either, SignerSync};
     use alloy_signer_local::PrivateKeySigner;
-    use bytecode::opcode::{
-        BALANCE, DUP1, DUP2, DUP3, EXTCODEHASH, EXTCODESIZE, PUSH2, PUSH20, REVERT, SLOAD,
-        STATICCALL, STOP,
-    };
     use bytecode::{
         opcode::{PUSH1, SSTORE},
         Bytecode,
@@ -93,7 +86,6 @@ mod test {
     use database::{BenchmarkDB, EEADDRESS, FFADDRESS};
     use primitives::{hardfork::SpecId, TxKind, U256};
     use primitives::{StorageKey, StorageValue};
-    use state::StorageAccess;
 
     #[test]
     fn sanity_eip7702_tx() {
@@ -143,6 +135,8 @@ mod test {
     #[test]
     #[cfg(feature = "glamsterdam")]
     fn storage_access_sstore_write_read_same_slot() {
+        use bytecode::opcode::STOP;
+
         let signer = PrivateKeySigner::random();
 
         let auth = Authorization {
@@ -155,7 +149,18 @@ mod test {
 
         //SSTORE 0x42 in 0x01 and SLOAD 0x01
         let bytecode = Bytecode::new_legacy(
-            vec![PUSH1, 0x42, PUSH1, 0x01, SSTORE, PUSH1, 0x01, SLOAD, STOP].into(),
+            vec![
+                PUSH1,
+                0x42,
+                PUSH1,
+                0x01,
+                SSTORE,
+                PUSH1,
+                0x01,
+                bytecode::opcode::SLOAD,
+                STOP,
+            ]
+            .into(),
         );
 
         let ctx = Context::mainnet()
@@ -178,17 +183,20 @@ mod test {
 
         let state = result.state;
         // As per the EIP it should be stored in both writes and reads.
-        let expected_storage_access = StorageAccess {
+        let expected_storage_access = state::StorageAccess {
             reads: {
-                let mut reads = BTreeMap::new();
-                reads.insert(0u64, BTreeSet::from([U256::from(1)]));
+                let mut reads = std::collections::BTreeMap::new();
+                reads.insert(0u64, std::collections::BTreeSet::from([U256::from(1)]));
                 reads
             },
             writes: {
-                let mut writes = BTreeMap::new();
+                let mut writes = std::collections::BTreeMap::new();
                 writes.insert(
                     0u64,
-                    BTreeMap::from([(U256::from(1), (U256::ZERO, U256::from(66)))]),
+                    std::collections::BTreeMap::from([(
+                        U256::from(1),
+                        (U256::ZERO, U256::from(66)),
+                    )]),
                 );
                 writes
             },
@@ -216,7 +224,17 @@ mod test {
         //SSTORE 0x42 in 0x01 and change it again to 0x42
         let bytecode = Bytecode::new_legacy(
             vec![
-                PUSH1, 0x42, PUSH1, 0x01, SSTORE, PUSH1, 0x42, PUSH1, 0x01, SSTORE, STOP,
+                PUSH1,
+                0x42,
+                PUSH1,
+                0x01,
+                SSTORE,
+                PUSH1,
+                0x42,
+                PUSH1,
+                0x01,
+                SSTORE,
+                bytecode::opcode::STOP,
             ]
             .into(),
         );
@@ -241,17 +259,20 @@ mod test {
 
         let state = result.state;
         // As per the EIP it should be stored in reads and writes since sstore first changes 0->66(writes) then try to change 66->66(reads).
-        let expected_storage_access = StorageAccess {
+        let expected_storage_access = state::StorageAccess {
             reads: {
-                let mut reads = BTreeMap::new();
-                reads.insert(0u64, BTreeSet::from([U256::from(1)]));
+                let mut reads = std::collections::BTreeMap::new();
+                reads.insert(0u64, std::collections::BTreeSet::from([U256::from(1)]));
                 reads
             },
             writes: {
-                let mut writes = BTreeMap::new();
+                let mut writes = std::collections::BTreeMap::new();
                 writes.insert(
                     0u64,
-                    BTreeMap::from([(U256::from(1), (U256::ZERO, U256::from(66)))]),
+                    std::collections::BTreeMap::from([(
+                        U256::from(1),
+                        (U256::ZERO, U256::from(66)),
+                    )]),
                 );
                 writes
             },
@@ -279,7 +300,17 @@ mod test {
         //SSTORE 0x42 in 0x01 and change it  to 0x00
         let bytecode = Bytecode::new_legacy(
             vec![
-                PUSH1, 0x42, PUSH1, 0x01, SSTORE, PUSH1, 0x00, PUSH1, 0x01, SSTORE, STOP,
+                PUSH1,
+                0x42,
+                PUSH1,
+                0x01,
+                SSTORE,
+                PUSH1,
+                0x00,
+                PUSH1,
+                0x01,
+                SSTORE,
+                bytecode::opcode::STOP,
             ]
             .into(),
         );
@@ -304,13 +335,16 @@ mod test {
 
         let state = result.state;
         // As per the EIP it should be stored in writes since sstore first changes 0->66(writes) then  change 66->0(writes).
-        let expected_storage_access = StorageAccess {
-            reads: { BTreeMap::new() },
+        let expected_storage_access = state::StorageAccess {
+            reads: { std::collections::BTreeMap::new() },
             writes: {
-                let mut writes = BTreeMap::new();
+                let mut writes = std::collections::BTreeMap::new();
                 writes.insert(
                     0u64,
-                    BTreeMap::from([(U256::from(1), (U256::from(66), U256::ZERO))]),
+                    std::collections::BTreeMap::from([(
+                        U256::from(1),
+                        (U256::from(66), U256::ZERO),
+                    )]),
                 );
                 writes
             },
@@ -338,7 +372,7 @@ mod test {
         // PUSH20 ADDRESS AND EXTCODEHASH,EXTCODESIZE,BALANCE
         let bytecode = Bytecode::new_legacy(
             vec![
-                PUSH20,
+                bytecode::opcode::PUSH20,
                 0xFF,
                 0xFF,
                 0xFF,
@@ -359,13 +393,13 @@ mod test {
                 0xFF,
                 0xFF,
                 0xFF,
-                DUP1,
-                EXTCODEHASH,
-                DUP2,
-                EXTCODESIZE,
-                DUP3,
-                BALANCE,
-                STOP,
+                bytecode::opcode::DUP1,
+                bytecode::opcode::EXTCODEHASH,
+                bytecode::opcode::DUP2,
+                bytecode::opcode::EXTCODESIZE,
+                bytecode::opcode::DUP3,
+                bytecode::opcode::BALANCE,
+                bytecode::opcode::STOP,
             ]
             .into(),
         );
@@ -377,9 +411,9 @@ mod test {
         let mut evm = ctx.build_mainnet();
 
         // As per the EIP it should not be stored.
-        let expected_storage_access = StorageAccess {
-            reads: { BTreeMap::new() },
-            writes: { BTreeMap::new() },
+        let expected_storage_access = state::StorageAccess {
+            reads: { std::collections::BTreeMap::new() },
+            writes: { std::collections::BTreeMap::new() },
         };
         let result = evm
             .transact(
@@ -417,9 +451,40 @@ mod test {
         //Passes STATICCALL
         let bytecode = Bytecode::new_legacy(
             vec![
-                PUSH1, 0x20, PUSH1, 0x00, PUSH1, 0x20, PUSH1, 0x00, PUSH20, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x12, 0x34, PUSH2, 0xFF, 0xFF, STATICCALL, STOP,
+                PUSH1,
+                0x20,
+                PUSH1,
+                0x00,
+                PUSH1,
+                0x20,
+                PUSH1,
+                0x00,
+                bytecode::opcode::PUSH20,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x12,
+                0x34,
+                bytecode::opcode::PUSH2,
+                0xFF,
+                0xFF,
+                bytecode::opcode::STATICCALL,
+                bytecode::opcode::STOP,
             ]
             .into(),
         );
@@ -444,9 +509,9 @@ mod test {
         let state = result.state;
         let storage_access = &state.get(&signer.address()).unwrap().storage_access;
         // As per the EIP it should not be stored.
-        let expected_storage_access = StorageAccess {
-            reads: { BTreeMap::new() },
-            writes: { BTreeMap::new() },
+        let expected_storage_access = state::StorageAccess {
+            reads: { std::collections::BTreeMap::new() },
+            writes: { std::collections::BTreeMap::new() },
         };
         let auth_acc = state.get(&signer.address()).unwrap();
         assert_eq!(auth_acc.info.code, Some(Bytecode::new_eip7702(FFADDRESS)));
@@ -468,8 +533,18 @@ mod test {
         let auth = auth.into_signed(signature);
 
         //Passes REVERT
-        let bytecode =
-            Bytecode::new_legacy(vec![PUSH1, 0x42, PUSH1, 0x01, SSTORE, REVERT, STOP].into());
+        let bytecode = Bytecode::new_legacy(
+            vec![
+                PUSH1,
+                0x42,
+                PUSH1,
+                0x01,
+                SSTORE,
+                bytecode::opcode::REVERT,
+                bytecode::opcode::STOP,
+            ]
+            .into(),
+        );
         let ctx = Context::mainnet()
             .modify_cfg_chained(|cfg| cfg.spec = SpecId::PRAGUE)
             .with_db(BenchmarkDB::new_bytecode(bytecode));
@@ -491,13 +566,98 @@ mod test {
         let state = result.state;
         let storage_access = &state.get(&signer.address()).unwrap().storage_access;
         // As per the EIP it should not be stored.
-        let expected_storage_access = StorageAccess {
-            reads: { BTreeMap::new() },
-            writes: { BTreeMap::new() },
+        let expected_storage_access = state::StorageAccess {
+            reads: { std::collections::BTreeMap::new() },
+            writes: { std::collections::BTreeMap::new() },
         };
         let auth_acc = state.get(&signer.address()).unwrap();
         assert_eq!(auth_acc.info.code, Some(Bytecode::new_eip7702(FFADDRESS)));
         assert_eq!(auth_acc.info.nonce, 1);
         assert_eq!(*storage_access, expected_storage_access);
+    }
+
+    #[test]
+    #[cfg(feature = "glamsterdam")]
+    fn transfer_check() {
+        use context::ContextTr;
+        //         === OUTPUT ===
+        //         running 1 test
+        // test mainnet_builder::test::transfer_check ... ok
+
+        // successes:
+
+        // ---- mainnet_builder::test::transfer_check stdout ----
+        // Sender Balance (before):   3000000000
+        // Recipient Balance (before): 3000000000
+        // Sender Balance (after):   2999978000
+        // Recipient Balance (after): 3000001000
+        // Balance Change of sender: BalanceChange { change: {0: (2983222784, 2983221784)} }
+        // Balance Change of recipient: BalanceChange { change: {0: (3000000000, 3000001000)} }
+
+        // successes:
+        //     mainnet_builder::test::transfer_check
+        let recipient = database::BENCH_TARGET;
+        let sender = database::BENCH_CALLER;
+
+        let mut db = database::InMemoryDB::default();
+        db.insert_account_info(
+            database::BENCH_TARGET,
+            state::AccountInfo::from_balance(U256::from(3_000_000_000u32)),
+        );
+
+        db.insert_account_info(
+            database::BENCH_CALLER,
+            state::AccountInfo::from_balance(U256::from(3_000_000_000u32)),
+        );
+
+        let ctx = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::PRAGUE)
+            .with_db(db.clone());
+
+        let mut evm = ctx.build_mainnet();
+
+        let sender_balance_before = context::Database::basic(&mut evm.db_mut(), sender)
+            .unwrap()
+            .unwrap()
+            .balance;
+        let recipient_balance_before = context::Database::basic(&mut evm.db_mut(), recipient)
+            .unwrap()
+            .unwrap_or_default()
+            .balance;
+
+        println!("Sender Balance (before):   {sender_balance_before}");
+        println!("Recipient Balance (before): {recipient_balance_before}");
+
+        let result = evm
+            .transact(
+                TxEnv::builder()
+                    .caller(sender)
+                    .kind(TxKind::Call(recipient))
+                    .value(U256::from(1000))
+                    .gas_price(1)
+                    .gas_priority_fee(None)
+                    .nonce(0)
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        database::DatabaseCommit::commit(&mut evm.db_mut(), result.clone().state);
+
+        let sender_balance_after = context::Database::basic(&mut evm.db_mut(), sender)
+            .unwrap()
+            .unwrap()
+            .balance;
+        let recipient_balance_after = context::Database::basic(&mut evm.db_mut(), recipient)
+            .unwrap()
+            .unwrap_or_default()
+            .balance;
+
+        println!("Sender Balance (after):   {sender_balance_after}");
+        println!("Recipient Balance (after): {recipient_balance_after}");
+
+        let result_balance_change = &result.state.get(&sender).unwrap().balance_change;
+        println!("Balance Change of sender: {result_balance_change:?}");
+        let result_balance_change = &result.state.get(&recipient).unwrap().balance_change;
+        println!("Balance Change of recipient: {result_balance_change:?}");
     }
 }
