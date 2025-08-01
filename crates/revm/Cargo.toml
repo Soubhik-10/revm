@@ -38,6 +38,11 @@ ee-tests.workspace = true
 
 [features]
 default = ["std", "c-kzg", "secp256k1", "portable", "blst", "tracer"]
+glamsterdam = [
+	"ee-tests/glamsterdam",
+	"context/glamsterdam",
+	"handler/glamsterdam",
+]
 std = [
 	"interpreter/std",
 	"precompile/std",
