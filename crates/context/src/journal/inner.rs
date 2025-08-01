@@ -1027,33 +1027,50 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     ) -> Result<StateLoad<SStoreResult>, DB::Error> {
         // assume that acc exists and load the slot.
         let present = self.sload(db, address, key, true)?;
+
+        // get original_value and present_value first, then reborrow mutably later
+        let (original_value, present_value, is_cold) = {
+            let acc = self.state.get(&address).unwrap();
+            let slot = acc.storage.get(&key).unwrap();
+
+            // new value is same as present, we don't need to do anything
+            if slot.present_value == new {
+                let original_value = slot.original_value();
+                let present_value = slot.present_value;
+
+                let acc = self.state.get_mut(&address).unwrap();
+
+                let tx_index = self.transaction_id as u64;
+                acc.storage_access
+                    .reads
+                    .entry(tx_index)
+                    .or_default()
+                    .insert(key);
+
+                return Ok(StateLoad::new(
+                    SStoreResult {
+                        original_value,
+                        present_value,
+                        new_value: new,
+                    },
+                    present.is_cold,
+                ));
+            }
+
+            (slot.original_value(), slot.present_value, present.is_cold)
+        };
+
         let acc = self.state.get_mut(&address).unwrap();
 
         // if there is no original value in dirty return present value, that is our original.
         let slot = acc.storage.get_mut(&key).unwrap();
-        let present_value = present.data;
-        // new value is same as present, we don't need to do anything
-        if present.data == new {
-            let tx_index = self.transaction_id as u64;
-            acc.storage_access
-                .reads
-                .entry(tx_index)
-                .or_default()
-                .insert(key);
-            return Ok(StateLoad::new(
-                SStoreResult {
-                    original_value: slot.original_value(),
-                    present_value: present.data,
-                    new_value: new,
-                },
-                present.is_cold,
-            ));
-        }
 
         self.journal
-            .push(ENTRY::storage_changed(address, key, present.data));
+            .push(ENTRY::storage_changed(address, key, present_value));
+
         // insert value into present state.
         slot.present_value = new;
+
         let tx_index = self.transaction_id as u64;
         acc.storage_access
             .writes
@@ -1063,11 +1080,11 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
         Ok(StateLoad::new(
             SStoreResult {
-                original_value: slot.original_value(),
-                present_value: present.data,
+                original_value,
+                present_value,
                 new_value: new,
             },
-            present.is_cold,
+            is_cold,
         ))
     }
 
