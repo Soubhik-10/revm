@@ -1094,7 +1094,12 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
                 let acc = self.state.get_mut(&address).unwrap();
 
-                set_storage_access_reads(acc, self.transaction_id, key);
+                let tx_index = self.transaction_id as u64;
+                acc.storage_access
+                    .reads
+                    .entry(tx_index)
+                    .or_default()
+                    .insert(key);
 
                 return Ok(StateLoad::new(
                     SStoreResult {
@@ -1120,7 +1125,12 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         // insert value into present state.
         slot.present_value = new;
 
-        set_storage_change_write(acc, self.transaction_id, key, present_value, new);
+        let tx_index = self.transaction_id as u64;
+        acc.storage_access
+            .writes
+            .entry(tx_index)
+            .or_default()
+            .insert(key, (present_value, new));
 
         Ok(StateLoad::new(
             SStoreResult {
@@ -1273,7 +1283,13 @@ pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
 
     // Set `StorageChange` for reads here
     if !from_sstore {
-        set_storage_access_reads(account, transaction_id, key);
+        let tx_index = transaction_id as u64;
+        account
+            .storage_access
+            .reads
+            .entry(tx_index)
+            .or_default()
+            .insert(key);
     }
 
     Ok(StateLoad::new(value, is_cold))
@@ -1330,34 +1346,4 @@ fn reset_preloaded_addresses(
         return;
     }
     warm_preloaded_addresses.clone_from(precompiles);
-}
-
-/// Sets storage change write for the account.(FOR GLAMSTERDAM)
-#[cfg(feature = "glamsterdam")]
-fn set_storage_change_write(
-    account: &mut Account,
-    transaction_id: usize,
-    key: StorageKey,
-    pre_value: StorageValue,
-    post_value: StorageValue,
-) {
-    let tx_index = transaction_id as u64;
-    account
-        .storage_access
-        .writes
-        .entry(tx_index)
-        .or_default()
-        .insert(key, (pre_value, post_value));
-}
-
-/// Sets storage access reads for the account.(FOR GLAMSTERDAM)
-#[cfg(feature = "glamsterdam")]
-fn set_storage_access_reads(account: &mut Account, transaction_id: usize, key: StorageKey) {
-    let tx_index = transaction_id as u64;
-    account
-        .storage_access
-        .reads
-        .entry(tx_index)
-        .or_default()
-        .insert(key);
 }
