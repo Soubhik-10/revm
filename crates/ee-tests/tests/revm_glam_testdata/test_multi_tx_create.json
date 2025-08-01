@@ -160,8 +160,14 @@
       },
       "nonce_change": {
         "change": {
-          "0": 1,
-          "2": 1
+          "0": [
+            0,
+            1
+          ],
+          "2": [
+            0,
+            1
+          ]
         }
       },
       "status": "Created | CreatedLocal | SelfDestructed | Touched | LoadedAsNotExisting",
@@ -211,9 +217,18 @@
       },
       "nonce_change": {
         "change": {
-          "0": 1,
-          "1": 2,
-          "2": 1
+          "0": [
+            0,
+            1
+          ],
+          "1": [
+            1,
+            2
+          ],
+          "2": [
+            0,
+            1
+          ]
         }
       },
       "status": "Touched",

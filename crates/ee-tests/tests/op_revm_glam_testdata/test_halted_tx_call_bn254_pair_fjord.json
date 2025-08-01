@@ -41,7 +41,10 @@
       },
       "nonce_change": {
         "change": {
-          "0": 1
+          "0": [
+            0,
+            1
+          ]
         }
       },
       "status": "Touched | LoadedAsNotExisting",
