@@ -11,7 +11,11 @@ use revm::{
 };
 use std::path::PathBuf;
 
+#[cfg(feature = "glamsterdam")]
 // Re-export the constant for testdata directory path
+const TESTS_TESTDATA: &str = "tests/revm_glam_testdata";
+
+#[cfg(not(feature = "glamsterdam"))]
 const TESTS_TESTDATA: &str = "tests/revm_testdata";
 
 fn revm_testdata_config() -> TestdataConfig {

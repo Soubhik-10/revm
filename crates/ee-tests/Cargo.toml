@@ -22,4 +22,8 @@ alloy-primitives = { workspace = true }
 
 [features]
 default = []
-optional_balance_check = ["revm/optional_balance_check", "op-revm/optional_balance_check"]
+glamsterdam = ["revm/glamsterdam", "op-revm/glamsterdam"]
+optional_balance_check = [
+    "revm/optional_balance_check",
+    "op-revm/optional_balance_check",
+]
