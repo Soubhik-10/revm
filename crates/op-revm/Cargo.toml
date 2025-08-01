@@ -44,6 +44,7 @@ std = [
 	"serde_json/std",
 	"alloy-primitives/std",
 ]
+glamsterdam = ["ee-tests/glamsterdam", "revm/glamsterdam"]
 hashbrown = ["revm/hashbrown"]
 serde = ["dep:serde", "revm/serde", "alloy-primitives/serde"]
 portable = ["revm/portable"]

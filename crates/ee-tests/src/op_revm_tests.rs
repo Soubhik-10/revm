@@ -26,7 +26,11 @@ use revm::{
 use std::path::PathBuf;
 use std::vec::Vec;
 
+#[cfg(feature = "glamsterdam")]
 // Re-export the constant for testdata directory path
+const TESTS_TESTDATA: &str = "tests/op_revm_glam_testdata";
+
+#[cfg(not(feature = "glamsterdam"))]
 const TESTS_TESTDATA: &str = "tests/op_revm_testdata";
 
 fn op_revm_testdata_config() -> TestdataConfig {
