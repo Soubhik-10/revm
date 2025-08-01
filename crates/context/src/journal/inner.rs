@@ -330,8 +330,11 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
                 .nonce_change
                 .change
                 .entry(caller_account.transaction_id as u64)
-                .and_modify(|entry| *entry = caller_account.info.nonce)
-                .or_insert(caller_account.info.nonce);
+                .and_modify(|entry| entry.1 = caller_account.info.nonce)
+                .or_insert((
+                    caller_account.info.nonce.saturating_sub(1),
+                    caller_account.info.nonce,
+                ));
 
             // nonce changed.
             self.journal.push(ENTRY::nonce_changed(address));
@@ -423,8 +426,11 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             .nonce_change
             .change
             .entry(caller_account.transaction_id as u64)
-            .and_modify(|entry| *entry = caller_account.info.nonce)
-            .or_insert(caller_account.info.nonce);
+            .and_modify(|entry| entry.1 = caller_account.info.nonce)
+            .or_insert((
+                caller_account.info.nonce.saturating_sub(1),
+                caller_account.info.nonce,
+            ));
 
         self.journal.push(ENTRY::nonce_changed(address));
     }
@@ -614,8 +620,11 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
                 .nonce_change
                 .change
                 .entry(target_acc.transaction_id as u64)
-                .and_modify(|entry| *entry = target_acc.info.nonce)
-                .or_insert(target_acc.info.nonce);
+                .and_modify(|entry| entry.1 = target_acc.info.nonce)
+                .or_insert((
+                    target_acc.info.nonce.saturating_sub(1),
+                    target_acc.info.nonce,
+                ));
         }
 
         // touch account. This is important as for pre SpuriousDragon account could be

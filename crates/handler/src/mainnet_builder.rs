@@ -761,4 +761,73 @@ mod test {
             }
         );
     }
+
+    #[test]
+    #[cfg(feature = "glamsterdam")]
+    fn nonce_check() {
+        use context::ContextTr;
+        let recipient = database::BENCH_TARGET;
+        let sender = database::BENCH_CALLER;
+
+        let mut db = database::InMemoryDB::default();
+        db.insert_account_info(
+            database::BENCH_TARGET,
+            state::AccountInfo::from_balance(U256::from(3_000_000_000u32)),
+        );
+
+        db.insert_account_info(
+            database::BENCH_CALLER,
+            state::AccountInfo::from_balance(U256::from(3_000_000_000u32)),
+        );
+
+        let ctx = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::PRAGUE)
+            .with_db(db.clone());
+
+        let mut evm = ctx.build_mainnet();
+
+        let sender_nonce_before = context::Database::basic(&mut evm.db_mut(), sender)
+            .unwrap()
+            .unwrap()
+            .nonce;
+        let recipient_nonce_before = context::Database::basic(&mut evm.db_mut(), recipient)
+            .unwrap()
+            .unwrap_or_default()
+            .nonce;
+
+        println!("Sender nonce (before):   {sender_nonce_before}");
+        println!("Recipient nonce (before): {recipient_nonce_before}");
+
+        let result = evm
+            .transact(
+                TxEnv::builder()
+                    .caller(sender)
+                    .kind(TxKind::Call(recipient))
+                    .value(U256::from(0u32))
+                    .gas_price(1)
+                    .gas_priority_fee(None)
+                    .nonce(0)
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        database::DatabaseCommit::commit(&mut evm.db_mut(), result.clone().state);
+
+        let sender_nonce_after = context::Database::basic(&mut evm.db_mut(), sender)
+            .unwrap()
+            .unwrap()
+            .nonce;
+        let recipient_nonce_after = context::Database::basic(&mut evm.db_mut(), recipient)
+            .unwrap()
+            .unwrap_or_default()
+            .nonce;
+
+        println!("Sender nonce (after):   {sender_nonce_after}");
+        println!("Recipient nonce (after): {recipient_nonce_after}");
+
+        let result_nonce_change_sender = &result.state.get(&sender).unwrap().nonce_change;
+        println!("Nonce Change of sender: {result_nonce_change_sender:?}");
+        let result_nonce_change_reciepient = &result.state.get(&recipient).unwrap().nonce_change;
+        println!("Nonce Change of recipient: {result_nonce_change_reciepient:?}");
+    }
 }
