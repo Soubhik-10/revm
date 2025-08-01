@@ -207,7 +207,9 @@
         "nonce": 1
       },
       "nonce_change": {
-        "change": {}
+        "change": {
+          "0": 1
+        }
       },
       "status": "Touched",
       "storage": {},

@@ -506,7 +506,10 @@ impl JournalEntryTr for JournalEntry {
             }
 
             JournalEntry::NonceChange { address } => {
-                state.get_mut(&address).unwrap().info.nonce -= 1;
+                let account = state.get_mut(&address).unwrap();
+                account.info.nonce -= 1;
+                let transaction_id = account.transaction_id as u64;
+                account.nonce_change.change.remove(&transaction_id);
             }
             JournalEntry::AccountCreated {
                 address,

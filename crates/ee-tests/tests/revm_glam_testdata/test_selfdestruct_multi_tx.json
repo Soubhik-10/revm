@@ -140,7 +140,10 @@
         "nonce": 2
       },
       "nonce_change": {
-        "change": {}
+        "change": {
+          "0": 1,
+          "1": 2
+        }
       },
       "status": "Touched",
       "storage": {},

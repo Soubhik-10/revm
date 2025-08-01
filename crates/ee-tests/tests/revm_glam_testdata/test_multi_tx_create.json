@@ -159,7 +159,10 @@
         "nonce": 1
       },
       "nonce_change": {
-        "change": {}
+        "change": {
+          "0": 1,
+          "2": 1
+        }
       },
       "status": "Created | CreatedLocal | SelfDestructed | Touched | LoadedAsNotExisting",
       "storage": {},
@@ -207,7 +210,11 @@
         "nonce": 1
       },
       "nonce_change": {
-        "change": {}
+        "change": {
+          "0": 1,
+          "1": 2,
+          "2": 1
+        }
       },
       "status": "Touched",
       "storage": {},
