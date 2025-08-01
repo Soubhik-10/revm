@@ -35,6 +35,15 @@ pub struct BalanceChange {
     /// tx_index → (pre_balance , post_balance)
     pub change: HashMap<TxIndex, (U256, U256)>,
 }
+
+/// `NonceChange` keeps a record of post_nonce as per Eip-7928
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct NonceChange {
+    /// tx_index → post_nonce
+    pub change: HashMap<TxIndex, u64>,
+}
+
 /// Account type used inside Journal to track changed to state.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -51,6 +60,8 @@ pub struct Account {
     pub storage_access: StorageAccess,
     /// Balance change information for this account.
     pub balance_change: BalanceChange,
+    /// Nonce change information for this account.
+    pub nonce_change: NonceChange,
 }
 
 impl Account {
@@ -63,6 +74,7 @@ impl Account {
             status: AccountStatus::LoadedAsNotExisting,
             storage_access: StorageAccess::default(),
             balance_change: BalanceChange::default(),
+            nonce_change: NonceChange::default(),
         }
     }
 
@@ -282,6 +294,7 @@ impl From<AccountInfo> for Account {
             status: AccountStatus::empty(),
             storage_access: StorageAccess::default(),
             balance_change: BalanceChange::default(),
+            nonce_change: NonceChange::default(),
         }
     }
 }
