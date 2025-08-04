@@ -259,6 +259,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     /// Set code and its hash to the account.
     ///
     /// Note: Assume account is warm and that hash is calculated from code.
+    #[cfg(not(feature = "glamsterdam"))]
     #[inline]
     pub fn set_code_with_hash(&mut self, address: Address, code: Bytecode, hash: B256) {
         let account = self.state.get_mut(&address).unwrap();
@@ -268,6 +269,31 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
         account.info.code_hash = hash;
         account.info.code = Some(code);
+    }
+
+    #[cfg(feature = "glamsterdam")]
+    /// Set code and its hash to the account.
+    ///
+    /// Note: Assume account is warm and that hash is calculated from code.(FOR GLAMSTERDAM)
+    #[inline]
+    pub fn set_code_with_hash(&mut self, address: Address, code: Bytecode, hash: B256) {
+        let account = self.state.get_mut(&address).unwrap();
+        let tx_id = self.transaction_id as u64;
+        Self::touch_account(&mut self.journal, address, account);
+
+        self.journal.push(ENTRY::code_changed(address));
+
+        account.info.code_hash = hash;
+        account.info.code = Some(code);
+
+        if let Some(ref code_ref) = account.info.code {
+            account
+                .code_change
+                .change
+                .entry(tx_id)
+                .and_modify(|entry| *entry = code_ref.bytecode().clone())
+                .or_insert(code_ref.bytecode().clone());
+        }
     }
 
     /// Use it only if you know that acc is warm.

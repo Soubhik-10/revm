@@ -56,6 +56,9 @@
           ]
         }
       },
+      "code_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x0",
         "code": {
@@ -93,6 +96,9 @@
           ]
         }
       },
+      "code_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x0",
         "code": {
@@ -128,6 +134,12 @@
             "0x0",
             "0x0"
           ]
+        }
+      },
+      "code_change": {
+        "change": {
+          "0": "0x61ffffff00",
+          "2": "0x61ffffff00"
         }
       },
       "info": {
@@ -176,6 +188,9 @@
             "0x2386f26fc10000"
           ]
         }
+      },
+      "code_change": {
+        "change": {}
       },
       "info": {
         "balance": "0x2386f26fc10000",

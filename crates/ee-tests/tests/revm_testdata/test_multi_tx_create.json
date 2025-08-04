@@ -43,6 +43,9 @@
       "balance_change": {
         "change": {}
       },
+      "code_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x0",
         "code": {
@@ -73,6 +76,9 @@
     },
     "0x000000000000000000000000000000000000ffff": {
       "balance_change": {
+        "change": {}
+      },
+      "code_change": {
         "change": {}
       },
       "info": {
@@ -107,6 +113,9 @@
       "balance_change": {
         "change": {}
       },
+      "code_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x0",
         "code": {
@@ -139,6 +148,9 @@
     },
     "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
       "balance_change": {
+        "change": {}
+      },
+      "code_change": {
         "change": {}
       },
       "info": {
