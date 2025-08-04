@@ -946,9 +946,9 @@ mod test {
             )
             .unwrap();
         println!("Tx:{tx:?}");
-        let reciever = primitives::Address::from([2u8; 20]);
+        let receiver = primitives::Address::from([2u8; 20]);
         let sender = primitives::Address::from([1u8; 20]);
-        let result_nonce_change = &tx.state.get(&reciever).unwrap().nonce_change;
+        let result_nonce_change = &tx.state.get(&receiver).unwrap().nonce_change;
         let result_nonce_change_sender = &tx.state.get(&sender).unwrap().nonce_change;
         assert_eq!(
             result_nonce_change,
