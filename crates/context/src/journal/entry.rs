@@ -507,10 +507,14 @@ impl JournalEntryTr for JournalEntry {
 
             JournalEntry::NonceChange { address } => {
                 let account = state.get_mut(&address).unwrap();
+                let prev_nonce = account.info.nonce;
                 account.info.nonce -= 1;
                 let transaction_id = account.transaction_id as u64;
-                account.nonce_change.change.remove(&transaction_id);
+                if let Some(nonce_entry) = account.nonce_change.change.get_mut(&transaction_id) {
+                    *nonce_entry = (prev_nonce, account.info.nonce);
+                }
             }
+
             JournalEntry::AccountCreated {
                 address,
                 is_created_globally,
