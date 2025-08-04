@@ -44,6 +44,9 @@
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0
       },
+      "nonce_change": {
+        "change": {}
+      },
       "status": "Touched | LoadedAsNotExisting",
       "storage": {},
       "storage_access": {
@@ -78,6 +81,9 @@
         },
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0
+      },
+      "nonce_change": {
+        "change": {}
       },
       "status": "Touched | LoadedAsNotExisting",
       "storage": {},
@@ -114,6 +120,9 @@
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0
       },
+      "nonce_change": {
+        "change": {}
+      },
       "status": "Touched | LoadedAsNotExisting",
       "storage": {},
       "storage_access": {
@@ -149,6 +158,9 @@
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0
       },
+      "nonce_change": {
+        "change": {}
+      },
       "status": "Touched | LoadedAsNotExisting",
       "storage": {},
       "storage_access": {
@@ -183,6 +195,9 @@
         },
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 1
+      },
+      "nonce_change": {
+        "change": {}
       },
       "status": "Touched",
       "storage": {},
@@ -220,6 +235,9 @@
         },
         "code_hash": "0x8013c386d5a03c3fa0a6ccbfefcf7d91471dedba2bb94eefef57f916e5929a8d",
         "nonce": 1
+      },
+      "nonce_change": {
+        "change": {}
       },
       "status": "Touched",
       "storage": {},

@@ -44,6 +44,14 @@ pub struct CodeChange {
     pub change: HashMap<TxIndex, Bytes>,
 }
 
+/// `NonceChange` keeps a record of post_nonce as per Eip-7928
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct NonceChange {
+    /// tx_index → (pre_nonce , post_nonce)
+    pub change: HashMap<TxIndex, (u64, u64)>,
+}
+
 /// Account type used inside Journal to track changed to state.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -62,6 +70,8 @@ pub struct Account {
     pub balance_change: BalanceChange,
     /// Code change track post-transaction runtime bytecode for deployed/modified contracts.
     pub code_change: CodeChange,
+    /// Nonce change information for this account.
+    pub nonce_change: NonceChange,
 }
 
 impl Account {
@@ -75,6 +85,7 @@ impl Account {
             storage_access: StorageAccess::default(),
             balance_change: BalanceChange::default(),
             code_change: CodeChange::default(),
+            nonce_change: NonceChange::default(),
         }
     }
 
@@ -295,6 +306,7 @@ impl From<AccountInfo> for Account {
             storage_access: StorageAccess::default(),
             balance_change: BalanceChange::default(),
             code_change: CodeChange::default(),
+            nonce_change: NonceChange::default(),
         }
     }
 }
