@@ -830,7 +830,7 @@ mod test {
     }
 
     #[test]
-    // #[cfg(feature = "glamsterdam")]
+    #[cfg(feature = "glamsterdam")]
     fn nonce_check_create() {
         use context::ContextTr;
 
