@@ -576,7 +576,7 @@ mod test {
         assert_eq!(*storage_access, expected_storage_access);
     }
 
-  #[test]
+    #[test]
     #[cfg(feature = "glamsterdam")]
     fn transfer_check() {
         use context::ContextTr;
@@ -964,7 +964,7 @@ mod test {
             }
         );
     }
-  
+
     #[test]
     #[cfg(feature = "glamsterdam")]
     fn code_check_create() {
