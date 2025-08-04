@@ -30,6 +30,14 @@
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 1
       },
+      "nonce_change": {
+        "change": {
+          "0": [
+            1,
+            1
+          ]
+        }
+      },
       "status": "Touched",
       "storage": {},
       "storage_access": {
@@ -68,6 +76,9 @@
         },
         "code_hash": "0x7b2ab94bb7d45041581aa3757ae020084674ccad6f75dc3750eb2ea8a92c4e9a",
         "nonce": 1
+      },
+      "nonce_change": {
+        "change": {}
       },
       "status": "Cold",
       "storage": {},

@@ -289,6 +289,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     }
 
     /// Add journal entry for caller accounting.
+    #[cfg(not(feature = "glamsterdam"))]
     #[inline]
     pub fn caller_accounting_journal_entry(
         &mut self,
@@ -303,6 +304,38 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         self.journal.push(ENTRY::account_touched(address));
 
         if bump_nonce {
+            // nonce changed.
+            self.journal.push(ENTRY::nonce_changed(address));
+        }
+    }
+
+    /// Add journal entry for caller accounting.(FOR GLAMSTERDAM)
+    #[cfg(feature = "glamsterdam")]
+    #[inline]
+    pub fn caller_accounting_journal_entry(
+        &mut self,
+        address: Address,
+        old_balance: U256,
+        bump_nonce: bool,
+    ) {
+        // account balance changed.
+        self.journal
+            .push(ENTRY::balance_changed(address, old_balance));
+        // account is touched.
+        self.journal.push(ENTRY::account_touched(address));
+
+        if bump_nonce {
+            let caller_account = self.state.get_mut(&address).unwrap();
+            caller_account
+                .nonce_change
+                .change
+                .entry(caller_account.transaction_id as u64)
+                .and_modify(|entry| entry.1 = caller_account.info.nonce)
+                .or_insert((
+                    caller_account.info.nonce.saturating_sub(1),
+                    caller_account.info.nonce,
+                ));
+
             // nonce changed.
             self.journal.push(ENTRY::nonce_changed(address));
         }
@@ -378,8 +411,27 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     }
 
     /// Increments the nonce of the account.
+    #[cfg(not(feature = "glamsterdam"))]
     #[inline]
     pub fn nonce_bump_journal_entry(&mut self, address: Address) {
+        self.journal.push(ENTRY::nonce_changed(address));
+    }
+
+    /// Increments the nonce of the account.(FOR GLAMSTERDAM)
+    #[cfg(feature = "glamsterdam")]
+    #[inline]
+    pub fn nonce_bump_journal_entry(&mut self, address: Address) {
+        let caller_account = self.state.get_mut(&address).unwrap();
+        caller_account
+            .nonce_change
+            .change
+            .entry(caller_account.transaction_id as u64)
+            .and_modify(|entry| entry.1 = caller_account.info.nonce)
+            .or_insert((
+                caller_account.info.nonce.saturating_sub(1),
+                caller_account.info.nonce,
+            ));
+
         self.journal.push(ENTRY::nonce_changed(address));
     }
 
@@ -562,6 +614,17 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         if spec_id.is_enabled_in(SPURIOUS_DRAGON) {
             // nonce is going to be reset to zero in AccountCreated journal entry.
             target_acc.info.nonce = 1;
+
+            #[cfg(feature = "glamsterdam")]
+            target_acc
+                .nonce_change
+                .change
+                .entry(target_acc.transaction_id as u64)
+                .and_modify(|entry| entry.1 = target_acc.info.nonce)
+                .or_insert((
+                    target_acc.info.nonce.saturating_sub(1),
+                    target_acc.info.nonce,
+                ));
         }
 
         // touch account. This is important as for pre SpuriousDragon account could be

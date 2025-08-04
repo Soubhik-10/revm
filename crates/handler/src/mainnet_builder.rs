@@ -641,9 +641,8 @@ mod test {
 
         let result_balance_change_sender = &result.state.get(&sender).unwrap().balance_change;
         println!("Balance Change of sender: {result_balance_change_sender:?}");
-        let result_balance_change_reciepient =
-            &result.state.get(&recipient).unwrap().balance_change;
-        println!("Balance Change of recipient: {result_balance_change_reciepient:?}");
+        let result_balance_change_recipient = &result.state.get(&recipient).unwrap().balance_change;
+        println!("Balance Change of recipient: {result_balance_change_recipient:?}");
         let mut expected_sender_change = primitives::hash_map::HashMap::new();
         expected_sender_change.insert(
             0,
@@ -662,7 +661,7 @@ mod test {
             }
         );
         assert_eq!(
-            result_balance_change_reciepient,
+            result_balance_change_recipient,
             &state::BalanceChange {
                 change: expected_recipient_change
             }
@@ -734,9 +733,8 @@ mod test {
 
         let result_balance_change_sender = &result.state.get(&sender).unwrap().balance_change;
         println!("Balance Change of sender: {result_balance_change_sender:?}");
-        let result_balance_change_reciepient =
-            &result.state.get(&recipient).unwrap().balance_change;
-        println!("Balance Change of recipient: {result_balance_change_reciepient:?}");
+        let result_balance_change_recipient = &result.state.get(&recipient).unwrap().balance_change;
+        println!("Balance Change of recipient: {result_balance_change_recipient:?}");
         let mut expected_sender_change = primitives::hash_map::HashMap::new();
         expected_sender_change.insert(
             0,
@@ -755,9 +753,214 @@ mod test {
             }
         );
         assert_eq!(
-            result_balance_change_reciepient,
+            result_balance_change_recipient,
             &state::BalanceChange {
                 change: expected_recipient_change
+            }
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "glamsterdam")]
+    fn nonce_check() {
+        use context::ContextTr;
+        let recipient = database::BENCH_TARGET;
+        let sender = database::BENCH_CALLER;
+
+        let mut db = database::InMemoryDB::default();
+        db.insert_account_info(
+            database::BENCH_TARGET,
+            state::AccountInfo::from_balance(U256::from(3_000_000_000u32)),
+        );
+
+        db.insert_account_info(
+            database::BENCH_CALLER,
+            state::AccountInfo::from_balance(U256::from(3_000_000_000u32)),
+        );
+
+        let ctx = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::PRAGUE)
+            .with_db(db.clone());
+
+        let mut evm = ctx.build_mainnet();
+
+        let sender_nonce_before = context::Database::basic(&mut evm.db_mut(), sender)
+            .unwrap()
+            .unwrap()
+            .nonce;
+        let recipient_nonce_before = context::Database::basic(&mut evm.db_mut(), recipient)
+            .unwrap()
+            .unwrap_or_default()
+            .nonce;
+
+        println!("Sender nonce (before):   {sender_nonce_before}");
+        println!("Recipient nonce (before): {recipient_nonce_before}");
+
+        let result = evm
+            .transact(
+                TxEnv::builder()
+                    .caller(sender)
+                    .kind(TxKind::Call(recipient))
+                    .value(U256::from(0u32))
+                    .gas_price(1)
+                    .gas_priority_fee(None)
+                    .nonce(0)
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        database::DatabaseCommit::commit(&mut evm.db_mut(), result.clone().state);
+
+        let sender_nonce_after = context::Database::basic(&mut evm.db_mut(), sender)
+            .unwrap()
+            .unwrap()
+            .nonce;
+        let recipient_nonce_after = context::Database::basic(&mut evm.db_mut(), recipient)
+            .unwrap()
+            .unwrap_or_default()
+            .nonce;
+
+        println!("Sender nonce (after):   {sender_nonce_after}");
+        println!("Recipient nonce (after): {recipient_nonce_after}");
+
+        let result_nonce_change_sender = &result.state.get(&sender).unwrap().nonce_change;
+        println!("Nonce Change of sender: {result_nonce_change_sender:?}");
+        let result_nonce_change_recipient = &result.state.get(&recipient).unwrap().nonce_change;
+        println!("Nonce Change of recipient: {result_nonce_change_recipient:?}");
+    }
+
+    #[test]
+    #[cfg(feature = "glamsterdam")]
+    fn nonce_check_create() {
+        use context::ContextTr;
+
+        let sender = database::BENCH_CALLER;
+
+        let mut db = database::InMemoryDB::default();
+
+        // Give sender some balance and default nonce = 0
+        db.insert_account_info(
+            sender,
+            state::AccountInfo::from_balance(U256::from(3_000_000_000u32)),
+        );
+
+        let ctx = Context::mainnet()
+            .modify_cfg_chained(|cfg| {
+                cfg.spec = SpecId::PRAGUE;
+                cfg.disable_nonce_check = true;
+            })
+            .with_db(db.clone());
+
+        let mut evm = ctx.build_mainnet();
+
+        let bytecode = primitives::Bytes::from(vec![0x60, 0x80, 0x60, 0x40]);
+        let result1 = evm
+            .transact_one(
+                context::tx::TxEnvBuilder::new()
+                    .kind(TxKind::Create)
+                    .data(bytecode.clone())
+                    .gas_limit(100000)
+                    .caller(sender)
+                    .gas_price(20)
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+
+        let created_address = result1.created_address().unwrap();
+
+        let created_acc = evm
+            .ctx
+            .journal_mut()
+            .state
+            .get_mut(&created_address)
+            .unwrap();
+
+        created_acc.info.balance = U256::from(111111111111111111u64);
+
+        let result = evm
+            .transact(
+                context::tx::TxEnvBuilder::new()
+                    .kind(TxKind::Create)
+                    .data(bytecode.clone())
+                    .gas_limit(100000)
+                    .caller(created_address)
+                    .gas_price(20)
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+
+        database::DatabaseCommit::commit(&mut evm.db_mut(), result.clone().state);
+        let result_nonce_change = &result.state.get(&created_address).unwrap().nonce_change;
+        println!("result :{result_nonce_change:?}");
+        assert_eq!(
+            result_nonce_change,
+            &state::NonceChange {
+                change: primitives::HashMap::from([(0, (0, 1)), (1, (1, 2)),])
+            }
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "glamsterdam")]
+    fn test_tx_env_builder_build_valid_eip7702() {
+        let mut db = database::InMemoryDB::default();
+
+        db.insert_account_info(
+            primitives::Address::from([1u8; 20]),
+            state::AccountInfo::from_balance(U256::from(3_000_000_000u32)),
+        );
+
+        let ctx = Context::mainnet()
+            .modify_cfg_chained(|cfg| {
+                cfg.spec = SpecId::PRAGUE;
+                cfg.disable_nonce_check = true;
+            })
+            .with_db(db.clone());
+
+        let mut evm = ctx.build_mainnet();
+
+        let auth = alloy_eip7702::RecoveredAuthorization::new_unchecked(
+            Authorization {
+                chain_id: U256::from(1),
+                nonce: 0,
+                address: primitives::Address::default(),
+            },
+            alloy_eip7702::RecoveredAuthority::Valid(primitives::Address::default()),
+        );
+        let auth_list = vec![Either::Right(auth)];
+
+        let tx = evm
+            .transact(
+                context::tx::TxEnvBuilder::new()
+                    .tx_type(Some(4))
+                    .caller(primitives::Address::from([1u8; 20]))
+                    .gas_limit(50000)
+                    .gas_price(30)
+                    .gas_priority_fee(Some(10))
+                    .kind(TxKind::Call(primitives::Address::from([2u8; 20])))
+                    .authorization_list(auth_list.clone())
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        println!("Tx:{tx:?}");
+        let receiver = primitives::Address::from([2u8; 20]);
+        let sender = primitives::Address::from([1u8; 20]);
+        let result_nonce_change = &tx.state.get(&receiver).unwrap().nonce_change;
+        let result_nonce_change_sender = &tx.state.get(&sender).unwrap().nonce_change;
+        assert_eq!(
+            result_nonce_change,
+            &state::NonceChange {
+                change: primitives::HashMap::from([]),
+            }
+        );
+
+        assert_eq!(
+            result_nonce_change_sender,
+            &state::NonceChange {
+                change: primitives::HashMap::from([(0, (0, 1)),]),
             }
         );
     }
