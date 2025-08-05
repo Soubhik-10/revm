@@ -1009,7 +1009,9 @@ mod test {
 
         let created_address = result1.result.created_address().unwrap();
 
-        let nonce_change = &result1.state.get(&created_address).unwrap().code_change;
-        println!("{nonce_change:?}");
+        let code_change = &result1.state.get(&created_address).unwrap().code_change;
+        let tracked_code = code_change.change.get(&0).unwrap();
+        let expected = primitives::Bytes::from_static(b"\x60\x2a\x60\x00\x52\x60\x20\x60\x00\xf3");
+        assert_eq!(tracked_code, &expected);
     }
 }
