@@ -132,8 +132,8 @@ mod test {
         );
     }
 
-    #[test]
     #[cfg(feature = "glamsterdam")]
+    #[test]
     fn storage_access_sstore_write_read_same_slot() {
         use bytecode::opcode::STOP;
 
@@ -208,8 +208,8 @@ mod test {
         assert_eq!(*storage_access, expected_storage_access)
     }
 
-    #[test]
     #[cfg(feature = "glamsterdam")]
+    #[test]
     fn storage_access_sstore_write_same_value() {
         let signer = PrivateKeySigner::random();
 
@@ -284,8 +284,8 @@ mod test {
         assert_eq!(*storage_access, expected_storage_access)
     }
 
-    #[test]
     #[cfg(feature = "glamsterdam")]
+    #[test]
     fn storage_access_sstore_with_zero() {
         let signer = PrivateKeySigner::random();
 
@@ -356,8 +356,8 @@ mod test {
         assert_eq!(*storage_access, expected_storage_access)
     }
 
-    #[test]
     #[cfg(feature = "glamsterdam")]
+    #[test]
     fn storage_access_unchanged() {
         let signer = PrivateKeySigner::random();
 
@@ -435,8 +435,8 @@ mod test {
         assert_eq!(*storage_access, expected_storage_access)
     }
 
-    #[test]
     #[cfg(feature = "glamsterdam")]
+    #[test]
     fn storage_access_with_staticcall() {
         let signer = PrivateKeySigner::random();
 
@@ -519,8 +519,8 @@ mod test {
         assert_eq!(*storage_access, expected_storage_access);
     }
 
-    #[test]
     #[cfg(feature = "glamsterdam")]
+    #[test]
     fn storage_access_with_revert() {
         let signer = PrivateKeySigner::random();
 
@@ -576,8 +576,8 @@ mod test {
         assert_eq!(*storage_access, expected_storage_access);
     }
 
-    #[test]
     #[cfg(feature = "glamsterdam")]
+    #[test]
     fn transfer_check() {
         use context::ContextTr;
         let recipient = database::BENCH_TARGET;
@@ -668,8 +668,8 @@ mod test {
         );
     }
 
-    #[test]
     #[cfg(feature = "glamsterdam")]
+    #[test]
     fn transfer_check_zero() {
         use context::ContextTr;
         let recipient = database::BENCH_TARGET;
@@ -902,8 +902,8 @@ mod test {
         );
     }
 
-    #[test]
     #[cfg(feature = "glamsterdam")]
+    #[test]
     fn test_tx_env_builder_build_valid_eip7702() {
         let mut db = database::InMemoryDB::default();
 
@@ -965,8 +965,8 @@ mod test {
         );
     }
 
-    #[test]
     #[cfg(feature = "glamsterdam")]
+    #[test]
     fn code_check_create() {
         use context::ContextTr;
 
@@ -974,7 +974,6 @@ mod test {
 
         let mut db = database::InMemoryDB::default();
 
-        // Give sender some balance and default nonce = 0
         db.insert_account_info(
             sender,
             state::AccountInfo::from_balance(U256::from(3_000_000_000u32)),
@@ -990,20 +989,8 @@ mod test {
         let mut evm = ctx.build_mainnet();
 
         const DEPLOYMENT_BYTECODE: &[u8] = &[
-            0x60, 0x0A, // PUSH1 0x0A (length of runtime bytecode)
-            0x60, 0x0C, // PUSH1 0x0C (offset where runtime bytecode starts)
-            0x60, 0x00, // PUSH1 0x00
-            0x39, // CODECOPY
-            0x60, 0x0A, // PUSH1 0x0A
-            0x60, 0x00, // PUSH1 0x00
-            0xf3, // RETURN
-            // -- Runtime bytecode starts here (offset 0x0C)
-            0x60, 0x2a, // PUSH1 0x2a
-            0x60, 0x00, // PUSH1 0x00
-            0x52, // MSTORE
-            0x60, 0x20, // PUSH1 0x20
-            0x60, 0x00, // PUSH1 0x00
-            0xf3, // RETURN
+            0x60, 0x0A, 0x60, 0x0C, 0x60, 0x00, 0x39, 0x60, 0x0A, 0x60, 0x00, 0xf3, 0x60, 0x2a,
+            0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3,
         ];
         let result1 = evm
             .transact(
