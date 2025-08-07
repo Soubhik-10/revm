@@ -132,8 +132,8 @@ mod test {
         );
     }
 
-    #[test]
     #[cfg(feature = "glamsterdam")]
+    #[test]
     fn storage_access_sstore_write_read_same_slot() {
         use bytecode::opcode::STOP;
 
@@ -208,8 +208,8 @@ mod test {
         assert_eq!(*storage_access, expected_storage_access)
     }
 
-    #[test]
     #[cfg(feature = "glamsterdam")]
+    #[test]
     fn storage_access_sstore_write_same_value() {
         let signer = PrivateKeySigner::random();
 
@@ -284,8 +284,8 @@ mod test {
         assert_eq!(*storage_access, expected_storage_access)
     }
 
-    #[test]
     #[cfg(feature = "glamsterdam")]
+    #[test]
     fn storage_access_sstore_with_zero() {
         let signer = PrivateKeySigner::random();
 
@@ -356,8 +356,8 @@ mod test {
         assert_eq!(*storage_access, expected_storage_access)
     }
 
-    #[test]
     #[cfg(feature = "glamsterdam")]
+    #[test]
     fn storage_access_unchanged() {
         let signer = PrivateKeySigner::random();
 
@@ -435,8 +435,8 @@ mod test {
         assert_eq!(*storage_access, expected_storage_access)
     }
 
-    #[test]
     #[cfg(feature = "glamsterdam")]
+    #[test]
     fn storage_access_with_staticcall() {
         let signer = PrivateKeySigner::random();
 
@@ -519,8 +519,8 @@ mod test {
         assert_eq!(*storage_access, expected_storage_access);
     }
 
-    #[test]
     #[cfg(feature = "glamsterdam")]
+    #[test]
     fn storage_access_with_revert() {
         let signer = PrivateKeySigner::random();
 
@@ -576,8 +576,8 @@ mod test {
         assert_eq!(*storage_access, expected_storage_access);
     }
 
-    #[test]
     #[cfg(feature = "glamsterdam")]
+    #[test]
     fn transfer_check() {
         use context::ContextTr;
         let recipient = database::BENCH_TARGET;
@@ -668,8 +668,8 @@ mod test {
         );
     }
 
-    #[test]
     #[cfg(feature = "glamsterdam")]
+    #[test]
     fn transfer_check_zero() {
         use context::ContextTr;
         let recipient = database::BENCH_TARGET;
@@ -902,8 +902,8 @@ mod test {
         );
     }
 
-    #[test]
     #[cfg(feature = "glamsterdam")]
+    #[test]
     fn test_tx_env_builder_build_valid_eip7702() {
         let mut db = database::InMemoryDB::default();
 
@@ -963,5 +963,55 @@ mod test {
                 change: primitives::HashMap::from([(0, (0, 1)),]),
             }
         );
+    }
+
+    #[cfg(feature = "glamsterdam")]
+    #[test]
+    fn code_check_create() {
+        use context::ContextTr;
+
+        let sender = database::BENCH_CALLER;
+
+        let mut db = database::InMemoryDB::default();
+
+        db.insert_account_info(
+            sender,
+            state::AccountInfo::from_balance(U256::from(3_000_000_000u32)),
+        );
+
+        let ctx = Context::mainnet()
+            .modify_cfg_chained(|cfg| {
+                cfg.spec = SpecId::PRAGUE;
+                cfg.disable_nonce_check = true;
+            })
+            .with_db(db.clone());
+
+        let mut evm = ctx.build_mainnet();
+
+        const DEPLOYMENT_BYTECODE: &[u8] = &[
+            0x60, 0x0A, 0x60, 0x0C, 0x60, 0x00, 0x39, 0x60, 0x0A, 0x60, 0x00, 0xf3, 0x60, 0x2a,
+            0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3,
+        ];
+        let result1 = evm
+            .transact(
+                context::tx::TxEnvBuilder::new()
+                    .kind(TxKind::Create)
+                    .data(DEPLOYMENT_BYTECODE.into())
+                    .gas_limit(100000)
+                    .caller(sender)
+                    .gas_price(20)
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+
+        database::DatabaseCommit::commit(&mut evm.db_mut(), result1.clone().state);
+
+        let created_address = result1.result.created_address().unwrap();
+
+        let code_change = &result1.state.get(&created_address).unwrap().code_change;
+        let tracked_code = code_change.change.get(&0).unwrap();
+        let expected = primitives::Bytes::from_static(b"\x60\x2a\x60\x00\x52\x60\x20\x60\x00\xf3");
+        assert_eq!(tracked_code, &expected);
     }
 }

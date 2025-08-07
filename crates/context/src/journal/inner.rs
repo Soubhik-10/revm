@@ -256,6 +256,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             .expect("Account expected to be loaded") // Always assume that acc is already loaded
     }
 
+    #[cfg(not(feature = "glamsterdam"))]
     /// Set code and its hash to the account.
     ///
     /// Note: Assume account is warm and that hash is calculated from code.
@@ -268,6 +269,31 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
         account.info.code_hash = hash;
         account.info.code = Some(code);
+    }
+
+    #[cfg(feature = "glamsterdam")]
+    /// Set code and its hash to the account.
+    ///
+    /// Note: Assume account is warm and that hash is calculated from code.(FOR GLAMSTERDAM)
+    #[inline]
+    pub fn set_code_with_hash(&mut self, address: Address, code: Bytecode, hash: B256) {
+        let account = self.state.get_mut(&address).unwrap();
+        let tx_id = self.transaction_id as u64;
+        Self::touch_account(&mut self.journal, address, account);
+
+        self.journal.push(ENTRY::code_changed(address));
+
+        account.info.code_hash = hash;
+        account.info.code = Some(code);
+
+        if let Some(ref code_ref) = account.info.code {
+            account
+                .code_change
+                .change
+                .entry(tx_id)
+                .and_modify(|entry| *entry = code_ref.bytecode().clone())
+                .or_insert(code_ref.bytecode().clone());
+        }
     }
 
     /// Use it only if you know that acc is warm.
@@ -288,8 +314,8 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         self.set_code_with_hash(address, code, hash)
     }
 
-    /// Add journal entry for caller accounting.
     #[cfg(not(feature = "glamsterdam"))]
+    /// Add journal entry for caller accounting.
     #[inline]
     pub fn caller_accounting_journal_entry(
         &mut self,
@@ -309,8 +335,8 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         }
     }
 
-    /// Add journal entry for caller accounting.(FOR GLAMSTERDAM)
     #[cfg(feature = "glamsterdam")]
+    /// Add journal entry for caller accounting.(FOR GLAMSTERDAM)
     #[inline]
     pub fn caller_accounting_journal_entry(
         &mut self,
@@ -410,15 +436,15 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         Ok(())
     }
 
-    /// Increments the nonce of the account.
     #[cfg(not(feature = "glamsterdam"))]
+    /// Increments the nonce of the account.
     #[inline]
     pub fn nonce_bump_journal_entry(&mut self, address: Address) {
         self.journal.push(ENTRY::nonce_changed(address));
     }
 
-    /// Increments the nonce of the account.(FOR GLAMSTERDAM)
     #[cfg(feature = "glamsterdam")]
+    /// Increments the nonce of the account.(FOR GLAMSTERDAM)
     #[inline]
     pub fn nonce_bump_journal_entry(&mut self, address: Address) {
         let caller_account = self.state.get_mut(&address).unwrap();
@@ -435,8 +461,8 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         self.journal.push(ENTRY::nonce_changed(address));
     }
 
-    /// Transfers balance from two accounts. Returns error if sender balance is not enough.
     #[cfg(not(feature = "glamsterdam"))]
+    /// Transfers balance from two accounts. Returns error if sender balance is not enough.
     #[inline]
     pub fn transfer<DB: Database>(
         &mut self,
@@ -481,8 +507,8 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         Ok(None)
     }
 
-    /// Transfers balance from two accounts. Returns error if sender balance is not enough.(FOR GLAMSTERDAM)
     #[cfg(feature = "glamsterdam")]
+    /// Transfers balance from two accounts. Returns error if sender balance is not enough.(FOR GLAMSTERDAM)
     #[inline]
     pub fn transfer<DB: Database>(
         &mut self,
@@ -1020,12 +1046,12 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         Ok(load)
     }
 
+    #[cfg(feature = "glamsterdam")]
     /// Loads storage slot.
     ///
     /// # Panics
     ///
     /// Panics if the account is not present in the state.(FOR GLAMSTERDAM)
-    #[cfg(feature = "glamsterdam")]
     #[inline]
     pub fn sload<DB: Database>(
         &mut self,
@@ -1048,12 +1074,12 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         )
     }
 
+    #[cfg(not(feature = "glamsterdam"))]
     /// Loads storage slot.
     ///
     /// # Panics
     ///
     /// Panics if the account is not present in the state.
-    #[cfg(not(feature = "glamsterdam"))]
     #[inline]
     pub fn sload<DB: Database>(
         &mut self,
@@ -1074,12 +1100,12 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         )
     }
 
+    #[cfg(feature = "glamsterdam")]
     /// Stores storage slot.
     ///
     /// And returns (original,present,new) slot value.
     ///
     /// **Note**: Account should already be present in our state.(FOR GLAMSTERDAM)
-    #[cfg(feature = "glamsterdam")]
     #[inline]
     pub fn sstore<DB: Database>(
         &mut self,
@@ -1151,12 +1177,12 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         ))
     }
 
+    #[cfg(not(feature = "glamsterdam"))]
     /// Stores storage slot.
     ///
     /// And returns (original,present,new) slot value.
     ///
     /// **Note**: Account should already be present in our state.
-    #[cfg(not(feature = "glamsterdam"))]
     #[inline]
     pub fn sstore<DB: Database>(
         &mut self,
@@ -1252,8 +1278,8 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     }
 }
 
-/// Loads storage slot with account.(FOR GLAMSTERDAM)
 #[cfg(feature = "glamsterdam")]
+/// Loads storage slot with account.(FOR GLAMSTERDAM)
 #[inline]
 pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
     account: &mut Account,
@@ -1304,9 +1330,9 @@ pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
     Ok(StateLoad::new(value, is_cold))
 }
 
+#[cfg(not(feature = "glamsterdam"))]
 /// Loads storage slot with account.
 #[inline]
-#[cfg(not(feature = "glamsterdam"))]
 pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
     account: &mut Account,
     db: &mut DB,

@@ -14,6 +14,9 @@
       "balance_change": {
         "change": {}
       },
+      "code_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x0",
         "code": {
@@ -47,6 +50,9 @@
     },
     "0x0000000000000000000000000000000000000010": {
       "balance_change": {
+        "change": {}
+      },
+      "code_change": {
         "change": {}
       },
       "info": {
@@ -84,6 +90,9 @@
       "balance_change": {
         "change": {}
       },
+      "code_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x0",
         "code": {
@@ -119,6 +128,9 @@
       "balance_change": {
         "change": {}
       },
+      "code_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x0",
         "code": {
@@ -152,6 +164,9 @@
     },
     "0x420000000000000000000000000000000000001b": {
       "balance_change": {
+        "change": {}
+      },
+      "code_change": {
         "change": {}
       },
       "info": {

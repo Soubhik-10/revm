@@ -580,8 +580,10 @@ impl JournalEntryTr for JournalEntry {
             }
             JournalEntry::CodeChange { address } => {
                 let acc = state.get_mut(&address).unwrap();
+                let tx_index = acc.transaction_id as u64;
                 acc.info.code_hash = KECCAK_EMPTY;
                 acc.info.code = None;
+                acc.code_change.change.remove(&tx_index);
             }
         }
     }

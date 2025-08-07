@@ -20,6 +20,9 @@
           ]
         }
       },
+      "code_change": {
+        "change": {}
+      },
       "info": {
         "balance": "0x64",
         "code": {
