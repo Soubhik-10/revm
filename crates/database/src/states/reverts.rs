@@ -8,6 +8,7 @@ use core::{
 };
 use primitives::{Address, HashMap, StorageKey, StorageValue};
 use state::AccountInfo;
+use std::boxed::Box;
 use std::vec::Vec;
 
 /// Contains reverts of multiple account in multiple transitions (Transitions as a block).

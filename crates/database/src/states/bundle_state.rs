@@ -10,6 +10,7 @@ use primitives::{
     hash_map::Entry, Address, HashMap, HashSet, StorageKey, StorageValue, B256, KECCAK_EMPTY,
 };
 use state::AccountInfo;
+use std::boxed::Box;
 use std::{
     collections::{BTreeMap, BTreeSet},
     vec::Vec,

@@ -4,6 +4,7 @@ use super::{
 };
 use primitives::{HashMap, StorageKey, StorageValue};
 use state::AccountInfo;
+use std::boxed::Box;
 
 /// Account information focused on creating of database changesets
 /// and Reverts.
