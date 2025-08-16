@@ -883,6 +883,7 @@ mod tests {
             nonce: 1,
             code_hash: KECCAK_EMPTY,
             code: None,
+            ..Default::default()
         };
 
         let mut bundle_state = BundleState::default();
@@ -934,6 +935,7 @@ mod tests {
                         balance: U256::from(10),
                         code_hash: KECCAK_EMPTY,
                         code: None,
+                        ..Default::default()
                     }),
                     HashMap::from_iter([
                         (slot1(), (StorageValue::from(0), StorageValue::from(10))),
@@ -948,6 +950,7 @@ mod tests {
                         balance: U256::from(10),
                         code_hash: KECCAK_EMPTY,
                         code: None,
+                        ..Default::default()
                     }),
                     HashMap::default(),
                 ),
@@ -979,6 +982,7 @@ mod tests {
                     balance: U256::from(20),
                     code_hash: KECCAK_EMPTY,
                     code: None,
+                    ..Default::default()
                 }),
                 HashMap::from_iter([(slot1(), (StorageValue::from(0), StorageValue::from(15)))]),
             )],
@@ -989,6 +993,7 @@ mod tests {
                     balance: U256::from(10),
                     code_hash: KECCAK_EMPTY,
                     code: None,
+                    ..Default::default()
                 })),
                 vec![(slot1(), StorageValue::from(10))],
             )]],
@@ -1006,6 +1011,7 @@ mod tests {
                     balance: U256::from(10),
                     code_hash: KECCAK_EMPTY,
                     code: None,
+                    ..Default::default()
                 },
             )
             .state_storage(
@@ -1020,6 +1026,7 @@ mod tests {
                     balance: U256::from(10),
                     code_hash: KECCAK_EMPTY,
                     code: None,
+                    ..Default::default()
                 },
             )
             .revert_address(0, account1())
@@ -1039,6 +1046,7 @@ mod tests {
                     balance: U256::from(20),
                     code_hash: KECCAK_EMPTY,
                     code: None,
+                    ..Default::default()
                 },
             )
             .state_storage(
@@ -1054,6 +1062,7 @@ mod tests {
                     balance: U256::from(10),
                     code_hash: KECCAK_EMPTY,
                     code: None,
+                    ..Default::default()
                 })),
             )
             .revert_storage(0, account1(), vec![(slot1(), StorageValue::from(10))])

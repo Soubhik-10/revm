@@ -454,7 +454,7 @@ impl JournalEntryTr for JournalEntry {
                     transaction_id = account.transaction_id as u64;
 
                     // Remove balance change for self-destructed account
-                    account.balance_change.change.remove(&transaction_id);
+                    account.info.balance_change.change.remove(&transaction_id);
                 }
 
                 if address != target {
@@ -462,7 +462,7 @@ impl JournalEntryTr for JournalEntry {
                     target.info.balance -= had_balance;
 
                     // Remove balance change for beneficiary if different from self-destructed account
-                    target.balance_change.change.remove(&transaction_id);
+                    target.info.balance_change.change.remove(&transaction_id);
                 }
             }
             JournalEntry::BalanceChange {
@@ -476,7 +476,7 @@ impl JournalEntryTr for JournalEntry {
                     tx_id = account.transaction_id as u64;
 
                     // Remove balance change entry
-                    account.balance_change.change.remove(&tx_id);
+                    account.info.balance_change.change.remove(&tx_id);
                 }
             }
 
@@ -489,7 +489,7 @@ impl JournalEntryTr for JournalEntry {
                     from_transaction_id = from_account.transaction_id as u64;
 
                     // Remove balance change for `from`
-                    from_account
+                    from_account.info
                         .balance_change
                         .change
                         .remove(&from_transaction_id);
@@ -499,7 +499,7 @@ impl JournalEntryTr for JournalEntry {
                 to_account.info.balance -= balance;
 
                 // Remove balance change for `to`
-                to_account
+                to_account.info
                     .balance_change
                     .change
                     .remove(&from_transaction_id);
@@ -510,7 +510,7 @@ impl JournalEntryTr for JournalEntry {
                 let prev_nonce = account.info.nonce;
                 account.info.nonce -= 1;
                 let transaction_id = account.transaction_id as u64;
-                if let Some(nonce_entry) = account.nonce_change.change.get_mut(&transaction_id) {
+                if let Some(nonce_entry) = account.info.nonce_change.change.get_mut(&transaction_id) {
                     *nonce_entry = (prev_nonce, account.info.nonce);
                 }
             }
@@ -552,11 +552,11 @@ impl JournalEntryTr for JournalEntry {
                 if let Some(account) = state.get_mut(&address) {
                     let tx_index = account.transaction_id as u64;
 
-                    if let Some(writes_for_tx) = account.storage_access.writes.get_mut(&tx_index) {
+                    if let Some(writes_for_tx) = account.info.storage_access.writes.get_mut(&tx_index) {
                         writes_for_tx.remove(&key);
 
                         if writes_for_tx.is_empty() {
-                            account.storage_access.writes.remove(&tx_index);
+                            account.info.storage_access.writes.remove(&tx_index);
                         }
                     }
                 }
@@ -583,7 +583,7 @@ impl JournalEntryTr for JournalEntry {
                 let tx_index = acc.transaction_id as u64;
                 acc.info.code_hash = KECCAK_EMPTY;
                 acc.info.code = None;
-                acc.code_change.change.remove(&tx_index);
+                acc.info.code_change.change.remove(&tx_index);
             }
         }
     }
