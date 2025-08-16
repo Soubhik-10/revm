@@ -64,14 +64,6 @@ pub struct Account {
     pub storage: EvmStorage,
     /// Account status flags
     pub status: AccountStatus,
-    /// Storage access information for this account.
-    pub storage_access: StorageAccess,
-    /// Balance change information for this account.
-    pub balance_change: BalanceChange,
-    /// Code change track post-transaction runtime bytecode for deployed/modified contracts.
-    pub code_change: CodeChange,
-    /// Nonce change information for this account.
-    pub nonce_change: NonceChange,
 }
 
 impl Account {
@@ -82,10 +74,6 @@ impl Account {
             storage: HashMap::default(),
             transaction_id,
             status: AccountStatus::LoadedAsNotExisting,
-            storage_access: StorageAccess::default(),
-            balance_change: BalanceChange::default(),
-            code_change: CodeChange::default(),
-            nonce_change: NonceChange::default(),
         }
     }
 
@@ -312,10 +300,6 @@ impl From<AccountInfo> for Account {
             storage: HashMap::default(),
             transaction_id: 0,
             status: AccountStatus::empty(),
-            storage_access: StorageAccess::default(),
-            balance_change: BalanceChange::default(),
-            code_change: CodeChange::default(),
-            nonce_change: NonceChange::default(),
         }
     }
 }

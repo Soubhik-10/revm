@@ -5,6 +5,8 @@ use core::{
 };
 use primitives::{B256, KECCAK_EMPTY, U256};
 
+use crate::{BalanceChange, CodeChange, NonceChange, StorageAccess};
+
 /// Account information that contains balance, nonce, code hash and code
 ///
 /// Code is set as optional.
@@ -24,6 +26,14 @@ pub struct AccountInfo {
     ///
     /// By default, this is `Some(Bytecode::default())`.
     pub code: Option<Bytecode>,
+    /// Storage access information for this account.
+    pub storage_access: StorageAccess,
+    /// Balance change information for this account.
+    pub balance_change: BalanceChange,
+    /// Code change track post-transaction runtime bytecode for deployed/modified contracts.
+    pub code_change: CodeChange,
+    /// Nonce change information for this account.
+    pub nonce_change: NonceChange,
 }
 
 impl Default for AccountInfo {
@@ -33,6 +43,10 @@ impl Default for AccountInfo {
             code_hash: KECCAK_EMPTY,
             code: Some(Bytecode::default()),
             nonce: 0,
+            storage_access: StorageAccess::default(),
+            balance_change: BalanceChange::default(),
+            code_change: CodeChange::default(),
+            nonce_change: NonceChange::default(),
         }
     }
 }
@@ -77,6 +91,10 @@ impl AccountInfo {
             nonce,
             code: Some(code),
             code_hash,
+            storage_access: StorageAccess::default(),
+            balance_change: BalanceChange::default(),
+            code_change: CodeChange::default(),
+            nonce_change: NonceChange::default(),
         }
     }
 
@@ -91,6 +109,10 @@ impl AccountInfo {
             nonce: self.nonce,
             code_hash: code.hash_slow(),
             code: Some(code),
+            storage_access: self.storage_access,
+            balance_change: self.balance_change,
+            code_change: self.code_change,
+            nonce_change: self.nonce_change,
         }
     }
 
@@ -106,6 +128,10 @@ impl AccountInfo {
             nonce: self.nonce,
             code_hash,
             code: None,
+            storage_access: self.storage_access,
+            balance_change: self.balance_change,
+            code_change: self.code_change,
+            nonce_change: self.nonce_change,
         }
     }
 
@@ -122,6 +148,10 @@ impl AccountInfo {
             nonce: self.nonce,
             code_hash,
             code: Some(code),
+            storage_access: self.storage_access,
+            balance_change: self.balance_change,
+            code_change: self.code_change,
+            nonce_change: self.nonce_change,
         }
     }
 
@@ -202,6 +232,10 @@ impl AccountInfo {
             nonce: self.nonce,
             code_hash: self.code_hash,
             code: None,
+            storage_access: self.storage_access.clone(),
+            balance_change: self.balance_change.clone(),
+            code_change: self.code_change.clone(),
+            nonce_change: self.nonce_change.clone(),
         }
     }
 
@@ -289,6 +323,7 @@ impl AccountInfo {
             nonce: 1,
             code: Some(bytecode),
             code_hash: hash,
+            ..Default::default()
         }
     }
 }
@@ -309,6 +344,7 @@ mod tests {
             nonce: 0,
             code_hash: KECCAK_EMPTY,
             code: Some(bytecode.clone()),
+            ..Default::default()
         };
 
         let account2 = AccountInfo {
@@ -316,6 +352,7 @@ mod tests {
             nonce: 0,
             code_hash: KECCAK_EMPTY,
             code: None,
+            ..Default::default()
         };
 
         assert_eq!(account1, account2, "Accounts should be equal ignoring code");
