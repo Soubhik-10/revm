@@ -12,19 +12,16 @@
   },
   "state": {
     "0x0000000000000000000000000000000000000000": {
-      "balance_change": {
-        "change": {
-          "0": [
-            "0x64",
-            "0x64"
-          ]
-        }
-      },
-      "code_change": {
-        "change": {}
-      },
       "info": {
         "balance": "0x64",
+        "balance_change": {
+          "change": {
+            "0": [
+              "0x64",
+              "0x64"
+            ]
+          }
+        },
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x00",
@@ -40,23 +37,26 @@
             "original_len": 0
           }
         },
+        "code_change": {
+          "change": {}
+        },
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
-        "nonce": 1
-      },
-      "nonce_change": {
-        "change": {
-          "0": [
-            0,
-            1
-          ]
+        "nonce": 1,
+        "nonce_change": {
+          "change": {
+            "0": [
+              0,
+              1
+            ]
+          }
+        },
+        "storage_access": {
+          "reads": {},
+          "writes": {}
         }
       },
       "status": "Touched | LoadedAsNotExisting",
       "storage": {},
-      "storage_access": {
-        "reads": {},
-        "writes": {}
-      },
       "transaction_id": 0
     }
   }

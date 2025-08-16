@@ -23,14 +23,11 @@
   },
   {
     "0x0000000000000000000000000000000000000000": {
-      "balance_change": {
-        "change": {}
-      },
-      "code_change": {
-        "change": {}
-      },
       "info": {
         "balance": "0x0",
+        "balance_change": {
+          "change": {}
+        },
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x00",
@@ -46,29 +43,29 @@
             "original_len": 0
           }
         },
+        "code_change": {
+          "change": {}
+        },
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
-        "nonce": 0
-      },
-      "nonce_change": {
-        "change": {}
+        "nonce": 0,
+        "nonce_change": {
+          "change": {}
+        },
+        "storage_access": {
+          "reads": {},
+          "writes": {}
+        }
       },
       "status": "Touched | LoadedAsNotExisting",
       "storage": {},
-      "storage_access": {
-        "reads": {},
-        "writes": {}
-      },
       "transaction_id": 1
     },
     "0x000000000000000000000000000000000000ffff": {
-      "balance_change": {
-        "change": {}
-      },
-      "code_change": {
-        "change": {}
-      },
       "info": {
         "balance": "0x2386f26fc10000",
+        "balance_change": {
+          "change": {}
+        },
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x00",
@@ -84,29 +81,29 @@
             "original_len": 0
           }
         },
+        "code_change": {
+          "change": {}
+        },
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
-        "nonce": 0
-      },
-      "nonce_change": {
-        "change": {}
+        "nonce": 0,
+        "nonce_change": {
+          "change": {}
+        },
+        "storage_access": {
+          "reads": {},
+          "writes": {}
+        }
       },
       "status": "Touched | LoadedAsNotExisting",
       "storage": {},
-      "storage_access": {
-        "reads": {},
-        "writes": {}
-      },
       "transaction_id": 0
     },
     "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
-      "balance_change": {
-        "change": {}
-      },
-      "code_change": {
-        "change": {}
-      },
       "info": {
         "balance": "0x2386f26fc10000",
+        "balance_change": {
+          "change": {}
+        },
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x00",
@@ -122,29 +119,29 @@
             "original_len": 0
           }
         },
+        "code_change": {
+          "change": {}
+        },
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
-        "nonce": 2
-      },
-      "nonce_change": {
-        "change": {}
+        "nonce": 2,
+        "nonce_change": {
+          "change": {}
+        },
+        "storage_access": {
+          "reads": {},
+          "writes": {}
+        }
       },
       "status": "Touched",
       "storage": {},
-      "storage_access": {
-        "reads": {},
-        "writes": {}
-      },
       "transaction_id": 1
     },
     "0xffffffffffffffffffffffffffffffffffffffff": {
-      "balance_change": {
-        "change": {}
-      },
-      "code_change": {
-        "change": {}
-      },
       "info": {
         "balance": "0x0",
+        "balance_change": {
+          "change": {}
+        },
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x00",
@@ -160,18 +157,21 @@
             "original_len": 0
           }
         },
+        "code_change": {
+          "change": {}
+        },
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
-        "nonce": 0
-      },
-      "nonce_change": {
-        "change": {}
+        "nonce": 0,
+        "nonce_change": {
+          "change": {}
+        },
+        "storage_access": {
+          "reads": {},
+          "writes": {}
+        }
       },
       "status": "SelfDestructed | Touched",
       "storage": {},
-      "storage_access": {
-        "reads": {},
-        "writes": {}
-      },
       "transaction_id": 1
     }
   }

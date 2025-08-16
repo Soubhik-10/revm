@@ -641,7 +641,8 @@ mod test {
 
         let result_balance_change_sender = &result.state.get(&sender).unwrap().info.balance_change;
         println!("Balance Change of sender: {result_balance_change_sender:?}");
-        let result_balance_change_recipient = &result.state.get(&recipient).unwrap().info.balance_change;
+        let result_balance_change_recipient =
+            &result.state.get(&recipient).unwrap().info.balance_change;
         println!("Balance Change of recipient: {result_balance_change_recipient:?}");
         let mut expected_sender_change = primitives::hash_map::HashMap::new();
         expected_sender_change.insert(
@@ -733,7 +734,8 @@ mod test {
 
         let result_balance_change_sender = &result.state.get(&sender).unwrap().info.balance_change;
         println!("Balance Change of sender: {result_balance_change_sender:?}");
-        let result_balance_change_recipient = &result.state.get(&recipient).unwrap().info.balance_change;
+        let result_balance_change_recipient =
+            &result.state.get(&recipient).unwrap().info.balance_change;
         println!("Balance Change of recipient: {result_balance_change_recipient:?}");
         let mut expected_sender_change = primitives::hash_map::HashMap::new();
         expected_sender_change.insert(
@@ -825,7 +827,8 @@ mod test {
 
         let result_nonce_change_sender = &result.state.get(&sender).unwrap().info.nonce_change;
         println!("Nonce Change of sender: {result_nonce_change_sender:?}");
-        let result_nonce_change_recipient = &result.state.get(&recipient).unwrap().info.nonce_change;
+        let result_nonce_change_recipient =
+            &result.state.get(&recipient).unwrap().info.nonce_change;
         println!("Nonce Change of recipient: {result_nonce_change_recipient:?}");
     }
 
@@ -892,7 +895,12 @@ mod test {
             .unwrap();
 
         database::DatabaseCommit::commit(&mut evm.db_mut(), result.clone().state);
-        let result_nonce_change = &result.state.get(&created_address).unwrap().info.nonce_change;
+        let result_nonce_change = &result
+            .state
+            .get(&created_address)
+            .unwrap()
+            .info
+            .nonce_change;
         println!("result :{result_nonce_change:?}");
         assert_eq!(
             result_nonce_change,
@@ -1009,7 +1017,12 @@ mod test {
 
         let created_address = result1.result.created_address().unwrap();
 
-        let code_change = &result1.state.get(&created_address).unwrap().info.code_change;
+        let code_change = &result1
+            .state
+            .get(&created_address)
+            .unwrap()
+            .info
+            .code_change;
         let tracked_code = code_change.change.get(&0).unwrap();
         let expected =
             primitives::Bytes::from_static(b"\x60\x2a\x60\x00\x52\x60\x20\x60\x00\xf3\x00");

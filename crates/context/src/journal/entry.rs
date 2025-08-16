@@ -489,7 +489,8 @@ impl JournalEntryTr for JournalEntry {
                     from_transaction_id = from_account.transaction_id as u64;
 
                     // Remove balance change for `from`
-                    from_account.info
+                    from_account
+                        .info
                         .balance_change
                         .change
                         .remove(&from_transaction_id);
@@ -499,7 +500,8 @@ impl JournalEntryTr for JournalEntry {
                 to_account.info.balance -= balance;
 
                 // Remove balance change for `to`
-                to_account.info
+                to_account
+                    .info
                     .balance_change
                     .change
                     .remove(&from_transaction_id);
@@ -510,7 +512,8 @@ impl JournalEntryTr for JournalEntry {
                 let prev_nonce = account.info.nonce;
                 account.info.nonce -= 1;
                 let transaction_id = account.transaction_id as u64;
-                if let Some(nonce_entry) = account.info.nonce_change.change.get_mut(&transaction_id) {
+                if let Some(nonce_entry) = account.info.nonce_change.change.get_mut(&transaction_id)
+                {
                     *nonce_entry = (prev_nonce, account.info.nonce);
                 }
             }
@@ -552,7 +555,9 @@ impl JournalEntryTr for JournalEntry {
                 if let Some(account) = state.get_mut(&address) {
                     let tx_index = account.transaction_id as u64;
 
-                    if let Some(writes_for_tx) = account.info.storage_access.writes.get_mut(&tx_index) {
+                    if let Some(writes_for_tx) =
+                        account.info.storage_access.writes.get_mut(&tx_index)
+                    {
                         writes_for_tx.remove(&key);
 
                         if writes_for_tx.is_empty() {
