@@ -283,7 +283,7 @@ impl BundleBuilder {
                     .remove(&(block_number, address))
                     .unwrap_or_default()
                 {
-                    Some(Some(account)) => AccountInfoRevert::RevertTo(account),
+                    Some(Some(account)) => AccountInfoRevert::RevertTo(Box::new(account)),
                     Some(None) => AccountInfoRevert::DeleteIt,
                     None => AccountInfoRevert::DoNothing,
                 };
@@ -477,7 +477,7 @@ impl BundleState {
                     .into_iter()
                     .map(|(address, account, storage)| {
                         let account = match account {
-                            Some(Some(account)) => AccountInfoRevert::RevertTo(account),
+                            Some(Some(account)) => AccountInfoRevert::RevertTo(Box::new(account)),
                             Some(None) => AccountInfoRevert::DeleteIt,
                             None => AccountInfoRevert::DoNothing,
                         };

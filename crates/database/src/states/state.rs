@@ -578,7 +578,9 @@ mod tests {
                 (
                     existing_account_address,
                     AccountRevert {
-                        account: AccountInfoRevert::RevertTo(existing_account_initial_info.clone()),
+                        account: AccountInfoRevert::RevertTo(Box::new(
+                            existing_account_initial_info.clone()
+                        )),
                         previous_status: AccountStatus::Loaded,
                         storage: HashMap::from_iter([
                             (
