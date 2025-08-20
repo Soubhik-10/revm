@@ -233,9 +233,9 @@ impl AccountInfo {
             code_hash: self.code_hash,
             code: None,
             storage_access: self.storage_access.clone(),
-            balance_change: self.balance_change.clone(),
+            balance_change: self.balance_change,
             code_change: self.code_change.clone(),
-            nonce_change: self.nonce_change.clone(),
+            nonce_change: self.nonce_change,
         }
     }
 
