@@ -464,28 +464,19 @@ impl JournalEntryTr for JournalEntry {
                 address,
                 old_balance,
             } => {
-                let tx_id;
-                {
-                    let account = state.get_mut(&address).unwrap();
-                    account.info.balance = old_balance;
-                    tx_id = account.transaction_id as u64;
-
-                    // Remove balance change entry
-                    account.info.balance_change.change = Default::default();
-                }
+                let account = state.get_mut(&address).unwrap();
+                account.info.balance = old_balance;
+                // Remove balance change entry
+                account.info.balance_change.change = Default::default();
             }
 
             JournalEntry::BalanceTransfer { from, to, balance } => {
                 // we don't need to check overflow and underflow when adding and subtracting the balance.
-                let from_transaction_id;
-                {
-                    let from_account = state.get_mut(&from).unwrap();
-                    from_account.info.balance += balance;
-                    from_transaction_id = from_account.transaction_id as u64;
 
-                    // Remove balance change for `from`
-                    from_account.info.balance_change.change = Default::default();
-                }
+                let from_account = state.get_mut(&from).unwrap();
+                from_account.info.balance += balance;
+                // Remove balance change for `from`
+                from_account.info.balance_change.change = Default::default();
 
                 let to_account = state.get_mut(&to).unwrap();
                 to_account.info.balance -= balance;
@@ -498,7 +489,6 @@ impl JournalEntryTr for JournalEntry {
                 let account = state.get_mut(&address).unwrap();
                 let prev_nonce = account.info.nonce;
                 account.info.nonce -= 1;
-                let transaction_id = account.transaction_id as u64;
                 account.info.nonce_change.change = (prev_nonce, account.info.nonce);
             }
 
@@ -537,8 +527,6 @@ impl JournalEntryTr for JournalEntry {
                     .present_value = had_value;
 
                 if let Some(account) = state.get_mut(&address) {
-                    let tx_index = account.transaction_id as u64;
-
                     account.info.storage_access.writes.remove(&key);
                 }
             }
@@ -561,7 +549,6 @@ impl JournalEntryTr for JournalEntry {
             }
             JournalEntry::CodeChange { address } => {
                 let acc = state.get_mut(&address).unwrap();
-                let tx_index = acc.transaction_id as u64;
                 acc.info.code_hash = KECCAK_EMPTY;
                 acc.info.code = None;
                 acc.info.code_change.change = Default::default();
