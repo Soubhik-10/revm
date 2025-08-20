@@ -12,12 +12,7 @@
       "info": {
         "balance": "0x0",
         "balance_change": {
-          "change": {
-            "0": [
-              "0x0",
-              "0x0"
-            ]
-          }
+          "change": "0x0"
         },
         "code": {
           "LegacyAnalyzed": {
@@ -35,20 +30,18 @@
           }
         },
         "code_change": {
-          "change": {}
+          "change": "0x"
         },
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 1,
         "nonce_change": {
-          "change": {
-            "0": [
-              0,
-              1
-            ]
-          }
+          "change": [
+            0,
+            1
+          ]
         },
         "storage_access": {
-          "reads": {},
+          "reads": [],
           "writes": {}
         }
       },
@@ -60,12 +53,7 @@
       "info": {
         "balance": "0x0",
         "balance_change": {
-          "change": {
-            "0": [
-              "0x0",
-              "0x0"
-            ]
-          }
+          "change": "0x0"
         },
         "code": {
           "LegacyAnalyzed": {
@@ -83,15 +71,18 @@
           }
         },
         "code_change": {
-          "change": {}
+          "change": "0x"
         },
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0,
         "nonce_change": {
-          "change": {}
+          "change": [
+            0,
+            0
+          ]
         },
         "storage_access": {
-          "reads": {},
+          "reads": [],
           "writes": {}
         }
       },
@@ -103,12 +94,7 @@
       "info": {
         "balance": "0x0",
         "balance_change": {
-          "change": {
-            "0": [
-              "0x0",
-              "0x0"
-            ]
-          }
+          "change": "0x0"
         },
         "code": {
           "LegacyAnalyzed": {
@@ -126,15 +112,18 @@
           }
         },
         "code_change": {
-          "change": {}
+          "change": "0x"
         },
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0,
         "nonce_change": {
-          "change": {}
+          "change": [
+            0,
+            0
+          ]
         },
         "storage_access": {
-          "reads": {},
+          "reads": [],
           "writes": {}
         }
       },
@@ -146,12 +135,7 @@
       "info": {
         "balance": "0x0",
         "balance_change": {
-          "change": {
-            "0": [
-              "0x0",
-              "0x0"
-            ]
-          }
+          "change": "0x0"
         },
         "code": {
           "LegacyAnalyzed": {
@@ -169,15 +153,18 @@
           }
         },
         "code_change": {
-          "change": {}
+          "change": "0x"
         },
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0,
         "nonce_change": {
-          "change": {}
+          "change": [
+            0,
+            0
+          ]
         },
         "storage_access": {
-          "reads": {},
+          "reads": [],
           "writes": {}
         }
       },
@@ -189,12 +176,7 @@
       "info": {
         "balance": "0x0",
         "balance_change": {
-          "change": {
-            "0": [
-              "0x0",
-              "0x0"
-            ]
-          }
+          "change": "0x0"
         },
         "code": {
           "LegacyAnalyzed": {
@@ -212,15 +194,18 @@
           }
         },
         "code_change": {
-          "change": {}
+          "change": "0x"
         },
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0,
         "nonce_change": {
-          "change": {}
+          "change": [
+            0,
+            0
+          ]
         },
         "storage_access": {
-          "reads": {},
+          "reads": [],
           "writes": {}
         }
       },

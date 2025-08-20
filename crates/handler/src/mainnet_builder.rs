@@ -629,10 +629,9 @@ mod test {
         let result_balance_change_recipient =
             &result.state.get(&recipient).unwrap().info.balance_change;
         println!("Balance Change of recipient: {result_balance_change_recipient:?}");
-        let expected_sender_change = (U256::from(2_983_222_784u64), U256::from(999_979_000u64));
+        let expected_sender_change = U256::from(999_979_000u64);
 
-        let expected_recipient_change =
-            (U256::from(3_000_000_000u64), U256::from(5_000_000_000u64));
+        let expected_recipient_change = U256::from(5_000_000_000u64);
         assert_eq!(
             result_balance_change_sender,
             &state::BalanceChange {
@@ -715,10 +714,9 @@ mod test {
         let result_balance_change_recipient =
             &result.state.get(&recipient).unwrap().info.balance_change;
         println!("Balance Change of recipient: {result_balance_change_recipient:?}");
-        let expected_sender_change = (U256::from(2_983_222_784u64), U256::from(2_999_979_000u64));
+        let expected_sender_change = U256::from(2_999_979_000u64);
 
-        let expected_recipient_change =
-            (U256::from(3_000_000_000u64), U256::from(3_000_000_000u64));
+        let expected_recipient_change = U256::from(3_000_000_000u64);
         assert_eq!(
             result_balance_change_sender,
             &state::BalanceChange {
@@ -984,9 +982,9 @@ mod test {
             .code_change;
         let tracked_code = &code_change.change;
         let expected =
-            primitives::Bytes::from_static(b"\x60\x2a\x60\x00\x52\x60\x20\x60\x00\xf3\x00");
+            primitives::Bytes::copy_from_slice(&primitives::hex!("602a60005260206000f300"));
 
-        //assert_eq!(tracked_code[0], expected);
-        println!("tracked{:?}", tracked_code);
+        println!("tracked {:?}", tracked_code);
+        assert_eq!(*tracked_code, expected);
     }
 }

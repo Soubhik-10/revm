@@ -388,7 +388,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         self.journal
             .push(ENTRY::balance_changed(address, old_balance));
         let account = self.state.get_mut(&address).unwrap();
-        account.info.balance_change.change = (old_balance, new_balance);
+        account.info.balance_change.change = new_balance;
 
         Ok(())
     }
@@ -472,8 +472,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         if balance.is_zero() {
             self.load_account(db, to)?;
             let to_account = self.state.get_mut(&to).unwrap();
-            to_account.info.balance_change.change =
-                (to_account.info.balance, to_account.info.balance);
+            to_account.info.balance_change.change = to_account.info.balance;
             Self::touch_account(&mut self.journal, to, to_account);
             return Ok(None);
         }
@@ -483,7 +482,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         self.load_account(db, to)?;
 
         // Check if balance changes are possible
-        let (pre_from_balance, from_balance_decr) = {
+        let (_pre_from_balance, from_balance_decr) = {
             let from_account = self.state.get(&from).unwrap();
             let from_balance = from_account.info.balance;
             let Some(decr) = from_balance.checked_sub(balance) else {
@@ -492,7 +491,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             (from_balance, decr)
         };
 
-        let (pre_to_balance, to_balance_incr) = {
+        let (_pre_to_balance, to_balance_incr) = {
             let to_account = self.state.get(&to).unwrap();
             let to_balance = to_account.info.balance;
             let Some(incr) = to_balance.checked_add(balance) else {
@@ -505,14 +504,14 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             let from_account = self.state.get_mut(&from).unwrap();
             Self::touch_account(&mut self.journal, from, from_account);
             from_account.info.balance = from_balance_decr;
-            from_account.info.balance_change.change = (pre_from_balance, from_balance_decr);
+            from_account.info.balance_change.change = from_balance_decr;
         }
 
         {
             let to_account = self.state.get_mut(&to).unwrap();
             Self::touch_account(&mut self.journal, to, to_account);
             to_account.info.balance = to_balance_incr;
-            to_account.info.balance_change.change = (pre_to_balance, to_balance_incr);
+            to_account.info.balance_change.change = to_balance_incr;
         }
         // Push journal entry
         self.journal
@@ -758,11 +757,11 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
             let target_account = self.state.get_mut(&target).unwrap();
             Self::touch_account(&mut self.journal, target, target_account);
-            let pre_balance = target_account.info.balance;
+
             target_account.info.balance += acc_balance;
             let post_balance = target_account.info.balance;
 
-            target_account.info.balance_change.change = (pre_balance, post_balance);
+            target_account.info.balance_change.change = post_balance;
         }
 
         let acc = self.state.get_mut(&address).unwrap();
@@ -782,7 +781,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         let journal_entry = if acc.is_created_locally() || !is_cancun_enabled {
             acc.mark_selfdestructed_locally();
             acc.info.balance = U256::ZERO;
-            acc.info.balance_change.change = (balance, U256::ZERO);
+            acc.info.balance_change.change = U256::ZERO;
             Some(ENTRY::account_destroyed(
                 address,
                 target,
@@ -791,10 +790,9 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             ))
         } else if address != target {
             acc.info.balance = U256::ZERO;
-            let pre_balance = balance;
             let post_balance = U256::ZERO;
 
-            acc.info.balance_change.change = (pre_balance, post_balance);
+            acc.info.balance_change.change = post_balance;
 
             Some(ENTRY::balance_transfer(address, target, balance))
         } else {

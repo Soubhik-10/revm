@@ -31,8 +31,8 @@ pub struct StorageAccess {
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BalanceChange {
-    /// pre_balance , post_balance
-    pub change: (U256, U256),
+    /// post_balance
+    pub change: U256,
 }
 
 /// `CodeChange` keeps a record of post_code as per Eip-7928
