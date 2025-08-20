@@ -450,14 +450,14 @@ impl JournalEntryTr for JournalEntry {
 
                 account.info.balance += had_balance;
                 // Remove balance change for self-destructed account
-                account.info.balance_change.change = Default::default();
+                account.info.balance_change = Default::default();
 
                 if address != target {
                     let target = state.get_mut(&target).unwrap();
                     target.info.balance -= had_balance;
 
                     // Remove balance change for beneficiary if different from self-destructed account
-                    target.info.balance_change.change = Default::default();
+                    target.info.balance_change = Default::default();
                 }
             }
             JournalEntry::BalanceChange {
@@ -467,7 +467,7 @@ impl JournalEntryTr for JournalEntry {
                 let account = state.get_mut(&address).unwrap();
                 account.info.balance = old_balance;
                 // Remove balance change entry
-                account.info.balance_change.change = Default::default();
+                account.info.balance_change = Default::default();
             }
 
             JournalEntry::BalanceTransfer { from, to, balance } => {
@@ -476,20 +476,20 @@ impl JournalEntryTr for JournalEntry {
                 let from_account = state.get_mut(&from).unwrap();
                 from_account.info.balance += balance;
                 // Remove balance change for `from`
-                from_account.info.balance_change.change = Default::default();
+                from_account.info.balance_change = Default::default();
 
                 let to_account = state.get_mut(&to).unwrap();
                 to_account.info.balance -= balance;
 
                 // Remove balance change for `to`
-                to_account.info.balance_change.change = Default::default();
+                to_account.info.balance_change = Default::default();
             }
 
             JournalEntry::NonceChange { address } => {
                 let account = state.get_mut(&address).unwrap();
                 let prev_nonce = account.info.nonce;
                 account.info.nonce -= 1;
-                account.info.nonce_change.change = (prev_nonce, account.info.nonce);
+                account.info.nonce_change = (prev_nonce, account.info.nonce);
             }
 
             JournalEntry::AccountCreated {
@@ -551,7 +551,7 @@ impl JournalEntryTr for JournalEntry {
                 let acc = state.get_mut(&address).unwrap();
                 acc.info.code_hash = KECCAK_EMPTY;
                 acc.info.code = None;
-                acc.info.code_change.change = Default::default();
+                acc.info.code_change = Default::default();
             }
         }
     }

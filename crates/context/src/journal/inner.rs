@@ -261,7 +261,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         account.info.code = Some(code);
 
         if let Some(ref code_ref) = account.info.code {
-            account.info.code_change.change = code_ref.bytecode().clone();
+            account.info.code_change = code_ref.bytecode().clone();
         }
     }
 
@@ -324,7 +324,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             let pre = caller_account.info.nonce.saturating_sub(1);
             let post = caller_account.info.nonce;
 
-            caller_account.info.nonce_change.change = (pre, post);
+            caller_account.info.nonce_change = (pre, post);
 
             // nonce changed.
             self.journal.push(ENTRY::nonce_changed(address));
@@ -388,7 +388,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         self.journal
             .push(ENTRY::balance_changed(address, old_balance));
         let account = self.state.get_mut(&address).unwrap();
-        account.info.balance_change.change = new_balance;
+        account.info.balance_change = (new_balance, false);
 
         Ok(())
     }
@@ -405,7 +405,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     #[inline]
     pub fn nonce_bump_journal_entry(&mut self, address: Address) {
         let caller_account = self.state.get_mut(&address).unwrap();
-        caller_account.info.nonce_change.change = (
+        caller_account.info.nonce_change = (
             caller_account.info.nonce.saturating_sub(1),
             caller_account.info.nonce,
         );
@@ -472,7 +472,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         if balance.is_zero() {
             self.load_account(db, to)?;
             let to_account = self.state.get_mut(&to).unwrap();
-            to_account.info.balance_change.change = to_account.info.balance;
+            to_account.info.balance_change = (to_account.info.balance, true);
             Self::touch_account(&mut self.journal, to, to_account);
             return Ok(None);
         }
@@ -504,14 +504,14 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             let from_account = self.state.get_mut(&from).unwrap();
             Self::touch_account(&mut self.journal, from, from_account);
             from_account.info.balance = from_balance_decr;
-            from_account.info.balance_change.change = from_balance_decr;
+            from_account.info.balance_change = (from_balance_decr, false);
         }
 
         {
             let to_account = self.state.get_mut(&to).unwrap();
             Self::touch_account(&mut self.journal, to, to_account);
             to_account.info.balance = to_balance_incr;
-            to_account.info.balance_change.change = to_balance_incr;
+            to_account.info.balance_change = (to_balance_incr, false);
         }
         // Push journal entry
         self.journal
@@ -580,7 +580,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
             #[cfg(feature = "glamsterdam")]
             {
-                target_acc.info.nonce_change.change = (
+                target_acc.info.nonce_change = (
                     target_acc.info.nonce.saturating_sub(1),
                     target_acc.info.nonce,
                 );
@@ -761,7 +761,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             target_account.info.balance += acc_balance;
             let post_balance = target_account.info.balance;
 
-            target_account.info.balance_change.change = post_balance;
+            target_account.info.balance_change = (post_balance, false);
         }
 
         let acc = self.state.get_mut(&address).unwrap();
@@ -781,7 +781,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         let journal_entry = if acc.is_created_locally() || !is_cancun_enabled {
             acc.mark_selfdestructed_locally();
             acc.info.balance = U256::ZERO;
-            acc.info.balance_change.change = U256::ZERO;
+            acc.info.balance_change = (U256::ZERO, false);
             Some(ENTRY::account_destroyed(
                 address,
                 target,
@@ -792,7 +792,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             acc.info.balance = U256::ZERO;
             let post_balance = U256::ZERO;
 
-            acc.info.balance_change.change = post_balance;
+            acc.info.balance_change = (post_balance, false);
 
             Some(ENTRY::balance_transfer(address, target, balance))
         } else {

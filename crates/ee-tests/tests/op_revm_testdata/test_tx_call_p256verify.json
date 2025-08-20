@@ -14,9 +14,10 @@
     "0x0000000000000000000000000000000000000000": {
       "info": {
         "balance": "0x0",
-        "balance_change": {
-          "change": "0x0"
-        },
+        "balance_change": [
+          "0x0",
+          false
+        ],
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x00",
@@ -32,17 +33,13 @@
             "original_len": 0
           }
         },
-        "code_change": {
-          "change": "0x"
-        },
+        "code_change": "0x",
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 1,
-        "nonce_change": {
-          "change": [
-            0,
-            0
-          ]
-        },
+        "nonce_change": [
+          0,
+          0
+        ],
         "storage_access": {
           "reads": [],
           "writes": {}
@@ -55,9 +52,10 @@
     "0x0000000000000000000000000000000000000100": {
       "info": {
         "balance": "0x0",
-        "balance_change": {
-          "change": "0x0"
-        },
+        "balance_change": [
+          "0x0",
+          false
+        ],
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x00",
@@ -73,17 +71,13 @@
             "original_len": 0
           }
         },
-        "code_change": {
-          "change": "0x"
-        },
+        "code_change": "0x",
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0,
-        "nonce_change": {
-          "change": [
-            0,
-            0
-          ]
-        },
+        "nonce_change": [
+          0,
+          0
+        ],
         "storage_access": {
           "reads": [],
           "writes": {}
@@ -96,9 +90,10 @@
     "0x4200000000000000000000000000000000000019": {
       "info": {
         "balance": "0x0",
-        "balance_change": {
-          "change": "0x0"
-        },
+        "balance_change": [
+          "0x0",
+          false
+        ],
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x00",
@@ -114,17 +109,13 @@
             "original_len": 0
           }
         },
-        "code_change": {
-          "change": "0x"
-        },
+        "code_change": "0x",
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0,
-        "nonce_change": {
-          "change": [
-            0,
-            0
-          ]
-        },
+        "nonce_change": [
+          0,
+          0
+        ],
         "storage_access": {
           "reads": [],
           "writes": {}
@@ -137,9 +128,10 @@
     "0x420000000000000000000000000000000000001a": {
       "info": {
         "balance": "0x0",
-        "balance_change": {
-          "change": "0x0"
-        },
+        "balance_change": [
+          "0x0",
+          false
+        ],
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x00",
@@ -155,17 +147,13 @@
             "original_len": 0
           }
         },
-        "code_change": {
-          "change": "0x"
-        },
+        "code_change": "0x",
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0,
-        "nonce_change": {
-          "change": [
-            0,
-            0
-          ]
-        },
+        "nonce_change": [
+          0,
+          0
+        ],
         "storage_access": {
           "reads": [],
           "writes": {}
@@ -178,9 +166,10 @@
     "0x420000000000000000000000000000000000001b": {
       "info": {
         "balance": "0x0",
-        "balance_change": {
-          "change": "0x0"
-        },
+        "balance_change": [
+          "0x0",
+          false
+        ],
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x00",
@@ -196,17 +185,13 @@
             "original_len": 0
           }
         },
-        "code_change": {
-          "change": "0x"
-        },
+        "code_change": "0x",
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0,
-        "nonce_change": {
-          "change": [
-            0,
-            0
-          ]
-        },
+        "nonce_change": [
+          0,
+          0
+        ],
         "storage_access": {
           "reads": [],
           "writes": {}

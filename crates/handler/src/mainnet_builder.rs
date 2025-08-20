@@ -633,16 +633,12 @@ mod test {
 
         let expected_recipient_change = U256::from(5_000_000_000u64);
         assert_eq!(
-            result_balance_change_sender,
-            &state::BalanceChange {
-                change: expected_sender_change
-            }
+            *result_balance_change_sender,
+            (expected_sender_change, false)
         );
         assert_eq!(
-            result_balance_change_recipient,
-            &state::BalanceChange {
-                change: expected_recipient_change
-            }
+            *result_balance_change_recipient,
+            (expected_recipient_change, false)
         );
     }
 
@@ -718,16 +714,12 @@ mod test {
 
         let expected_recipient_change = U256::from(3_000_000_000u64);
         assert_eq!(
-            result_balance_change_sender,
-            &state::BalanceChange {
-                change: expected_sender_change
-            }
+            *result_balance_change_sender,
+            (expected_sender_change, false)
         );
         assert_eq!(
-            result_balance_change_recipient,
-            &state::BalanceChange {
-                change: expected_recipient_change
-            }
+            *result_balance_change_recipient,
+            (expected_recipient_change, true)
         );
     }
 
@@ -871,7 +863,7 @@ mod test {
             .info
             .nonce_change;
         println!("result :{result_nonce_change:?}");
-        assert_eq!(result_nonce_change, &state::NonceChange { change: (1, 2) });
+        assert_eq!(*result_nonce_change, (1, 2));
     }
 
     #[cfg(feature = "glamsterdam")]
@@ -922,12 +914,9 @@ mod test {
         let sender = primitives::Address::from([1u8; 20]);
         let result_nonce_change = &tx.state.get(&receiver).unwrap().info.nonce_change;
         let result_nonce_change_sender = &tx.state.get(&sender).unwrap().info.nonce_change;
-        assert_eq!(result_nonce_change, &state::NonceChange { change: (0, 0) });
+        assert_eq!(*result_nonce_change, (0, 0));
 
-        assert_eq!(
-            result_nonce_change_sender,
-            &state::NonceChange { change: (0, 1) }
-        );
+        assert_eq!(*result_nonce_change_sender, (0, 1));
     }
 
     #[cfg(feature = "glamsterdam")]
@@ -980,11 +969,11 @@ mod test {
             .unwrap()
             .info
             .code_change;
-        let tracked_code = &code_change.change;
+        let tracked_code = &code_change;
         let expected =
             primitives::Bytes::copy_from_slice(&primitives::hex!("602a60005260206000f300"));
 
         println!("tracked {:?}", tracked_code);
-        assert_eq!(*tracked_code, expected);
+        assert_eq!(**tracked_code, expected);
     }
 }
