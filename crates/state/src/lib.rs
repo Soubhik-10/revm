@@ -22,9 +22,9 @@ pub use types::{EvmState, EvmStorage, TransientStorage};
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct StorageAccess {
     /// read_keys
-    pub reads: Vec<BTreeSet<StorageKey>>,
+    pub reads: BTreeSet<StorageKey>,
     /// write_key → (pre, post)
-    pub writes:Vec< BTreeMap<StorageKey, (StorageValue, StorageValue)>>,
+    pub writes: BTreeMap<StorageKey, (StorageValue, StorageValue)>,
 }
 
 /// `BalanceChange` keeps a record of pre_balance and post_balance as per Eip-7928
@@ -32,7 +32,7 @@ pub struct StorageAccess {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BalanceChange {
     /// pre_balance , post_balance
-    pub change: Vec<(U256, U256)>,
+    pub change: (U256, U256),
 }
 
 /// `CodeChange` keeps a record of post_code as per Eip-7928
@@ -40,7 +40,7 @@ pub struct BalanceChange {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CodeChange {
     /// post_bytecode
-    pub change: Vec<Bytes>,
+    pub change: Bytes,
 }
 
 /// `NonceChange` keeps a record of post_nonce as per Eip-7928
@@ -48,7 +48,7 @@ pub struct CodeChange {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NonceChange {
     /// pre_nonce , post_nonce
-    pub change: Vec<(u64, u64)>,
+    pub change: (u64, u64),
 }
 
 /// Account type used inside Journal to track changed to state.
