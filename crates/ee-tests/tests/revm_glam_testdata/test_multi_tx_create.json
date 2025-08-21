@@ -73,7 +73,7 @@
           "writes": {}
         }
       },
-      "status": "LoadedAsNotExisting",
+      "status": "Touched | LoadedAsNotExisting",
       "storage": {},
       "transaction_id": 2
     },

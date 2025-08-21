@@ -121,7 +121,7 @@
           "writes": {}
         }
       },
-      "status": "LoadedAsNotExisting",
+      "status": "Touched | LoadedAsNotExisting",
       "storage": {},
       "transaction_id": 0
     },
@@ -159,7 +159,7 @@
           "writes": {}
         }
       },
-      "status": "LoadedAsNotExisting",
+      "status": "Touched | LoadedAsNotExisting",
       "storage": {},
       "transaction_id": 0
     },
@@ -197,7 +197,7 @@
           "writes": {}
         }
       },
-      "status": "LoadedAsNotExisting",
+      "status": "Touched | LoadedAsNotExisting",
       "storage": {},
       "transaction_id": 0
     }
