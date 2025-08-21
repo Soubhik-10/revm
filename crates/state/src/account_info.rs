@@ -28,7 +28,7 @@ pub struct AccountInfo {
     pub code: Option<Bytecode>,
     /// Storage access information for this account.
     pub storage_access: StorageAccess,
-    /// Balance change information for this account.If the pre balance is same as post then true else false.
+    /// Balance change information for this account. If the pre balance is same as post then true else false.
     pub balance_change: (U256, bool),
     /// Code change track post-transaction runtime bytecode for deployed/modified contracts.
     pub code_change: Bytes,
