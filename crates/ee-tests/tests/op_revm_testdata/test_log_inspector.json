@@ -20,9 +20,10 @@
     "0x0000000000000000000000000000000000000000": {
       "info": {
         "balance": "0x0",
-        "balance_change": {
-          "change": {}
-        },
+        "balance_change": [
+          "0x0",
+          false
+        ],
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x00",
@@ -38,16 +39,15 @@
             "original_len": 0
           }
         },
-        "code_change": {
-          "change": {}
-        },
+        "code_change": "0x",
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0,
-        "nonce_change": {
-          "change": {}
-        },
+        "nonce_change": [
+          0,
+          0
+        ],
         "storage_access": {
-          "reads": {},
+          "reads": [],
           "writes": {}
         }
       },
@@ -58,9 +58,10 @@
     "0x4200000000000000000000000000000000000019": {
       "info": {
         "balance": "0x0",
-        "balance_change": {
-          "change": {}
-        },
+        "balance_change": [
+          "0x0",
+          false
+        ],
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x00",
@@ -76,16 +77,15 @@
             "original_len": 0
           }
         },
-        "code_change": {
-          "change": {}
-        },
+        "code_change": "0x",
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0,
-        "nonce_change": {
-          "change": {}
-        },
+        "nonce_change": [
+          0,
+          0
+        ],
         "storage_access": {
-          "reads": {},
+          "reads": [],
           "writes": {}
         }
       },
@@ -96,9 +96,10 @@
     "0x420000000000000000000000000000000000001a": {
       "info": {
         "balance": "0x0",
-        "balance_change": {
-          "change": {}
-        },
+        "balance_change": [
+          "0x0",
+          false
+        ],
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x00",
@@ -114,16 +115,15 @@
             "original_len": 0
           }
         },
-        "code_change": {
-          "change": {}
-        },
+        "code_change": "0x",
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0,
-        "nonce_change": {
-          "change": {}
-        },
+        "nonce_change": [
+          0,
+          0
+        ],
         "storage_access": {
-          "reads": {},
+          "reads": [],
           "writes": {}
         }
       },
@@ -134,9 +134,10 @@
     "0x420000000000000000000000000000000000001b": {
       "info": {
         "balance": "0x0",
-        "balance_change": {
-          "change": {}
-        },
+        "balance_change": [
+          "0x0",
+          false
+        ],
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x00",
@@ -152,16 +153,15 @@
             "original_len": 0
           }
         },
-        "code_change": {
-          "change": {}
-        },
+        "code_change": "0x",
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0,
-        "nonce_change": {
-          "change": {}
-        },
+        "nonce_change": [
+          0,
+          0
+        ],
         "storage_access": {
-          "reads": {},
+          "reads": [],
           "writes": {}
         }
       },
@@ -172,9 +172,10 @@
     "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
       "info": {
         "balance": "0x2386f26fc10000",
-        "balance_change": {
-          "change": {}
-        },
+        "balance_change": [
+          "0x0",
+          false
+        ],
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x00",
@@ -190,16 +191,15 @@
             "original_len": 0
           }
         },
-        "code_change": {
-          "change": {}
-        },
+        "code_change": "0x",
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 1,
-        "nonce_change": {
-          "change": {}
-        },
+        "nonce_change": [
+          0,
+          0
+        ],
         "storage_access": {
-          "reads": {},
+          "reads": [],
           "writes": {}
         }
       },
@@ -210,9 +210,10 @@
     "0xffffffffffffffffffffffffffffffffffffffff": {
       "info": {
         "balance": "0x2386f26fc10000",
-        "balance_change": {
-          "change": {}
-        },
+        "balance_change": [
+          "0x0",
+          false
+        ],
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x600080a000",
@@ -230,16 +231,15 @@
             "original_len": 5
           }
         },
-        "code_change": {
-          "change": {}
-        },
+        "code_change": "0x",
         "code_hash": "0x8013c386d5a03c3fa0a6ccbfefcf7d91471dedba2bb94eefef57f916e5929a8d",
         "nonce": 1,
-        "nonce_change": {
-          "change": {}
-        },
+        "nonce_change": [
+          0,
+          0
+        ],
         "storage_access": {
-          "reads": {},
+          "reads": [],
           "writes": {}
         }
       },

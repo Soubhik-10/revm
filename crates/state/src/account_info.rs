@@ -3,9 +3,9 @@ use core::{
     cmp::Ordering,
     hash::{Hash, Hasher},
 };
-use primitives::{B256, KECCAK_EMPTY, U256};
+use primitives::{Bytes, B256, KECCAK_EMPTY, U256};
 
-use crate::{BalanceChange, CodeChange, NonceChange, StorageAccess};
+use crate::StorageAccess;
 
 /// Account information that contains balance, nonce, code hash and code
 ///
@@ -28,12 +28,12 @@ pub struct AccountInfo {
     pub code: Option<Bytecode>,
     /// Storage access information for this account.
     pub storage_access: StorageAccess,
-    /// Balance change information for this account.
-    pub balance_change: BalanceChange,
+    /// Balance change information for this account. If the pre balance is same as post then true else false.
+    pub balance_change: (U256, bool),
     /// Code change track post-transaction runtime bytecode for deployed/modified contracts.
-    pub code_change: CodeChange,
+    pub code_change: Bytes,
     /// Nonce change information for this account.
-    pub nonce_change: NonceChange,
+    pub nonce_change: (u64, u64),
 }
 
 impl Default for AccountInfo {
@@ -44,9 +44,9 @@ impl Default for AccountInfo {
             code: Some(Bytecode::default()),
             nonce: 0,
             storage_access: StorageAccess::default(),
-            balance_change: BalanceChange::default(),
-            code_change: CodeChange::default(),
-            nonce_change: NonceChange::default(),
+            balance_change: (U256::ZERO, false),
+            code_change: Bytes::default(),
+            nonce_change: (0, 0),
         }
     }
 }
@@ -92,9 +92,9 @@ impl AccountInfo {
             code: Some(code),
             code_hash,
             storage_access: StorageAccess::default(),
-            balance_change: BalanceChange::default(),
-            code_change: CodeChange::default(),
-            nonce_change: NonceChange::default(),
+            balance_change: (U256::ZERO, false),
+            code_change: Bytes::default(),
+            nonce_change: (0, 0),
         }
     }
 
@@ -233,9 +233,9 @@ impl AccountInfo {
             code_hash: self.code_hash,
             code: None,
             storage_access: self.storage_access.clone(),
-            balance_change: self.balance_change.clone(),
+            balance_change: self.balance_change,
             code_change: self.code_change.clone(),
-            nonce_change: self.nonce_change.clone(),
+            nonce_change: self.nonce_change,
         }
     }
 
@@ -325,6 +325,17 @@ impl AccountInfo {
             code_hash: hash,
             ..Default::default()
         }
+    }
+
+    /// Clear all the state changes in the account info.
+    /// Needed after every tx to reset the state changes for building Block Access List,
+    #[inline]
+    pub fn clear_state_changes(&mut self) {
+        self.balance_change = (U256::ZERO, false);
+        self.code_change = Bytes::default();
+        self.nonce_change = (0, 0);
+        self.storage_access.reads.clear();
+        self.storage_access.writes.clear();
     }
 }
 

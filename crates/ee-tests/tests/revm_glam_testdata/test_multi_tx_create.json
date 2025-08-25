@@ -42,22 +42,10 @@
     "0x0000000000000000000000000000000000000000": {
       "info": {
         "balance": "0x0",
-        "balance_change": {
-          "change": {
-            "0": [
-              "0x0",
-              "0x0"
-            ],
-            "1": [
-              "0x0",
-              "0x0"
-            ],
-            "2": [
-              "0x0",
-              "0x0"
-            ]
-          }
-        },
+        "balance_change": [
+          "0x0",
+          false
+        ],
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x00",
@@ -73,34 +61,29 @@
             "original_len": 0
           }
         },
-        "code_change": {
-          "change": {}
-        },
+        "code_change": "0x",
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0,
-        "nonce_change": {
-          "change": {}
-        },
+        "nonce_change": [
+          0,
+          0
+        ],
         "storage_access": {
-          "reads": {},
+          "reads": [],
           "writes": {}
         }
       },
-      "status": "LoadedAsNotExisting",
+      "status": "Touched | LoadedAsNotExisting",
       "storage": {},
       "transaction_id": 2
     },
     "0x000000000000000000000000000000000000ffff": {
       "info": {
         "balance": "0x0",
-        "balance_change": {
-          "change": {
-            "1": [
-              "0x0",
-              "0x0"
-            ]
-          }
-        },
+        "balance_change": [
+          "0x0",
+          false
+        ],
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x00",
@@ -116,16 +99,15 @@
             "original_len": 0
           }
         },
-        "code_change": {
-          "change": {}
-        },
+        "code_change": "0x",
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 0,
-        "nonce_change": {
-          "change": {}
-        },
+        "nonce_change": [
+          0,
+          0
+        ],
         "storage_access": {
-          "reads": {},
+          "reads": [],
           "writes": {}
         }
       },
@@ -136,9 +118,10 @@
     "0x84bcbaa99ae6d1f7f70b37d5f6c27c9631eeb2f2": {
       "info": {
         "balance": "0x0",
-        "balance_change": {
-          "change": {}
-        },
+        "balance_change": [
+          "0x0",
+          false
+        ],
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x61ffffff00",
@@ -156,23 +139,15 @@
             "original_len": 5
           }
         },
-        "code_change": {
-          "change": {
-            "2": "0x61ffffff00"
-          }
-        },
+        "code_change": "0x61ffffff00",
         "code_hash": "0x9125466aa9ef15459d85e7318f6d3bdc5f6978c0565bee37a8e768d7c202a67a",
         "nonce": 1,
-        "nonce_change": {
-          "change": {
-            "2": [
-              0,
-              1
-            ]
-          }
-        },
+        "nonce_change": [
+          0,
+          1
+        ],
         "storage_access": {
-          "reads": {},
+          "reads": [],
           "writes": {}
         }
       },
@@ -183,22 +158,10 @@
     "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
       "info": {
         "balance": "0x2386f26fc10000",
-        "balance_change": {
-          "change": {
-            "0": [
-              "0x2386f26fc10000",
-              "0x2386f26fc10000"
-            ],
-            "1": [
-              "0x2386f26fc10000",
-              "0x2386f26fc10000"
-            ],
-            "2": [
-              "0x2386f26fc10000",
-              "0x2386f26fc10000"
-            ]
-          }
-        },
+        "balance_change": [
+          "0x2386f26fc10000",
+          false
+        ],
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x00",
@@ -214,29 +177,15 @@
             "original_len": 0
           }
         },
-        "code_change": {
-          "change": {}
-        },
+        "code_change": "0x",
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
         "nonce": 1,
-        "nonce_change": {
-          "change": {
-            "0": [
-              0,
-              1
-            ],
-            "1": [
-              1,
-              2
-            ],
-            "2": [
-              0,
-              1
-            ]
-          }
-        },
+        "nonce_change": [
+          0,
+          1
+        ],
         "storage_access": {
-          "reads": {},
+          "reads": [],
           "writes": {}
         }
       },

@@ -253,7 +253,6 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     #[inline]
     pub fn set_code_with_hash(&mut self, address: Address, code: Bytecode, hash: B256) {
         let account = self.state.get_mut(&address).unwrap();
-        let tx_id = self.transaction_id as u64;
         Self::touch_account(&mut self.journal, address, account);
 
         self.journal.push(ENTRY::code_changed(address));
@@ -262,13 +261,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         account.info.code = Some(code);
 
         if let Some(ref code_ref) = account.info.code {
-            account
-                .info
-                .code_change
-                .change
-                .entry(tx_id)
-                .and_modify(|entry| *entry = code_ref.bytecode().clone())
-                .or_insert(code_ref.bytecode().clone());
+            account.info.code_change = code_ref.bytecode().clone();
         }
     }
 
@@ -328,16 +321,10 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
         if bump_nonce {
             let caller_account = self.state.get_mut(&address).unwrap();
-            caller_account
-                .info
-                .nonce_change
-                .change
-                .entry(caller_account.transaction_id as u64)
-                .and_modify(|entry| entry.1 = caller_account.info.nonce)
-                .or_insert((
-                    caller_account.info.nonce.saturating_sub(1),
-                    caller_account.info.nonce,
-                ));
+            let pre = caller_account.info.nonce.saturating_sub(1);
+            let post = caller_account.info.nonce;
+
+            caller_account.info.nonce_change = (pre, post);
 
             // nonce changed.
             self.journal.push(ENTRY::nonce_changed(address));
@@ -383,34 +370,20 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         address: Address,
         balance: U256,
     ) -> Result<(), DB::Error> {
-        let tx_id = self.transaction_id as u64;
-
-        let (old_balance, new_balance, touched);
-        {
-            let account = self.load_account(db, address)?.data;
-            old_balance = account.info.balance;
-            new_balance = old_balance.saturating_add(balance);
-            account.info.balance = new_balance;
-            touched = account.is_touched();
-        }
+        let account = self.load_account(db, address)?.data;
+        let old_balance = account.info.balance;
+        account.info.balance = account.info.balance.saturating_add(balance);
+        account.info.balance_change = (account.info.balance, false);
 
         // march account as touched.
-        if !touched {
+        if !account.is_touched() {
+            account.mark_touch();
             self.journal.push(ENTRY::account_touched(address));
         }
 
         // add journal entry for balance increment.
         self.journal
             .push(ENTRY::balance_changed(address, old_balance));
-        let account = self.state.get_mut(&address).unwrap();
-        account
-            .info
-            .balance_change
-            .change
-            .entry(tx_id)
-            .and_modify(|entry| entry.1 = new_balance)
-            .or_insert((old_balance, new_balance));
-
         Ok(())
     }
 
@@ -426,16 +399,10 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     #[inline]
     pub fn nonce_bump_journal_entry(&mut self, address: Address) {
         let caller_account = self.state.get_mut(&address).unwrap();
-        caller_account
-            .info
-            .nonce_change
-            .change
-            .entry(caller_account.transaction_id as u64)
-            .and_modify(|entry| entry.1 = caller_account.info.nonce)
-            .or_insert((
-                caller_account.info.nonce.saturating_sub(1),
-                caller_account.info.nonce,
-            ));
+        caller_account.info.nonce_change = (
+            caller_account.info.nonce.saturating_sub(1),
+            caller_account.info.nonce,
+        );
 
         self.journal.push(ENTRY::nonce_changed(address));
     }
@@ -499,66 +466,36 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         if balance.is_zero() {
             self.load_account(db, to)?;
             let to_account = self.state.get_mut(&to).unwrap();
-            to_account
-                .info
-                .balance_change
-                .change
-                .entry(self.transaction_id as u64)
-                .and_modify(|entry| entry.1 = to_account.info.balance)
-                .or_insert((to_account.info.balance, to_account.info.balance));
             Self::touch_account(&mut self.journal, to, to_account);
+            to_account.info.balance_change = (to_account.info.balance, true);
             return Ok(None);
         }
-
-        // Load accounts
+        // load accounts
         self.load_account(db, from)?;
         self.load_account(db, to)?;
 
-        // Check if balance changes are possible
-        let (pre_from_balance, from_balance_decr) = {
-            let from_account = self.state.get(&from).unwrap();
-            let from_balance = from_account.info.balance;
-            let Some(decr) = from_balance.checked_sub(balance) else {
-                return Ok(Some(TransferError::OutOfFunds));
-            };
-            (from_balance, decr)
+        // sub balance from
+        let from_account = self.state.get_mut(&from).unwrap();
+        Self::touch_account(&mut self.journal, from, from_account);
+        let from_balance = &mut from_account.info.balance;
+
+        let Some(from_balance_decr) = from_balance.checked_sub(balance) else {
+            return Ok(Some(TransferError::OutOfFunds));
         };
+        *from_balance = from_balance_decr;
+        from_account.info.balance_change = (*from_balance, false);
 
-        let (pre_to_balance, to_balance_incr) = {
-            let to_account = self.state.get(&to).unwrap();
-            let to_balance = to_account.info.balance;
-            let Some(incr) = to_balance.checked_add(balance) else {
-                return Ok(Some(TransferError::OverflowPayment));
-            };
-            (to_balance, incr)
+        // add balance to
+        let to_account = &mut self.state.get_mut(&to).unwrap();
+        Self::touch_account(&mut self.journal, to, to_account);
+        let to_balance = &mut to_account.info.balance;
+        let Some(to_balance_incr) = to_balance.checked_add(balance) else {
+            return Ok(Some(TransferError::OverflowPayment));
         };
+        *to_balance = to_balance_incr;
+        to_account.info.balance_change = (*to_balance, false);
+        // Overflow of U256 balance is not possible to happen on mainnet. We don't bother to return funds from from_acc.
 
-        {
-            let from_account = self.state.get_mut(&from).unwrap();
-            Self::touch_account(&mut self.journal, from, from_account);
-            from_account.info.balance = from_balance_decr;
-            from_account
-                .info
-                .balance_change
-                .change
-                .entry(self.transaction_id as u64)
-                .and_modify(|entry| entry.1 = from_balance_decr)
-                .or_insert((pre_from_balance, from_balance_decr));
-        }
-
-        {
-            let to_account = self.state.get_mut(&to).unwrap();
-            Self::touch_account(&mut self.journal, to, to_account);
-            to_account.info.balance = to_balance_incr;
-            to_account
-                .info
-                .balance_change
-                .change
-                .entry(self.transaction_id as u64)
-                .and_modify(|entry| entry.1 = to_balance_incr)
-                .or_insert((pre_to_balance, to_balance_incr));
-        }
-        // Push journal entry
         self.journal
             .push(ENTRY::balance_transfer(from, to, balance));
 
@@ -624,16 +561,12 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             target_acc.info.nonce = 1;
 
             #[cfg(feature = "glamsterdam")]
-            target_acc
-                .info
-                .nonce_change
-                .change
-                .entry(target_acc.transaction_id as u64)
-                .and_modify(|entry| entry.1 = target_acc.info.nonce)
-                .or_insert((
+            {
+                target_acc.info.nonce_change = (
                     target_acc.info.nonce.saturating_sub(1),
                     target_acc.info.nonce,
-                ));
+                );
+            }
         }
 
         // touch account. This is important as for pre SpuriousDragon account could be
@@ -806,17 +739,8 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
             let target_account = self.state.get_mut(&target).unwrap();
             Self::touch_account(&mut self.journal, target, target_account);
-            let pre_balance = target_account.info.balance;
             target_account.info.balance += acc_balance;
-            let post_balance = target_account.info.balance;
-
-            target_account
-                .info
-                .balance_change
-                .change
-                .entry(self.transaction_id as u64)
-                .and_modify(|entry| entry.1 = post_balance)
-                .or_insert((pre_balance, post_balance));
+            target_account.info.balance_change = (target_account.info.balance, false);
         }
 
         let acc = self.state.get_mut(&address).unwrap();
@@ -836,12 +760,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         let journal_entry = if acc.is_created_locally() || !is_cancun_enabled {
             acc.mark_selfdestructed_locally();
             acc.info.balance = U256::ZERO;
-            acc.info
-                .balance_change
-                .change
-                .entry(self.transaction_id as u64)
-                .and_modify(|entry| entry.1 = U256::ZERO)
-                .or_insert((balance, U256::ZERO));
+            acc.info.balance_change = (U256::ZERO, false);
             Some(ENTRY::account_destroyed(
                 address,
                 target,
@@ -850,16 +769,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             ))
         } else if address != target {
             acc.info.balance = U256::ZERO;
-            let pre_balance = balance;
-            let post_balance = U256::ZERO;
-
-            acc.info
-                .balance_change
-                .change
-                .entry(self.transaction_id as u64)
-                .and_modify(|entry| entry.1 = post_balance)
-                .or_insert((pre_balance, post_balance));
-
+            acc.info.balance_change = (U256::ZERO, false);
             Some(ENTRY::balance_transfer(address, target, balance))
         } else {
             // State is not changed:
@@ -1114,13 +1024,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
                 let acc = self.state.get_mut(&address).unwrap();
 
-                let tx_index = self.transaction_id as u64;
-                acc.info
-                    .storage_access
-                    .reads
-                    .entry(tx_index)
-                    .or_default()
-                    .insert(key);
+                acc.info.storage_access.reads.insert(key);
 
                 return Ok(StateLoad::new(
                     SStoreResult {
@@ -1146,12 +1050,9 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         // insert value into present state.
         slot.present_value = new;
 
-        let tx_index = self.transaction_id as u64;
         acc.info
             .storage_access
             .writes
-            .entry(tx_index)
-            .or_default()
             .insert(key, (present_value, new));
 
         Ok(StateLoad::new(
@@ -1305,14 +1206,7 @@ pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
 
     // Set `StorageChange` for reads here
     if !from_sstore {
-        let tx_index = transaction_id as u64;
-        account
-            .info
-            .storage_access
-            .reads
-            .entry(tx_index)
-            .or_default()
-            .insert(key);
+        account.info.storage_access.reads.insert(key);
     }
 
     Ok(StateLoad::new(value, is_cold))
