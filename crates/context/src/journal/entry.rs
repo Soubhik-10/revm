@@ -433,86 +433,63 @@ impl JournalEntryTr for JournalEntry {
                 destroyed_status,
                 had_balance,
             } => {
-                let transaction_id;
-                {
-                    let account = state.get_mut(&address).unwrap();
-                    // set previous state of selfdestructed flag, as there could be multiple
-                    // selfdestructs in one transaction.
-                    match destroyed_status {
-                        SelfdestructionRevertStatus::GloballySelfdestroyed => {
-                            account.unmark_selfdestruct();
-                            account.unmark_selfdestructed_locally();
-                        }
-                        SelfdestructionRevertStatus::LocallySelfdestroyed => {
-                            account.unmark_selfdestructed_locally();
-                        }
-                        // do nothing on repeated selfdestruction
-                        SelfdestructionRevertStatus::RepeatedSelfdestruction => (),
+                let account = state.get_mut(&address).unwrap();
+                // set previous state of selfdestructed flag, as there could be multiple
+                // selfdestructs in one transaction.
+                match destroyed_status {
+                    SelfdestructionRevertStatus::GloballySelfdestroyed => {
+                        account.unmark_selfdestruct();
+                        account.unmark_selfdestructed_locally();
                     }
-
-                    account.info.balance += had_balance;
-                    transaction_id = account.transaction_id as u64;
-
-                    // Remove balance change for self-destructed account
-                    account.balance_change.change.remove(&transaction_id);
+                    SelfdestructionRevertStatus::LocallySelfdestroyed => {
+                        account.unmark_selfdestructed_locally();
+                    }
+                    // do nothing on repeated selfdestruction
+                    SelfdestructionRevertStatus::RepeatedSelfdestruction => (),
                 }
+
+                account.info.balance += had_balance;
+                // Remove balance change for self-destructed account
+                account.info.balance_change = Default::default();
 
                 if address != target {
                     let target = state.get_mut(&target).unwrap();
                     target.info.balance -= had_balance;
 
                     // Remove balance change for beneficiary if different from self-destructed account
-                    target.balance_change.change.remove(&transaction_id);
+                    target.info.balance_change = Default::default();
                 }
             }
             JournalEntry::BalanceChange {
                 address,
                 old_balance,
             } => {
-                let tx_id;
-                {
-                    let account = state.get_mut(&address).unwrap();
-                    account.info.balance = old_balance;
-                    tx_id = account.transaction_id as u64;
-
-                    // Remove balance change entry
-                    account.balance_change.change.remove(&tx_id);
-                }
+                let account = state.get_mut(&address).unwrap();
+                account.info.balance = old_balance;
+                // Remove balance change entry
+                account.info.balance_change = Default::default();
             }
 
             JournalEntry::BalanceTransfer { from, to, balance } => {
                 // we don't need to check overflow and underflow when adding and subtracting the balance.
-                let from_transaction_id;
-                {
-                    let from_account = state.get_mut(&from).unwrap();
-                    from_account.info.balance += balance;
-                    from_transaction_id = from_account.transaction_id as u64;
 
-                    // Remove balance change for `from`
-                    from_account
-                        .balance_change
-                        .change
-                        .remove(&from_transaction_id);
-                }
+                let from_account = state.get_mut(&from).unwrap();
+                from_account.info.balance += balance;
+                // Remove balance change for `from`
+                from_account.info.balance_change = Default::default();
 
                 let to_account = state.get_mut(&to).unwrap();
                 to_account.info.balance -= balance;
 
                 // Remove balance change for `to`
-                to_account
-                    .balance_change
-                    .change
-                    .remove(&from_transaction_id);
+                to_account.info.balance_change = Default::default();
             }
 
             JournalEntry::NonceChange { address } => {
                 let account = state.get_mut(&address).unwrap();
                 let prev_nonce = account.info.nonce;
                 account.info.nonce -= 1;
-                let transaction_id = account.transaction_id as u64;
-                if let Some(nonce_entry) = account.nonce_change.change.get_mut(&transaction_id) {
-                    *nonce_entry = (prev_nonce, account.info.nonce);
-                }
+                account.info.nonce_change = (prev_nonce, account.info.nonce);
             }
 
             JournalEntry::AccountCreated {
@@ -550,15 +527,7 @@ impl JournalEntryTr for JournalEntry {
                     .present_value = had_value;
 
                 if let Some(account) = state.get_mut(&address) {
-                    let tx_index = account.transaction_id as u64;
-
-                    if let Some(writes_for_tx) = account.storage_access.writes.get_mut(&tx_index) {
-                        writes_for_tx.remove(&key);
-
-                        if writes_for_tx.is_empty() {
-                            account.storage_access.writes.remove(&tx_index);
-                        }
-                    }
+                    account.info.storage_access.writes.remove(&key);
                 }
             }
             JournalEntry::TransientStorageChange {
@@ -580,10 +549,9 @@ impl JournalEntryTr for JournalEntry {
             }
             JournalEntry::CodeChange { address } => {
                 let acc = state.get_mut(&address).unwrap();
-                let tx_index = acc.transaction_id as u64;
                 acc.info.code_hash = KECCAK_EMPTY;
                 acc.info.code = None;
-                acc.code_change.change.remove(&tx_index);
+                acc.info.code_change = Default::default();
             }
         }
     }

@@ -185,23 +185,17 @@ mod test {
         // As per the EIP it should be stored in both writes and reads.
         let expected_storage_access = state::StorageAccess {
             reads: {
-                let mut reads = std::collections::BTreeMap::new();
-                reads.insert(0u64, std::collections::BTreeSet::from([U256::from(1)]));
+                let mut reads = std::collections::BTreeSet::new();
+                reads.insert(U256::from(1));
                 reads
             },
             writes: {
                 let mut writes = std::collections::BTreeMap::new();
-                writes.insert(
-                    0u64,
-                    std::collections::BTreeMap::from([(
-                        U256::from(1),
-                        (U256::ZERO, U256::from(66)),
-                    )]),
-                );
+                writes.insert(U256::from(1), (U256::ZERO, U256::from(66)));
                 writes
             },
         };
-        let storage_access = &state.get(&signer.address()).unwrap().storage_access;
+        let storage_access = &state.get(&signer.address()).unwrap().info.storage_access;
         let auth_acc = state.get(&signer.address()).unwrap();
         assert_eq!(auth_acc.info.code, Some(Bytecode::new_eip7702(FFADDRESS)));
         assert_eq!(auth_acc.info.nonce, 1);
@@ -261,23 +255,17 @@ mod test {
         // As per the EIP it should be stored in reads and writes since sstore first changes 0->66(writes) then try to change 66->66(reads).
         let expected_storage_access = state::StorageAccess {
             reads: {
-                let mut reads = std::collections::BTreeMap::new();
-                reads.insert(0u64, std::collections::BTreeSet::from([U256::from(1)]));
+                let mut reads = std::collections::BTreeSet::new();
+                reads.insert(U256::from(1));
                 reads
             },
             writes: {
                 let mut writes = std::collections::BTreeMap::new();
-                writes.insert(
-                    0u64,
-                    std::collections::BTreeMap::from([(
-                        U256::from(1),
-                        (U256::ZERO, U256::from(66)),
-                    )]),
-                );
+                writes.insert(U256::from(1), (U256::ZERO, U256::from(66)));
                 writes
             },
         };
-        let storage_access = &state.get(&signer.address()).unwrap().storage_access;
+        let storage_access = &state.get(&signer.address()).unwrap().info.storage_access;
         let auth_acc = state.get(&signer.address()).unwrap();
         assert_eq!(auth_acc.info.code, Some(Bytecode::new_eip7702(FFADDRESS)));
         assert_eq!(auth_acc.info.nonce, 1);
@@ -336,20 +324,17 @@ mod test {
         let state = result.state;
         // As per the EIP it should be stored in writes since sstore first changes 0->66(writes) then  change 66->0(writes).
         let expected_storage_access = state::StorageAccess {
-            reads: { std::collections::BTreeMap::new() },
+            reads: {
+                use std::collections::BTreeSet;
+                BTreeSet::new()
+            },
             writes: {
                 let mut writes = std::collections::BTreeMap::new();
-                writes.insert(
-                    0u64,
-                    std::collections::BTreeMap::from([(
-                        U256::from(1),
-                        (U256::from(66), U256::ZERO),
-                    )]),
-                );
+                writes.insert(U256::from(1), (U256::from(66), U256::ZERO));
                 writes
             },
         };
-        let storage_access = &state.get(&signer.address()).unwrap().storage_access;
+        let storage_access = &state.get(&signer.address()).unwrap().info.storage_access;
         let auth_acc = state.get(&signer.address()).unwrap();
         assert_eq!(auth_acc.info.code, Some(Bytecode::new_eip7702(FFADDRESS)));
         assert_eq!(auth_acc.info.nonce, 1);
@@ -412,7 +397,7 @@ mod test {
 
         // As per the EIP it should not be stored.
         let expected_storage_access = state::StorageAccess {
-            reads: { std::collections::BTreeMap::new() },
+            reads: { std::collections::BTreeSet::new() },
             writes: { std::collections::BTreeMap::new() },
         };
         let result = evm
@@ -429,7 +414,7 @@ mod test {
 
         let state = result.state;
         let auth_acc = state.get(&signer.address()).unwrap();
-        let storage_access = &state.get(&signer.address()).unwrap().storage_access;
+        let storage_access = &state.get(&signer.address()).unwrap().info.storage_access;
         assert_eq!(auth_acc.info.code, Some(Bytecode::new_eip7702(FFADDRESS)));
         assert_eq!(auth_acc.info.nonce, 1);
         assert_eq!(*storage_access, expected_storage_access)
@@ -507,10 +492,10 @@ mod test {
             .unwrap();
 
         let state = result.state;
-        let storage_access = &state.get(&signer.address()).unwrap().storage_access;
+        let storage_access = &state.get(&signer.address()).unwrap().info.storage_access;
         // As per the EIP it should not be stored.
         let expected_storage_access = state::StorageAccess {
-            reads: { std::collections::BTreeMap::new() },
+            reads: { std::collections::BTreeSet::new() },
             writes: { std::collections::BTreeMap::new() },
         };
         let auth_acc = state.get(&signer.address()).unwrap();
@@ -564,10 +549,10 @@ mod test {
             .unwrap();
 
         let state = result.state;
-        let storage_access = &state.get(&signer.address()).unwrap().storage_access;
+        let storage_access = &state.get(&signer.address()).unwrap().info.storage_access;
         // As per the EIP it should not be stored.
         let expected_storage_access = state::StorageAccess {
-            reads: { std::collections::BTreeMap::new() },
+            reads: { std::collections::BTreeSet::new() },
             writes: { std::collections::BTreeMap::new() },
         };
         let auth_acc = state.get(&signer.address()).unwrap();
@@ -639,32 +624,21 @@ mod test {
         println!("Sender Balance (after):   {sender_balance_after}");
         println!("Recipient Balance (after): {recipient_balance_after}");
 
-        let result_balance_change_sender = &result.state.get(&sender).unwrap().balance_change;
+        let result_balance_change_sender = &result.state.get(&sender).unwrap().info.balance_change;
         println!("Balance Change of sender: {result_balance_change_sender:?}");
-        let result_balance_change_recipient = &result.state.get(&recipient).unwrap().balance_change;
+        let result_balance_change_recipient =
+            &result.state.get(&recipient).unwrap().info.balance_change;
         println!("Balance Change of recipient: {result_balance_change_recipient:?}");
-        let mut expected_sender_change = primitives::hash_map::HashMap::new();
-        expected_sender_change.insert(
-            0,
-            (U256::from(2_983_222_784u64), U256::from(999_979_000u64)),
-        );
+        let expected_sender_change = U256::from(999_979_000u64);
 
-        let mut expected_recipient_change = primitives::hash_map::HashMap::new();
-        expected_recipient_change.insert(
-            0,
-            (U256::from(3_000_000_000u64), U256::from(5_000_000_000u64)),
+        let expected_recipient_change = U256::from(5_000_000_000u64);
+        assert_eq!(
+            *result_balance_change_sender,
+            (expected_sender_change, false)
         );
         assert_eq!(
-            result_balance_change_sender,
-            &state::BalanceChange {
-                change: expected_sender_change
-            }
-        );
-        assert_eq!(
-            result_balance_change_recipient,
-            &state::BalanceChange {
-                change: expected_recipient_change
-            }
+            *result_balance_change_recipient,
+            (expected_recipient_change, false)
         );
     }
 
@@ -731,32 +705,21 @@ mod test {
         println!("Sender Balance (after):   {sender_balance_after}");
         println!("Recipient Balance (after): {recipient_balance_after}");
 
-        let result_balance_change_sender = &result.state.get(&sender).unwrap().balance_change;
+        let result_balance_change_sender = &result.state.get(&sender).unwrap().info.balance_change;
         println!("Balance Change of sender: {result_balance_change_sender:?}");
-        let result_balance_change_recipient = &result.state.get(&recipient).unwrap().balance_change;
+        let result_balance_change_recipient =
+            &result.state.get(&recipient).unwrap().info.balance_change;
         println!("Balance Change of recipient: {result_balance_change_recipient:?}");
-        let mut expected_sender_change = primitives::hash_map::HashMap::new();
-        expected_sender_change.insert(
-            0,
-            (U256::from(2_983_222_784u64), U256::from(2_999_979_000u64)),
-        );
+        let expected_sender_change = U256::from(2_999_979_000u64);
 
-        let mut expected_recipient_change = primitives::hash_map::HashMap::new();
-        expected_recipient_change.insert(
-            0,
-            (U256::from(3_000_000_000u64), U256::from(3_000_000_000u64)),
+        let expected_recipient_change = U256::from(3_000_000_000u64);
+        assert_eq!(
+            *result_balance_change_sender,
+            (expected_sender_change, false)
         );
         assert_eq!(
-            result_balance_change_sender,
-            &state::BalanceChange {
-                change: expected_sender_change
-            }
-        );
-        assert_eq!(
-            result_balance_change_recipient,
-            &state::BalanceChange {
-                change: expected_recipient_change
-            }
+            *result_balance_change_recipient,
+            (expected_recipient_change, true)
         );
     }
 
@@ -823,9 +786,10 @@ mod test {
         println!("Sender nonce (after):   {sender_nonce_after}");
         println!("Recipient nonce (after): {recipient_nonce_after}");
 
-        let result_nonce_change_sender = &result.state.get(&sender).unwrap().nonce_change;
+        let result_nonce_change_sender = &result.state.get(&sender).unwrap().info.nonce_change;
         println!("Nonce Change of sender: {result_nonce_change_sender:?}");
-        let result_nonce_change_recipient = &result.state.get(&recipient).unwrap().nonce_change;
+        let result_nonce_change_recipient =
+            &result.state.get(&recipient).unwrap().info.nonce_change;
         println!("Nonce Change of recipient: {result_nonce_change_recipient:?}");
     }
 
@@ -892,14 +856,14 @@ mod test {
             .unwrap();
 
         database::DatabaseCommit::commit(&mut evm.db_mut(), result.clone().state);
-        let result_nonce_change = &result.state.get(&created_address).unwrap().nonce_change;
+        let result_nonce_change = &result
+            .state
+            .get(&created_address)
+            .unwrap()
+            .info
+            .nonce_change;
         println!("result :{result_nonce_change:?}");
-        assert_eq!(
-            result_nonce_change,
-            &state::NonceChange {
-                change: primitives::HashMap::from([(0, (0, 1)), (1, (1, 2)),])
-            }
-        );
+        assert_eq!(*result_nonce_change, (1, 2));
     }
 
     #[cfg(feature = "glamsterdam")]
@@ -948,21 +912,11 @@ mod test {
         println!("Tx:{tx:?}");
         let receiver = primitives::Address::from([2u8; 20]);
         let sender = primitives::Address::from([1u8; 20]);
-        let result_nonce_change = &tx.state.get(&receiver).unwrap().nonce_change;
-        let result_nonce_change_sender = &tx.state.get(&sender).unwrap().nonce_change;
-        assert_eq!(
-            result_nonce_change,
-            &state::NonceChange {
-                change: primitives::HashMap::from([]),
-            }
-        );
+        let result_nonce_change = &tx.state.get(&receiver).unwrap().info.nonce_change;
+        let result_nonce_change_sender = &tx.state.get(&sender).unwrap().info.nonce_change;
+        assert_eq!(*result_nonce_change, (0, 0));
 
-        assert_eq!(
-            result_nonce_change_sender,
-            &state::NonceChange {
-                change: primitives::HashMap::from([(0, (0, 1)),]),
-            }
-        );
+        assert_eq!(*result_nonce_change_sender, (0, 1));
     }
 
     #[cfg(feature = "glamsterdam")]
@@ -1009,10 +963,17 @@ mod test {
 
         let created_address = result1.result.created_address().unwrap();
 
-        let code_change = &result1.state.get(&created_address).unwrap().code_change;
-        let tracked_code = code_change.change.get(&0).unwrap();
+        let code_change = &result1
+            .state
+            .get(&created_address)
+            .unwrap()
+            .info
+            .code_change;
+        let tracked_code = &code_change;
         let expected =
-            primitives::Bytes::from_static(b"\x60\x2a\x60\x00\x52\x60\x20\x60\x00\xf3\x00");
-        assert_eq!(tracked_code, &expected);
+            primitives::Bytes::copy_from_slice(&primitives::hex!("602a60005260206000f300"));
+
+        println!("tracked {:?}", tracked_code);
+        assert_eq!(**tracked_code, expected);
     }
 }

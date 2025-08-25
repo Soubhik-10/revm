@@ -13,7 +13,6 @@ use bitflags::bitflags;
 pub use bytecode::Bytecode;
 use core::hash::Hash;
 pub use primitives;
-use primitives::alloy_primitives::TxIndex;
 use primitives::hardfork::SpecId;
 use primitives::{Bytes, HashMap, StorageKey, StorageValue, U256};
 pub use types::{EvmState, EvmStorage, TransientStorage};
@@ -22,34 +21,34 @@ pub use types::{EvmState, EvmStorage, TransientStorage};
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct StorageAccess {
-    /// tx_index → read_keys
-    pub reads: BTreeMap<TxIndex, BTreeSet<StorageKey>>,
-    /// tx_index → key → (pre, post)
-    pub writes: BTreeMap<TxIndex, BTreeMap<StorageKey, (StorageValue, StorageValue)>>,
+    /// read_keys
+    pub reads: BTreeSet<StorageKey>,
+    /// write_key → (pre, post)
+    pub writes: BTreeMap<StorageKey, (StorageValue, StorageValue)>,
 }
 
 /// `BalanceChange` keeps a record of pre_balance and post_balance as per Eip-7928
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BalanceChange {
-    /// tx_index → (pre_balance , post_balance)
-    pub change: HashMap<TxIndex, (U256, U256)>,
+    /// post_balance
+    pub change: U256,
 }
 
 /// `CodeChange` keeps a record of post_code as per Eip-7928
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CodeChange {
-    /// tx_index →  post_bytecode
-    pub change: HashMap<TxIndex, Bytes>,
+    /// post_bytecode
+    pub change: Bytes,
 }
 
 /// `NonceChange` keeps a record of post_nonce as per Eip-7928
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NonceChange {
-    /// tx_index → (pre_nonce , post_nonce)
-    pub change: HashMap<TxIndex, (u64, u64)>,
+    /// pre_nonce , post_nonce
+    pub change: (u64, u64),
 }
 
 /// Account type used inside Journal to track changed to state.
@@ -64,14 +63,6 @@ pub struct Account {
     pub storage: EvmStorage,
     /// Account status flags
     pub status: AccountStatus,
-    /// Storage access information for this account.
-    pub storage_access: StorageAccess,
-    /// Balance change information for this account.
-    pub balance_change: BalanceChange,
-    /// Code change track post-transaction runtime bytecode for deployed/modified contracts.
-    pub code_change: CodeChange,
-    /// Nonce change information for this account.
-    pub nonce_change: NonceChange,
 }
 
 impl Account {
@@ -82,10 +73,6 @@ impl Account {
             storage: HashMap::default(),
             transaction_id,
             status: AccountStatus::LoadedAsNotExisting,
-            storage_access: StorageAccess::default(),
-            balance_change: BalanceChange::default(),
-            code_change: CodeChange::default(),
-            nonce_change: NonceChange::default(),
         }
     }
 
@@ -312,10 +299,6 @@ impl From<AccountInfo> for Account {
             storage: HashMap::default(),
             transaction_id: 0,
             status: AccountStatus::empty(),
-            storage_access: StorageAccess::default(),
-            balance_change: BalanceChange::default(),
-            code_change: CodeChange::default(),
-            nonce_change: NonceChange::default(),
         }
     }
 }
