@@ -1011,59 +1011,94 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         key: StorageKey,
         new: StorageValue,
     ) -> Result<StateLoad<SStoreResult>, DB::Error> {
-        // assume that acc exists and load the slot.
+        // // assume that acc exists and load the slot.
+        // let present = self.sload(db, address, key, true)?;
+
+        // // get original_value and present_value first, then reborrow mutably later
+        // let (original_value, present_value, is_cold) = {
+        //     let acc = self.state.get(&address).unwrap();
+        //     let slot = acc.storage.get(&key).unwrap();
+
+        //     // new value is same as present, we don't need to do anything
+        //     if slot.present_value == new {
+        //         let original_value = slot.original_value();
+        //         let present_value = slot.present_value;
+
+        //         let acc = self.state.get_mut(&address).unwrap();
+
+        //         acc.info.storage_access.reads.insert(key);
+
+        //         return Ok(StateLoad::new(
+        //             SStoreResult {
+        //                 original_value,
+        //                 present_value,
+        //                 new_value: new,
+        //             },
+        //             present.is_cold,
+        //         ));
+        //     }
+
+        //     (slot.original_value(), slot.present_value, present.is_cold)
+        // };
+
+        // let acc = self.state.get_mut(&address).unwrap();
+
+        // // if there is no original value in dirty return present value, that is our original.
+        // let slot = acc.storage.get_mut(&key).unwrap();
+
+        // self.journal
+        //     .push(ENTRY::storage_changed(address, key, present_value));
+
+        // // insert value into present state.
+        // slot.present_value = new;
+
+        // acc.info
+        //     .storage_access
+        //     .writes
+        //     .insert(key, (present_value, new));
+
+        // Ok(StateLoad::new(
+        //     SStoreResult {
+        //         original_value,
+        //         present_value,
+        //         new_value: new,
+        //     },
+        //     is_cold,
+        // ))
         let present = self.sload(db, address, key, true)?;
-
-        // get original_value and present_value first, then reborrow mutably later
-        let (original_value, present_value, is_cold) = {
-            let acc = self.state.get(&address).unwrap();
-            let slot = acc.storage.get(&key).unwrap();
-
-            // new value is same as present, we don't need to do anything
-            if slot.present_value == new {
-                let original_value = slot.original_value();
-                let present_value = slot.present_value;
-
-                let acc = self.state.get_mut(&address).unwrap();
-
-                acc.info.storage_access.reads.insert(key);
-
-                return Ok(StateLoad::new(
-                    SStoreResult {
-                        original_value,
-                        present_value,
-                        new_value: new,
-                    },
-                    present.is_cold,
-                ));
-            }
-
-            (slot.original_value(), slot.present_value, present.is_cold)
-        };
-
         let acc = self.state.get_mut(&address).unwrap();
 
         // if there is no original value in dirty return present value, that is our original.
         let slot = acc.storage.get_mut(&key).unwrap();
 
-        self.journal
-            .push(ENTRY::storage_changed(address, key, present_value));
+        // new value is same as present, we don't need to do anything
+        if present.data == new {
+            acc.info.storage_access.reads.insert(key);
+            return Ok(StateLoad::new(
+                SStoreResult {
+                    original_value: slot.original_value(),
+                    present_value: present.data,
+                    new_value: new,
+                },
+                present.is_cold,
+            ));
+        }
 
+        self.journal
+            .push(ENTRY::storage_changed(address, key, present.data));
         // insert value into present state.
         slot.present_value = new;
-
         acc.info
             .storage_access
             .writes
-            .insert(key, (present_value, new));
-
+            .insert(key, (present.data, new));
         Ok(StateLoad::new(
             SStoreResult {
-                original_value,
-                present_value,
+                original_value: slot.original_value(),
+                present_value: present.data,
                 new_value: new,
             },
-            is_cold,
+            present.is_cold,
         ))
     }
 
