@@ -1121,7 +1121,6 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             .storage_access
             .writes
             .insert(key, (present.data, new));
-        tracing::debug!("REVM: Stored {:?}", new);
         Ok(StateLoad::new(
             SStoreResult {
                 original_value: slot.original_value(),
