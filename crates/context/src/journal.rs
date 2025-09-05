@@ -12,7 +12,9 @@ pub use inner::JournalInner;
 use bytecode::Bytecode;
 use context_interface::{
     context::{SStoreResult, SelfDestructResult, StateLoad},
-    journaled_state::{AccountLoad, JournalCheckpoint, JournalTr, TransferError},
+    journaled_state::{
+        AccountInfoLoad, AccountLoad, JournalCheckpoint, JournalLoadError, JournalTr, TransferError,
+    },
 };
 use core::ops::{Deref, DerefMut};
 use database_interface::Database;
@@ -110,7 +112,9 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         address: Address,
         key: StorageKey,
     ) -> Result<StateLoad<StorageValue>, <Self::Database as Database>::Error> {
-        self.inner.sload(&mut self.database, address, key, false)
+        self.inner
+            .sload(&mut self.database, address, key, false, false)
+            .map_err(JournalLoadError::unwrap_db_error)
     }
 
     #[cfg(not(feature = "glamsterdam"))]
@@ -119,7 +123,9 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         address: Address,
         key: StorageKey,
     ) -> Result<StateLoad<StorageValue>, <Self::Database as Database>::Error> {
-        self.inner.sload(&mut self.database, address, key)
+        self.inner
+            .sload(&mut self.database, address, key, false)
+            .map_err(JournalLoadError::unwrap_db_error)
     }
 
     fn sstore(
@@ -128,7 +134,9 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         key: StorageKey,
         value: StorageValue,
     ) -> Result<StateLoad<SStoreResult>, <Self::Database as Database>::Error> {
-        self.inner.sstore(&mut self.database, address, key, value)
+        self.inner
+            .sstore(&mut self.database, address, key, value, false)
+            .map_err(JournalLoadError::unwrap_db_error)
     }
 
     fn tload(&mut self, address: Address, key: StorageKey) -> StorageValue {
@@ -179,7 +187,8 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         storage_keys: impl IntoIterator<Item = StorageKey>,
     ) -> Result<(), <Self::Database as Database>::Error> {
         self.inner
-            .load_account_optional(&mut self.database, address, false, storage_keys)?;
+            .load_account_optional(&mut self.database, address, false, storage_keys, false)
+            .map_err(JournalLoadError::unwrap_db_error)?;
         Ok(())
     }
 
@@ -305,5 +314,55 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
     #[inline]
     fn finalize(&mut self) -> Self::State {
         self.inner.finalize()
+    }
+
+    #[cfg(not(feature = "glamsterdam"))]
+    fn sload_skip_cold_load(
+        &mut self,
+        address: Address,
+        key: StorageKey,
+        skip_cold_load: bool,
+    ) -> Result<StateLoad<StorageValue>, JournalLoadError<<Self::Database as Database>::Error>>
+    {
+        self.inner
+            .sload(&mut self.database, address, key, skip_cold_load)
+    }
+
+    #[cfg(feature = "glamsterdam")]
+    fn sload_skip_cold_load(
+        &mut self,
+        address: Address,
+        key: StorageKey,
+        skip_cold_load: bool,
+    ) -> Result<StateLoad<StorageValue>, JournalLoadError<<Self::Database as Database>::Error>>
+    {
+        self.inner
+            .sload(&mut self.database, address, key, skip_cold_load, false)
+    }
+
+    fn sstore_skip_cold_load(
+        &mut self,
+        address: Address,
+        key: StorageKey,
+        value: StorageValue,
+        skip_cold_load: bool,
+    ) -> Result<StateLoad<SStoreResult>, JournalLoadError<<Self::Database as Database>::Error>>
+    {
+        self.inner
+            .sstore(&mut self.database, address, key, value, skip_cold_load)
+    }
+
+    fn load_account_info_skip_cold_load(
+        &mut self,
+        address: Address,
+        load_code: bool,
+        skip_cold_load: bool,
+    ) -> Result<AccountInfoLoad<'_>, JournalLoadError<<Self::Database as Database>::Error>> {
+        let spec = self.inner.spec;
+        self.inner
+            .load_account_optional(&mut self.database, address, load_code, [], skip_cold_load)
+            .map(|a| {
+                AccountInfoLoad::new(&a.data.info, a.is_cold, a.state_clear_aware_is_empty(spec))
+            })
     }
 }
