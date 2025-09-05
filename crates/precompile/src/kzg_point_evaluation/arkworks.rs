@@ -7,6 +7,7 @@ use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{BigInteger, PrimeField};
 use ark_serialize::CanonicalDeserialize;
 use core::ops::Neg;
+use std::string::ToString;
 
 /// Verify KZG proof using BLS12-381 implementation.
 ///
@@ -71,7 +72,8 @@ fn get_trusted_setup_g2() -> G2Affine {
 
 /// Parse a G1 point from compressed format (48 bytes)
 fn parse_g1_compressed(bytes: &[u8; 48]) -> Result<G1Affine, PrecompileError> {
-    G1Affine::deserialize_compressed(&bytes[..]).map_err(|_| PrecompileError::KzgInvalidG1Point)
+    G1Affine::deserialize_compressed(&bytes[..])
+        .map_err(|_| PrecompileError::Other("Invalid compressed G1 point".to_string()))
 }
 
 /// Read a scalar field element from bytes and verify it's canonical
@@ -82,7 +84,9 @@ fn read_scalar_canonical(bytes: &[u8; 32]) -> Result<Fr, PrecompileError> {
     let bytes_roundtrip = fr.into_bigint().to_bytes_be();
 
     if bytes_roundtrip.as_slice() != bytes {
-        return Err(PrecompileError::NonCanonicalFp);
+        return Err(PrecompileError::Other(
+            "Non-canonical scalar field element".to_string(),
+        ));
     }
 
     Ok(fr)

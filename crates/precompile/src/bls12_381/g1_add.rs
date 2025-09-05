@@ -22,7 +22,10 @@ pub fn g1_add(input: &[u8], gas_limit: u64) -> PrecompileResult {
     }
 
     if input.len() != G1_ADD_INPUT_LENGTH {
-        return Err(PrecompileError::Bls12381G1AddInputLength);
+        return Err(PrecompileError::Other(format!(
+            "G1ADD input should be {G1_ADD_INPUT_LENGTH} bytes, was {}",
+            input.len()
+        )));
     }
 
     // Extract coordinates from padded input
