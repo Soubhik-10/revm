@@ -4,7 +4,7 @@ use revm::{
     context::Cfg,
     context_interface::ContextTr,
     handler::{EthPrecompiles, PrecompileProvider},
-    interpreter::{CallInputs, InterpreterResult},
+    interpreter::{InputsImpl, InterpreterResult},
     precompile::{
         self, bn254, secp256r1, Precompile, PrecompileError, PrecompileId, PrecompileResult,
         Precompiles,
@@ -111,9 +111,13 @@ where
     fn run(
         &mut self,
         context: &mut CTX,
-        inputs: &CallInputs,
+        address: &Address,
+        inputs: &InputsImpl,
+        is_static: bool,
+        gas_limit: u64,
     ) -> Result<Option<Self::Output>, String> {
-        self.inner.run(context, inputs)
+        self.inner
+            .run(context, address, inputs, is_static, gas_limit)
     }
 
     #[inline]

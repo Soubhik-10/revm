@@ -4,7 +4,7 @@ use revm::{
     context::Cfg,
     context_interface::{ContextTr, JournalTr, LocalContextTr, Transaction},
     handler::{EthPrecompiles, PrecompileProvider},
-    interpreter::{CallInputs, Gas, InstructionResult, InterpreterResult},
+    interpreter::{Gas, InputsImpl, InstructionResult, InterpreterResult},
     precompile::{PrecompileError, PrecompileOutput, PrecompileResult},
     primitives::{address, hardfork::SpecId, Address, Bytes, U256},
 };
@@ -52,15 +52,21 @@ where
     fn run(
         &mut self,
         context: &mut CTX,
-        inputs: &CallInputs,
+        address: &Address,
+        inputs: &InputsImpl,
+        is_static: bool,
+        gas_limit: u64,
     ) -> Result<Option<Self::Output>, String> {
         // Check if this is our custom precompile
-        if inputs.bytecode_address == CUSTOM_PRECOMPILE_ADDRESS {
-            return Ok(Some(run_custom_precompile(context, inputs)?));
+        if *address == CUSTOM_PRECOMPILE_ADDRESS {
+            return Ok(Some(run_custom_precompile(
+                context, inputs, is_static, gas_limit,
+            )?));
         }
 
         // Otherwise, delegate to standard Ethereum precompiles
-        self.inner.run(context, inputs)
+        self.inner
+            .run(context, address, inputs, is_static, gas_limit)
     }
 
     fn warm_addresses(&self) -> Box<impl Iterator<Item = Address>> {
@@ -78,7 +84,9 @@ where
 /// Runs our custom precompile
 fn run_custom_precompile<CTX: ContextTr>(
     context: &mut CTX,
-    inputs: &CallInputs,
+    inputs: &InputsImpl,
+    is_static: bool,
+    gas_limit: u64,
 ) -> Result<InterpreterResult, String> {
     let input_bytes = match &inputs.input {
         revm::interpreter::CallInput::SharedBuffer(range) => {
@@ -97,13 +105,13 @@ fn run_custom_precompile<CTX: ContextTr>(
 
     let result = if input_bytes.is_empty() {
         // Read storage operation
-        handle_read_storage(context, inputs.gas_limit)
+        handle_read_storage(context, gas_limit)
     } else if input_bytes.len() == 32 {
-        if inputs.is_static {
+        if is_static {
             return Err("Cannot modify state in static context".to_string());
         }
         // Write storage operation
-        handle_write_storage(context, &input_bytes, inputs.gas_limit)
+        handle_write_storage(context, &input_bytes, gas_limit)
     } else {
         Err(PrecompileError::Other("Invalid input length".to_string()))
     };
@@ -116,7 +124,7 @@ fn run_custom_precompile<CTX: ContextTr>(
                 } else {
                     InstructionResult::Return
                 },
-                gas: Gas::new(inputs.gas_limit),
+                gas: Gas::new(gas_limit),
                 output: output.bytes,
             };
             let underflow = interpreter_result.gas.record_cost(output.gas_used);
@@ -131,7 +139,7 @@ fn run_custom_precompile<CTX: ContextTr>(
             } else {
                 InstructionResult::PrecompileError
             },
-            gas: Gas::new(inputs.gas_limit),
+            gas: Gas::new(gas_limit),
             output: Bytes::new(),
         }),
     }
