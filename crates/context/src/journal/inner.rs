@@ -1099,7 +1099,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
         // if there is no original value in dirty return present value, that is our original.
         let slot = acc.storage.get_mut(&key).unwrap();
-
+        let pre = present.data;
         // new value is same as present, we don't need to do anything
         if present.data == new {
             acc.info.storage_access.reads.insert(key);
@@ -1117,11 +1117,12 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             .push(ENTRY::storage_changed(address, key, present.data));
         // insert value into present state.
         slot.present_value = new;
-        acc.info
-            .storage_access
-            .writes
-            .insert(key, (present.data, new));
+        acc.info.storage_access.writes.insert(key, (pre, new));
         tracing::debug!("REVM: Stored {:?}", new);
+        tracing::debug!(
+            "REVM: Acc Info Storage writes {:?}",
+            acc.info.storage_access
+        );
         Ok(StateLoad::new(
             SStoreResult {
                 original_value: slot.original_value(),
