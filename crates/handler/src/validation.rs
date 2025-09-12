@@ -20,7 +20,7 @@ pub fn validate_env<CTX: ContextTr, ERROR: From<InvalidHeader> + From<InvalidTra
     if spec.is_enabled_in(SpecId::CANCUN) && context.block().blob_excess_gas_and_price().is_none() {
         return Err(InvalidHeader::ExcessBlobGasNotSet.into());
     }
-    validate_tx_env::<CTX, InvalidTransaction>(context, spec).map_err(Into::into)
+    validate_tx_env::<CTX>(context, spec).map_err(Into::into)
 }
 
 /// Validate transaction that has EIP-1559 priority fee
@@ -55,7 +55,10 @@ pub fn validate_eip4844_tx(
 ) -> Result<(), InvalidTransaction> {
     // Ensure that the user was willing to at least pay the current blob gasprice
     if block_blob_gas_price > max_blob_fee {
-        return Err(InvalidTransaction::BlobGasPriceGreaterThanMax);
+        return Err(InvalidTransaction::BlobGasPriceGreaterThanMax {
+            block_blob_gas_price,
+            tx_max_fee_per_blob_gas: max_blob_fee,
+        });
     }
 
     // There must be at least one blob
@@ -84,7 +87,7 @@ pub fn validate_eip4844_tx(
 }
 
 /// Validate transaction against block and configuration for mainnet.
-pub fn validate_tx_env<CTX: ContextTr, Error>(
+pub fn validate_tx_env<CTX: ContextTr>(
     context: CTX,
     spec_id: SpecId,
 ) -> Result<(), InvalidTransaction> {

@@ -17,6 +17,7 @@ use primitives::hardfork::SpecId;
 use primitives::{Bytes, HashMap, StorageKey, StorageValue, U256};
 pub use types::{EvmState, EvmStorage, TransientStorage};
 
+
 /// `StorageAccess` keeps a record of storage_reads and storage_writes as per Eip-7928
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -50,6 +51,7 @@ pub struct NonceChange {
     /// pre_nonce , post_nonce
     pub change: (u64, u64),
 }
+
 
 /// Account type used inside Journal to track changed to state.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
