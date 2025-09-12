@@ -7,12 +7,13 @@
   },
   "state": {
     "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
+      "balance_change": [
+        "0x0",
+        false
+      ],
+      "code_change": "0x",
       "info": {
         "balance": "0x2386f26fc10064",
-        "balance_change": [
-          "0x0",
-          false
-        ],
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x00",
@@ -28,29 +29,29 @@
             "original_len": 0
           }
         },
-        "code_change": "0x",
         "code_hash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
-        "nonce": 1,
-        "nonce_change": [
-          0,
-          1
-        ],
-        "storage_access": {
-          "reads": [],
-          "writes": {}
-        }
+        "nonce": 1
       },
+      "nonce_change": [
+        0,
+        1
+      ],
       "status": "Touched",
       "storage": {},
+      "storage_access": {
+        "reads": [],
+        "writes": {}
+      },
       "transaction_id": 0
     },
     "0xffffffffffffffffffffffffffffffffffffffff": {
+      "balance_change": [
+        "0x2386f26fc10000",
+        true
+      ],
+      "code_change": "0x",
       "info": {
         "balance": "0x2386f26fc10000",
-        "balance_change": [
-          "0x2386f26fc10000",
-          true
-        ],
         "code": {
           "LegacyAnalyzed": {
             "bytecode": "0x5000",
@@ -68,20 +69,19 @@
             "original_len": 1
           }
         },
-        "code_change": "0x",
         "code_hash": "0x7b2ab94bb7d45041581aa3757ae020084674ccad6f75dc3750eb2ea8a92c4e9a",
-        "nonce": 1,
-        "nonce_change": [
-          0,
-          0
-        ],
-        "storage_access": {
-          "reads": [],
-          "writes": {}
-        }
+        "nonce": 1
       },
+      "nonce_change": [
+        0,
+        0
+      ],
       "status": "Cold",
       "storage": {},
+      "storage_access": {
+        "reads": [],
+        "writes": {}
+      },
       "transaction_id": 0
     }
   }

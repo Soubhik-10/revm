@@ -17,7 +17,6 @@ use primitives::hardfork::SpecId;
 use primitives::{Bytes, HashMap, StorageKey, StorageValue, U256};
 pub use types::{EvmState, EvmStorage, TransientStorage};
 
-
 /// `StorageAccess` keeps a record of storage_reads and storage_writes as per Eip-7928
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -52,7 +51,6 @@ pub struct NonceChange {
     pub change: (u64, u64),
 }
 
-
 /// Account type used inside Journal to track changed to state.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -65,6 +63,14 @@ pub struct Account {
     pub storage: EvmStorage,
     /// Account status flags
     pub status: AccountStatus,
+    /// Storage access information for this account.
+    pub storage_access: StorageAccess,
+    /// Balance change information for this account. If the pre balance is same as post then true else false.
+    pub balance_change: (U256, bool),
+    /// Code change track post-transaction runtime bytecode for deployed/modified contracts.
+    pub code_change: Bytes,
+    /// Nonce change information for this account.
+    pub nonce_change: (u64, u64),
 }
 
 impl Account {
@@ -75,6 +81,10 @@ impl Account {
             storage: HashMap::default(),
             transaction_id,
             status: AccountStatus::LoadedAsNotExisting,
+            storage_access: StorageAccess::default(),
+            balance_change: (U256::ZERO, false),
+            code_change: Bytes::default(),
+            nonce_change: (0, 0),
         }
     }
 
@@ -291,6 +301,17 @@ impl Account {
         self.mark_warm_with_transaction_id(transaction_id);
         self
     }
+
+    /// Clear all the state changes in the account info.
+    /// Needed after every tx to reset the state changes for building Block Access List,
+    #[inline]
+    pub fn clear_state_changes(&mut self) {
+        self.balance_change = (U256::ZERO, false);
+        self.code_change = Bytes::default();
+        self.nonce_change = (0, 0);
+        self.storage_access.reads.clear();
+        self.storage_access.writes.clear();
+    }
 }
 
 impl From<AccountInfo> for Account {
@@ -300,6 +321,10 @@ impl From<AccountInfo> for Account {
             storage: HashMap::default(),
             transaction_id: 0,
             status: AccountStatus::empty(),
+            storage_access: StorageAccess::default(),
+            balance_change: (U256::ZERO, false),
+            code_change: Bytes::default(),
+            nonce_change: (0, 0),
         }
     }
 }

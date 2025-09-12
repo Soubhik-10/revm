@@ -195,7 +195,7 @@ mod test {
                 writes
             },
         };
-        let storage_access = &state.get(&signer.address()).unwrap().info.storage_access;
+        let storage_access = &state.get(&signer.address()).unwrap().storage_access;
         let auth_acc = state.get(&signer.address()).unwrap();
         assert_eq!(auth_acc.info.code, Some(Bytecode::new_eip7702(FFADDRESS)));
         assert_eq!(auth_acc.info.nonce, 1);
@@ -265,7 +265,7 @@ mod test {
                 writes
             },
         };
-        let storage_access = &state.get(&signer.address()).unwrap().info.storage_access;
+        let storage_access = &state.get(&signer.address()).unwrap().storage_access;
         let auth_acc = state.get(&signer.address()).unwrap();
         assert_eq!(auth_acc.info.code, Some(Bytecode::new_eip7702(FFADDRESS)));
         assert_eq!(auth_acc.info.nonce, 1);
@@ -334,7 +334,7 @@ mod test {
                 writes
             },
         };
-        let storage_access = &state.get(&signer.address()).unwrap().info.storage_access;
+        let storage_access = &state.get(&signer.address()).unwrap().storage_access;
         let auth_acc = state.get(&signer.address()).unwrap();
         assert_eq!(auth_acc.info.code, Some(Bytecode::new_eip7702(FFADDRESS)));
         assert_eq!(auth_acc.info.nonce, 1);
@@ -414,7 +414,7 @@ mod test {
 
         let state = result.state;
         let auth_acc = state.get(&signer.address()).unwrap();
-        let storage_access = &state.get(&signer.address()).unwrap().info.storage_access;
+        let storage_access = &state.get(&signer.address()).unwrap().storage_access;
         assert_eq!(auth_acc.info.code, Some(Bytecode::new_eip7702(FFADDRESS)));
         assert_eq!(auth_acc.info.nonce, 1);
         assert_eq!(*storage_access, expected_storage_access)
@@ -492,7 +492,7 @@ mod test {
             .unwrap();
 
         let state = result.state;
-        let storage_access = &state.get(&signer.address()).unwrap().info.storage_access;
+        let storage_access = &state.get(&signer.address()).unwrap().storage_access;
         // As per the EIP it should not be stored.
         let expected_storage_access = state::StorageAccess {
             reads: { std::collections::BTreeSet::new() },
@@ -549,7 +549,7 @@ mod test {
             .unwrap();
 
         let state = result.state;
-        let storage_access = &state.get(&signer.address()).unwrap().info.storage_access;
+        let storage_access = &state.get(&signer.address()).unwrap().storage_access;
         // As per the EIP it should not be stored.
         let expected_storage_access = state::StorageAccess {
             reads: { std::collections::BTreeSet::new() },
@@ -624,10 +624,9 @@ mod test {
         println!("Sender Balance (after):   {sender_balance_after}");
         println!("Recipient Balance (after): {recipient_balance_after}");
 
-        let result_balance_change_sender = &result.state.get(&sender).unwrap().info.balance_change;
+        let result_balance_change_sender = &result.state.get(&sender).unwrap().balance_change;
         println!("Balance Change of sender: {result_balance_change_sender:?}");
-        let result_balance_change_recipient =
-            &result.state.get(&recipient).unwrap().info.balance_change;
+        let result_balance_change_recipient = &result.state.get(&recipient).unwrap().balance_change;
         println!("Balance Change of recipient: {result_balance_change_recipient:?}");
         let expected_sender_change = U256::from(999_979_000u64);
 
@@ -705,10 +704,9 @@ mod test {
         println!("Sender Balance (after):   {sender_balance_after}");
         println!("Recipient Balance (after): {recipient_balance_after}");
 
-        let result_balance_change_sender = &result.state.get(&sender).unwrap().info.balance_change;
+        let result_balance_change_sender = &result.state.get(&sender).unwrap().balance_change;
         println!("Balance Change of sender: {result_balance_change_sender:?}");
-        let result_balance_change_recipient =
-            &result.state.get(&recipient).unwrap().info.balance_change;
+        let result_balance_change_recipient = &result.state.get(&recipient).unwrap().balance_change;
         println!("Balance Change of recipient: {result_balance_change_recipient:?}");
         let expected_sender_change = U256::from(2_999_979_000u64);
 
@@ -786,10 +784,9 @@ mod test {
         println!("Sender nonce (after):   {sender_nonce_after}");
         println!("Recipient nonce (after): {recipient_nonce_after}");
 
-        let result_nonce_change_sender = &result.state.get(&sender).unwrap().info.nonce_change;
+        let result_nonce_change_sender = &result.state.get(&sender).unwrap().nonce_change;
         println!("Nonce Change of sender: {result_nonce_change_sender:?}");
-        let result_nonce_change_recipient =
-            &result.state.get(&recipient).unwrap().info.nonce_change;
+        let result_nonce_change_recipient = &result.state.get(&recipient).unwrap().nonce_change;
         println!("Nonce Change of recipient: {result_nonce_change_recipient:?}");
     }
 
@@ -856,12 +853,7 @@ mod test {
             .unwrap();
 
         database::DatabaseCommit::commit(&mut evm.db_mut(), result.clone().state);
-        let result_nonce_change = &result
-            .state
-            .get(&created_address)
-            .unwrap()
-            .info
-            .nonce_change;
+        let result_nonce_change = &result.state.get(&created_address).unwrap().nonce_change;
         println!("result :{result_nonce_change:?}");
         assert_eq!(*result_nonce_change, (1, 2));
     }
@@ -912,8 +904,8 @@ mod test {
         println!("Tx:{tx:?}");
         let receiver = primitives::Address::from([2u8; 20]);
         let sender = primitives::Address::from([1u8; 20]);
-        let result_nonce_change = &tx.state.get(&receiver).unwrap().info.nonce_change;
-        let result_nonce_change_sender = &tx.state.get(&sender).unwrap().info.nonce_change;
+        let result_nonce_change = &tx.state.get(&receiver).unwrap().nonce_change;
+        let result_nonce_change_sender = &tx.state.get(&sender).unwrap().nonce_change;
         assert_eq!(*result_nonce_change, (0, 0));
 
         assert_eq!(*result_nonce_change_sender, (0, 1));
@@ -963,12 +955,7 @@ mod test {
 
         let created_address = result1.result.created_address().unwrap();
 
-        let code_change = &result1
-            .state
-            .get(&created_address)
-            .unwrap()
-            .info
-            .code_change;
+        let code_change = &result1.state.get(&created_address).unwrap().code_change;
         let tracked_code = &code_change;
         let expected =
             primitives::Bytes::copy_from_slice(&primitives::hex!("602a60005260206000f300"));
