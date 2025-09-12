@@ -261,7 +261,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         account.info.code = Some(code);
 
         if let Some(ref code_ref) = account.info.code {
-            account.info.code_change = code_ref.bytecode().clone();
+            account.code_change = code_ref.bytecode().clone();
         }
     }
 
@@ -324,7 +324,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             let pre = caller_account.info.nonce.saturating_sub(1);
             let post = caller_account.info.nonce;
 
-            caller_account.info.nonce_change = (pre, post);
+            caller_account.nonce_change = (pre, post);
 
             // nonce changed.
             self.journal.push(ENTRY::nonce_changed(address));
@@ -373,7 +373,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         let account = self.load_account(db, address)?.data;
         let old_balance = account.info.balance;
         account.info.balance = account.info.balance.saturating_add(balance);
-        account.info.balance_change = (account.info.balance, false);
+        account.balance_change = (account.info.balance, false);
 
         // march account as touched.
         if !account.is_touched() {
@@ -399,7 +399,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     #[inline]
     pub fn nonce_bump_journal_entry(&mut self, address: Address) {
         let caller_account = self.state.get_mut(&address).unwrap();
-        caller_account.info.nonce_change = (
+        caller_account.nonce_change = (
             caller_account.info.nonce.saturating_sub(1),
             caller_account.info.nonce,
         );
@@ -467,7 +467,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             self.load_account(db, to)?;
             let to_account = self.state.get_mut(&to).unwrap();
             Self::touch_account(&mut self.journal, to, to_account);
-            to_account.info.balance_change = (to_account.info.balance, true);
+            to_account.balance_change = (to_account.info.balance, true);
             return Ok(None);
         }
         // load accounts
@@ -483,7 +483,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             return Ok(Some(TransferError::OutOfFunds));
         };
         *from_balance = from_balance_decr;
-        from_account.info.balance_change = (*from_balance, false);
+        from_account.balance_change = (*from_balance, false);
 
         // add balance to
         let to_account = &mut self.state.get_mut(&to).unwrap();
@@ -493,7 +493,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             return Ok(Some(TransferError::OverflowPayment));
         };
         *to_balance = to_balance_incr;
-        to_account.info.balance_change = (*to_balance, false);
+        to_account.balance_change = (*to_balance, false);
         // Overflow of U256 balance is not possible to happen on mainnet. We don't bother to return funds from from_acc.
 
         self.journal
@@ -562,7 +562,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
             #[cfg(feature = "glamsterdam")]
             {
-                target_acc.info.nonce_change = (
+                target_acc.nonce_change = (
                     target_acc.info.nonce.saturating_sub(1),
                     target_acc.info.nonce,
                 );
@@ -742,7 +742,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             let target_account = self.state.get_mut(&target).unwrap();
             Self::touch_account(&mut self.journal, target, target_account);
             target_account.info.balance += acc_balance;
-            target_account.info.balance_change = (target_account.info.balance, false);
+            target_account.balance_change = (target_account.info.balance, false);
         }
 
         let acc = self.state.get_mut(&address).unwrap();
@@ -762,7 +762,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         let journal_entry = if acc.is_created_locally() || !is_cancun_enabled {
             acc.mark_selfdestructed_locally();
             acc.info.balance = U256::ZERO;
-            acc.info.balance_change = (U256::ZERO, false);
+            acc.balance_change = (U256::ZERO, false);
             Some(ENTRY::account_destroyed(
                 address,
                 target,
@@ -771,7 +771,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             ))
         } else if address != target {
             acc.info.balance = U256::ZERO;
-            acc.info.balance_change = (U256::ZERO, false);
+            acc.balance_change = (U256::ZERO, false);
             Some(ENTRY::balance_transfer(address, target, balance))
         } else {
             // State is not changed:
@@ -1102,7 +1102,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         let pre = present.data;
         // new value is same as present, we don't need to do anything
         if present.data == new {
-            acc.info.storage_access.reads.insert(key);
+            acc.storage_access.reads.insert(key);
             return Ok(StateLoad::new(
                 SStoreResult {
                     original_value: slot.original_value(),
@@ -1117,12 +1117,9 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             .push(ENTRY::storage_changed(address, key, present.data));
         // insert value into present state.
         slot.present_value = new;
-        acc.info.storage_access.writes.insert(key, (pre, new));
+        acc.storage_access.writes.insert(key, (pre, new));
         tracing::debug!("REVM: Stored {:?}", new);
-        tracing::debug!(
-            "REVM: Acc Info Storage writes {:?}",
-            acc.info.storage_access
-        );
+        tracing::debug!("REVM: Acc Info Storage writes {:?}", acc.storage_access);
         Ok(StateLoad::new(
             SStoreResult {
                 original_value: slot.original_value(),
@@ -1283,7 +1280,7 @@ pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
 
     // Set `StorageChange` for reads here
     if !from_sstore {
-        account.info.storage_access.reads.insert(key);
+        account.storage_access.reads.insert(key);
     }
 
     Ok(StateLoad::new(value, is_cold))
