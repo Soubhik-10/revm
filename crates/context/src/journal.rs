@@ -106,7 +106,6 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         &mut self.database
     }
 
-    #[cfg(feature = "glamsterdam")]
     fn sload(
         &mut self,
         address: Address,
@@ -114,17 +113,6 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
     ) -> Result<StateLoad<StorageValue>, <Self::Database as Database>::Error> {
         self.inner
             .sload(&mut self.database, address, key, false, false)
-            .map_err(JournalLoadError::unwrap_db_error)
-    }
-
-    #[cfg(not(feature = "glamsterdam"))]
-    fn sload(
-        &mut self,
-        address: Address,
-        key: StorageKey,
-    ) -> Result<StateLoad<StorageValue>, <Self::Database as Database>::Error> {
-        self.inner
-            .sload(&mut self.database, address, key, false)
             .map_err(JournalLoadError::unwrap_db_error)
     }
 
@@ -316,19 +304,6 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         self.inner.finalize()
     }
 
-    #[cfg(not(feature = "glamsterdam"))]
-    fn sload_skip_cold_load(
-        &mut self,
-        address: Address,
-        key: StorageKey,
-        skip_cold_load: bool,
-    ) -> Result<StateLoad<StorageValue>, JournalLoadError<<Self::Database as Database>::Error>>
-    {
-        self.inner
-            .sload(&mut self.database, address, key, skip_cold_load)
-    }
-
-    #[cfg(feature = "glamsterdam")]
     fn sload_skip_cold_load(
         &mut self,
         address: Address,

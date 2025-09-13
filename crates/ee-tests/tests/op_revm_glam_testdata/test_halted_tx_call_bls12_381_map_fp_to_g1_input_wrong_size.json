@@ -36,7 +36,7 @@
       },
       "nonce_change": [
         0,
-        1
+        0
       ],
       "status": "Touched | LoadedAsNotExisting",
       "storage": {},
@@ -49,7 +49,7 @@
     "0x0000000000000000000000000000000000000010": {
       "balance_change": [
         "0x0",
-        true
+        false
       ],
       "code_change": "0x",
       "info": {
