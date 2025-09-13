@@ -164,7 +164,7 @@ mod test {
         );
 
         let ctx = Context::mainnet()
-            .modify_cfg_chained(|cfg| cfg.spec = SpecId::PRAGUE)
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::AMSTERDAM)
             .with_db(BenchmarkDB::new_bytecode(bytecode));
 
         let mut evm = ctx.build_mainnet();
@@ -234,7 +234,7 @@ mod test {
         );
 
         let ctx = Context::mainnet()
-            .modify_cfg_chained(|cfg| cfg.spec = SpecId::PRAGUE)
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::AMSTERDAM)
             .with_db(BenchmarkDB::new_bytecode(bytecode));
 
         let mut evm = ctx.build_mainnet();
@@ -304,7 +304,7 @@ mod test {
         );
 
         let ctx = Context::mainnet()
-            .modify_cfg_chained(|cfg| cfg.spec = SpecId::PRAGUE)
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::AMSTERDAM)
             .with_db(BenchmarkDB::new_bytecode(bytecode));
 
         let mut evm = ctx.build_mainnet();
@@ -390,7 +390,7 @@ mod test {
         );
 
         let ctx = Context::mainnet()
-            .modify_cfg_chained(|cfg| cfg.spec = SpecId::PRAGUE)
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::AMSTERDAM)
             .with_db(BenchmarkDB::new_bytecode(bytecode));
 
         let mut evm = ctx.build_mainnet();
@@ -474,7 +474,7 @@ mod test {
             .into(),
         );
         let ctx = Context::mainnet()
-            .modify_cfg_chained(|cfg| cfg.spec = SpecId::PRAGUE)
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::AMSTERDAM)
             .with_db(BenchmarkDB::new_bytecode(bytecode));
 
         let mut evm = ctx.build_mainnet();
@@ -531,7 +531,7 @@ mod test {
             .into(),
         );
         let ctx = Context::mainnet()
-            .modify_cfg_chained(|cfg| cfg.spec = SpecId::PRAGUE)
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::AMSTERDAM)
             .with_db(BenchmarkDB::new_bytecode(bytecode));
 
         let mut evm = ctx.build_mainnet();
@@ -580,7 +580,7 @@ mod test {
         );
 
         let ctx = Context::mainnet()
-            .modify_cfg_chained(|cfg| cfg.spec = SpecId::PRAGUE)
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::AMSTERDAM)
             .with_db(db.clone());
 
         let mut evm = ctx.build_mainnet();
@@ -660,7 +660,7 @@ mod test {
         );
 
         let ctx = Context::mainnet()
-            .modify_cfg_chained(|cfg| cfg.spec = SpecId::PRAGUE)
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::AMSTERDAM)
             .with_db(db.clone());
 
         let mut evm = ctx.build_mainnet();
@@ -740,7 +740,7 @@ mod test {
         );
 
         let ctx = Context::mainnet()
-            .modify_cfg_chained(|cfg| cfg.spec = SpecId::PRAGUE)
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::AMSTERDAM)
             .with_db(db.clone());
 
         let mut evm = ctx.build_mainnet();
@@ -807,7 +807,7 @@ mod test {
 
         let ctx = Context::mainnet()
             .modify_cfg_chained(|cfg| {
-                cfg.spec = SpecId::PRAGUE;
+                cfg.spec = SpecId::AMSTERDAM;
                 cfg.disable_nonce_check = true;
             })
             .with_db(db.clone());
@@ -870,7 +870,7 @@ mod test {
 
         let ctx = Context::mainnet()
             .modify_cfg_chained(|cfg| {
-                cfg.spec = SpecId::PRAGUE;
+                cfg.spec = SpecId::AMSTERDAM;
                 cfg.disable_nonce_check = true;
             })
             .with_db(db.clone());
@@ -927,7 +927,7 @@ mod test {
 
         let ctx = Context::mainnet()
             .modify_cfg_chained(|cfg| {
-                cfg.spec = SpecId::PRAGUE;
+                cfg.spec = SpecId::AMSTERDAM;
                 cfg.disable_nonce_check = true;
             })
             .with_db(db.clone());

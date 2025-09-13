@@ -62,7 +62,7 @@
     },
     "0x000000000000000000000000000000000000ffff": {
       "balance_change": [
-        "0x2386f26fc10000",
+        "0x0",
         false
       ],
       "code_change": "0x",
@@ -100,7 +100,7 @@
     },
     "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
       "balance_change": [
-        "0x2386f26fc10000",
+        "0x0",
         false
       ],
       "code_change": "0x",
@@ -125,8 +125,8 @@
         "nonce": 2
       },
       "nonce_change": [
-        1,
-        2
+        0,
+        0
       ],
       "status": "Touched",
       "storage": {},
@@ -139,7 +139,7 @@
     "0xffffffffffffffffffffffffffffffffffffffff": {
       "balance_change": [
         "0x0",
-        true
+        false
       ],
       "code_change": "0x",
       "info": {
