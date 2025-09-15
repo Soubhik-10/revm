@@ -20,7 +20,7 @@
     "0x0000000000000000000000000000000000000000": {
       "balance_change": [
         "0x0",
-        false
+        "0x0"
       ],
       "code_change": "0x",
       "info": {
@@ -58,7 +58,7 @@
     "0x4200000000000000000000000000000000000019": {
       "balance_change": [
         "0x0",
-        false
+        "0x0"
       ],
       "code_change": "0x",
       "info": {
@@ -96,7 +96,7 @@
     "0x420000000000000000000000000000000000001a": {
       "balance_change": [
         "0x0",
-        false
+        "0x0"
       ],
       "code_change": "0x",
       "info": {
@@ -134,7 +134,7 @@
     "0x420000000000000000000000000000000000001b": {
       "balance_change": [
         "0x0",
-        false
+        "0x0"
       ],
       "code_change": "0x",
       "info": {
@@ -172,7 +172,7 @@
     "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
       "balance_change": [
         "0x0",
-        false
+        "0x0"
       ],
       "code_change": "0x",
       "info": {
@@ -210,7 +210,7 @@
     "0xffffffffffffffffffffffffffffffffffffffff": {
       "balance_change": [
         "0x0",
-        false
+        "0x0"
       ],
       "code_change": "0x",
       "info": {
