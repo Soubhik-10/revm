@@ -425,5 +425,7 @@ pub fn selfdestruct<WIRE: InterpreterTypes, H: Host + ?Sized>(
             .record_refund(gas::SELFDESTRUCT_REFUND);
     }
 
-    context.interpreter.halt(InstructionResult::SelfDestruct);
+    context
+        .interpreter
+        .halt(InstructionResult::SelfDestruct(target));
 }

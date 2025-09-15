@@ -573,7 +573,7 @@ pub enum SuccessReason {
     /// Return [`state::bytecode::opcode::RETURN`] opcode.
     Return,
     /// Self destruct opcode.
-    SelfDestruct,
+    SelfDestruct(Address),
 }
 
 /// Indicates that the EVM has experienced an exceptional halt.
