@@ -628,16 +628,18 @@ mod test {
         println!("Balance Change of sender: {result_balance_change_sender:?}");
         let result_balance_change_recipient = &result.state.get(&recipient).unwrap().balance_change;
         println!("Balance Change of recipient: {result_balance_change_recipient:?}");
+        let expected_sender_before_change = U256::from(983_222_784u64);
         let expected_sender_change = U256::from(999_979_000u64);
+        let expected_recipient_before_change = U256::from(3_000_000_000u64);
 
         let expected_recipient_change = U256::from(5_000_000_000u64);
         assert_eq!(
             *result_balance_change_sender,
-            (expected_sender_change, false)
+            (expected_sender_before_change, expected_sender_change)
         );
         assert_eq!(
             *result_balance_change_recipient,
-            (expected_recipient_change, false)
+            (expected_recipient_before_change, expected_recipient_change)
         );
     }
 
@@ -709,15 +711,93 @@ mod test {
         let result_balance_change_recipient = &result.state.get(&recipient).unwrap().balance_change;
         println!("Balance Change of recipient: {result_balance_change_recipient:?}");
         let expected_sender_change = U256::from(2_999_979_000u64);
-
+        let expected_sender_before_change = U256::from(2_983_222_784u64);
         let expected_recipient_change = U256::from(3_000_000_000u64);
+        let expected_recipient_before_change = U256::from(3_000_000_000u64);
         assert_eq!(
             *result_balance_change_sender,
-            (expected_sender_change, false)
+            (expected_sender_before_change, expected_sender_change)
         );
         assert_eq!(
             *result_balance_change_recipient,
-            (expected_recipient_change, true)
+            (expected_recipient_before_change, expected_recipient_change)
+        );
+    }
+
+    #[cfg(feature = "glamsterdam")]
+    #[test]
+    fn self_transfer_check() {
+        use context::ContextTr;
+        let recipient = database::BENCH_TARGET;
+        let sender = database::BENCH_TARGET;
+
+        let mut db = database::InMemoryDB::default();
+        db.insert_account_info(
+            database::BENCH_TARGET,
+            state::AccountInfo::from_balance(U256::from(3_000_000_000u32)),
+        );
+
+        let ctx = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::AMSTERDAM)
+            .with_db(db.clone());
+
+        let mut evm = ctx.build_mainnet();
+
+        let sender_balance_before = context::Database::basic(&mut evm.db_mut(), sender)
+            .unwrap()
+            .unwrap()
+            .balance;
+        let recipient_balance_before = context::Database::basic(&mut evm.db_mut(), recipient)
+            .unwrap()
+            .unwrap_or_default()
+            .balance;
+
+        println!("Sender Balance (before):   {sender_balance_before}");
+        println!("Recipient Balance (before): {recipient_balance_before}");
+
+        let result = evm
+            .transact(
+                TxEnv::builder()
+                    .caller(sender)
+                    .kind(TxKind::Call(recipient))
+                    .value(U256::from(2_000_000_000u32))
+                    .gas_price(1)
+                    .gas_priority_fee(None)
+                    .nonce(0)
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        database::DatabaseCommit::commit(&mut evm.db_mut(), result.clone().state);
+
+        let sender_balance_after = context::Database::basic(&mut evm.db_mut(), sender)
+            .unwrap()
+            .unwrap()
+            .balance;
+        let recipient_balance_after = context::Database::basic(&mut evm.db_mut(), recipient)
+            .unwrap()
+            .unwrap_or_default()
+            .balance;
+
+        println!("Sender Balance (after):   {sender_balance_after}");
+        println!("Recipient Balance (after): {recipient_balance_after}");
+
+        let result_balance_change_sender = &result.state.get(&sender).unwrap().balance_change;
+        println!("Balance Change of sender: {result_balance_change_sender:?}");
+        let result_balance_change_recipient = &result.state.get(&recipient).unwrap().balance_change;
+        println!("Balance Change of recipient: {result_balance_change_recipient:?}");
+        let expected_sender_before_change = U256::from(2_983_222_784u64);
+        let expected_sender_change = U256::from(2_999_979_000u64);
+        let expected_recipient_before_change = U256::from(2_983_222_784u64);
+
+        let expected_recipient_change = U256::from(2_999_979_000u64);
+        assert_eq!(
+            *result_balance_change_sender,
+            (expected_sender_before_change, expected_sender_change)
+        );
+        assert_eq!(
+            *result_balance_change_recipient,
+            (expected_recipient_before_change, expected_recipient_change)
         );
     }
 
