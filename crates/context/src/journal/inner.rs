@@ -317,7 +317,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         let old_balance = account.info.balance;
         account.info.balance = account.info.balance.saturating_add(balance);
         if spec.is_enabled_in(SpecId::AMSTERDAM) {
-            account.balance_change = (account.info.balance, false);
+            account.balance_change = (old_balance, account.info.balance);
         }
 
         // march account as touched.
@@ -359,7 +359,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             let to_account = self.state.get_mut(&to).unwrap();
             Self::touch_account(&mut self.journal, to, to_account);
             if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
-                to_account.balance_change = (to_account.info.balance, true);
+                to_account.balance_change = (to_account.info.balance, to_account.info.balance);
             }
             return Ok(None);
         }
@@ -377,7 +377,8 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         };
         *from_balance = from_balance_decr;
         if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
-            from_account.balance_change = (*from_balance, false);
+            let old_balance = from_balance.checked_add(balance);
+            from_account.balance_change = (old_balance.unwrap(), *from_balance);
         }
 
         // add balance to
@@ -389,7 +390,8 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         };
         *to_balance = to_balance_incr;
         if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
-            to_account.balance_change = (*to_balance, false);
+            let old_balance = to_balance.checked_sub(balance);
+            to_account.balance_change = (old_balance.unwrap(), *to_balance);
         }
         // Overflow of U256 balance is not possible to happen on mainnet. We don't bother to return funds from from_acc.
 
@@ -560,7 +562,10 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             Self::touch_account(&mut self.journal, target, target_account);
             target_account.info.balance += acc_balance;
             if spec.is_enabled_in(SpecId::AMSTERDAM) {
-                target_account.balance_change = (target_account.info.balance, false);
+                target_account.balance_change = (
+                    target_account.info.balance - acc_balance,
+                    target_account.info.balance,
+                );
             }
         }
 
@@ -582,7 +587,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             acc.mark_selfdestructed_locally();
             acc.info.balance = U256::ZERO;
             if spec.is_enabled_in(SpecId::AMSTERDAM) {
-                acc.balance_change = (U256::ZERO, false);
+                acc.balance_change = (balance, U256::ZERO);
             }
             Some(ENTRY::account_destroyed(
                 address,
@@ -593,7 +598,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         } else if address != target {
             acc.info.balance = U256::ZERO;
             if spec.is_enabled_in(SpecId::AMSTERDAM) {
-                acc.balance_change = (U256::ZERO, false);
+                acc.balance_change = (balance, U256::ZERO);
             }
             Some(ENTRY::balance_transfer(address, target, balance))
         } else {
