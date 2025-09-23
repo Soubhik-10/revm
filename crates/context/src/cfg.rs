@@ -92,6 +92,14 @@ pub struct CfgEnv<SPEC = SpecId> {
     /// By default, it is set to `false`.
     #[cfg(feature = "optional_eip3607")]
     pub disable_eip3607: bool,
+    /// EIP-7623 increases calldata cost.
+    ///
+    /// This EIP can be considered irrelevant in the context of an EVM-compatible L2 rollup,
+    /// if it does not make use of blobs.
+    ///
+    /// By default, it is set to `false`.
+    #[cfg(feature = "optional_eip7623")]
+    pub disable_eip7623: bool,
     /// Disables base fee checks for EIP-1559 transactions
     ///
     /// This is useful for testing method calls with zero gas price.
@@ -104,6 +112,12 @@ pub struct CfgEnv<SPEC = SpecId> {
     /// By default, it is set to `false`.
     #[cfg(feature = "optional_priority_fee_check")]
     pub disable_priority_fee_check: bool,
+    /// Disables fee charging for transactions.
+    /// This is useful when executing `eth_call` for example, on OP-chains where setting the base fee
+    /// to 0 isn't sufficient.
+    /// By default, it is set to `false`.
+    #[cfg(feature = "optional_fee_charge")]
+    pub disable_fee_charge: bool,
 }
 
 impl CfgEnv {
@@ -155,10 +169,14 @@ impl<SPEC> CfgEnv<SPEC> {
             disable_eip3541: false,
             #[cfg(feature = "optional_eip3607")]
             disable_eip3607: false,
+            #[cfg(feature = "optional_eip7623")]
+            disable_eip7623: false,
             #[cfg(feature = "optional_no_base_fee")]
             disable_base_fee: false,
             #[cfg(feature = "optional_priority_fee_check")]
             disable_priority_fee_check: false,
+            #[cfg(feature = "optional_fee_charge")]
+            disable_fee_charge: false,
         }
     }
 
@@ -202,10 +220,14 @@ impl<SPEC> CfgEnv<SPEC> {
             disable_eip3541: self.disable_eip3541,
             #[cfg(feature = "optional_eip3607")]
             disable_eip3607: self.disable_eip3607,
+            #[cfg(feature = "optional_eip7623")]
+            disable_eip7623: self.disable_eip7623,
             #[cfg(feature = "optional_no_base_fee")]
             disable_base_fee: self.disable_base_fee,
             #[cfg(feature = "optional_priority_fee_check")]
             disable_priority_fee_check: self.disable_priority_fee_check,
+            #[cfg(feature = "optional_fee_charge")]
+            disable_fee_charge: self.disable_fee_charge,
         }
     }
 
@@ -229,6 +251,20 @@ impl<SPEC> CfgEnv<SPEC> {
     #[cfg(feature = "optional_priority_fee_check")]
     pub fn with_disable_priority_fee_check(mut self, disable: bool) -> Self {
         self.disable_priority_fee_check = disable;
+        self
+    }
+
+    /// Sets the disable fee charge flag.
+    #[cfg(feature = "optional_fee_charge")]
+    pub fn with_disable_fee_charge(mut self, disable: bool) -> Self {
+        self.disable_fee_charge = disable;
+        self
+    }
+
+    /// Sets the disable eip7623 flag.
+    #[cfg(feature = "optional_eip7623")]
+    pub fn with_disable_eip7623(mut self, disable: bool) -> Self {
+        self.disable_eip7623 = disable;
         self
     }
 }
@@ -300,6 +336,16 @@ impl<SPEC: Into<SpecId> + Copy> Cfg for CfgEnv<SPEC> {
         }
     }
 
+    fn is_eip7623_disabled(&self) -> bool {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "optional_eip7623")] {
+                self.disable_eip7623
+            } else {
+                false
+            }
+        }
+    }
+
     fn is_balance_check_disabled(&self) -> bool {
         cfg_if::cfg_if! {
             if #[cfg(feature = "optional_balance_check")] {
@@ -339,6 +385,16 @@ impl<SPEC: Into<SpecId> + Copy> Cfg for CfgEnv<SPEC> {
         cfg_if::cfg_if! {
             if #[cfg(feature = "optional_priority_fee_check")] {
                 self.disable_priority_fee_check
+            } else {
+                false
+            }
+        }
+    }
+
+    fn is_fee_charge_disabled(&self) -> bool {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "optional_fee_charge")] {
+                self.disable_fee_charge
             } else {
                 false
             }
