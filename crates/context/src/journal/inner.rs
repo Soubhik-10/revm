@@ -363,10 +363,20 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             if balance > from_balance {
                 return Some(TransferError::OutOfFunds);
             }
+
+            if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
+                let from_account = self.state.get_mut(&from).unwrap();
+                from_account.balance_change =
+                    (from_account.info.balance, from_account.info.balance);
+            }
             return None;
         }
 
         if balance.is_zero() {
+            if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
+                let to_account = self.state.get_mut(&to).unwrap();
+                to_account.balance_change = (to_account.info.balance, to_account.info.balance);
+            }
             Self::touch_account(&mut self.journal, to, self.state.get_mut(&to).unwrap());
             return None;
         }
@@ -380,7 +390,10 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             return Some(TransferError::OutOfFunds);
         };
         *from_balance = from_balance_decr;
-
+        if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
+            let old_balance = from_balance.checked_add(balance);
+            from_account.balance_change = (old_balance.unwrap(), *from_balance);
+        }
         // add balance to
         let to_account = self.state.get_mut(&to).unwrap();
         Self::touch_account(&mut self.journal, to, to_account);
@@ -390,6 +403,10 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             return Some(TransferError::OverflowPayment);
         };
         *to_balance = to_balance_incr;
+        if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
+            let old_balance = to_balance.checked_sub(balance);
+            to_account.balance_change = (old_balance.unwrap(), *to_balance);
+        }
 
         // add journal entry
         self.journal
