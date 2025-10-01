@@ -51,13 +51,8 @@
           "LegacyAnalyzed": {
             "bytecode": "0x00",
             "jump_table": {
-              "bits": 0,
-              "data": [],
-              "head": {
-                "index": 0,
-                "width": 8
-              },
-              "order": "bitvec::order::Lsb0"
+              "len": 0,
+              "table": "0x"
             },
             "original_len": 0
           }
@@ -89,13 +84,8 @@
           "LegacyAnalyzed": {
             "bytecode": "0x00",
             "jump_table": {
-              "bits": 0,
-              "data": [],
-              "head": {
-                "index": 0,
-                "width": 8
-              },
-              "order": "bitvec::order::Lsb0"
+              "len": 0,
+              "table": "0x"
             },
             "original_len": 0
           }
@@ -127,15 +117,8 @@
           "LegacyAnalyzed": {
             "bytecode": "0x61ffffff00",
             "jump_table": {
-              "bits": 5,
-              "data": [
-                0
-              ],
-              "head": {
-                "index": 0,
-                "width": 8
-              },
-              "order": "bitvec::order::Lsb0"
+              "len": 5,
+              "table": "0x00"
             },
             "original_len": 5
           }
@@ -167,13 +150,8 @@
           "LegacyAnalyzed": {
             "bytecode": "0x00",
             "jump_table": {
-              "bits": 0,
-              "data": [],
-              "head": {
-                "index": 0,
-                "width": 8
-              },
-              "order": "bitvec::order::Lsb0"
+              "len": 0,
+              "table": "0x"
             },
             "original_len": 0
           }

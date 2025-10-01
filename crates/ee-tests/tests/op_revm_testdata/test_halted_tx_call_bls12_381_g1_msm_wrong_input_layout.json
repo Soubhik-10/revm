@@ -3,7 +3,9 @@
     "Halt": {
       "gas_used": 35560,
       "reason": {
-        "Base": "PrecompileError"
+        "Base": {
+          "PrecompileErrorWithContext": "bls12-381 fp 64 top bytes of input are not zero"
+        }
       }
     }
   },
@@ -20,13 +22,8 @@
           "LegacyAnalyzed": {
             "bytecode": "0x00",
             "jump_table": {
-              "bits": 0,
-              "data": [],
-              "head": {
-                "index": 0,
-                "width": 8
-              },
-              "order": "bitvec::order::Lsb0"
+              "len": 0,
+              "table": "0x"
             },
             "original_len": 0
           }
@@ -58,13 +55,8 @@
           "LegacyAnalyzed": {
             "bytecode": "0x00",
             "jump_table": {
-              "bits": 0,
-              "data": [],
-              "head": {
-                "index": 0,
-                "width": 8
-              },
-              "order": "bitvec::order::Lsb0"
+              "len": 0,
+              "table": "0x"
             },
             "original_len": 0
           }
@@ -96,13 +88,8 @@
           "LegacyAnalyzed": {
             "bytecode": "0x00",
             "jump_table": {
-              "bits": 0,
-              "data": [],
-              "head": {
-                "index": 0,
-                "width": 8
-              },
-              "order": "bitvec::order::Lsb0"
+              "len": 0,
+              "table": "0x"
             },
             "original_len": 0
           }
@@ -134,13 +121,8 @@
           "LegacyAnalyzed": {
             "bytecode": "0x00",
             "jump_table": {
-              "bits": 0,
-              "data": [],
-              "head": {
-                "index": 0,
-                "width": 8
-              },
-              "order": "bitvec::order::Lsb0"
+              "len": 0,
+              "table": "0x"
             },
             "original_len": 0
           }
@@ -172,13 +154,8 @@
           "LegacyAnalyzed": {
             "bytecode": "0x00",
             "jump_table": {
-              "bits": 0,
-              "data": [],
-              "head": {
-                "index": 0,
-                "width": 8
-              },
-              "order": "bitvec::order::Lsb0"
+              "len": 0,
+              "table": "0x"
             },
             "original_len": 0
           }

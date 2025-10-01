@@ -582,7 +582,7 @@ pub enum SuccessReason {
 /// Indicates that the EVM has experienced an exceptional halt.
 ///
 /// This causes execution to immediately end with all gas being consumed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum HaltReason {
     /// Out of gas error.
@@ -605,6 +605,8 @@ pub enum HaltReason {
     CreateCollision,
     /// Precompile error.
     PrecompileError,
+    /// Precompile error with message from context.
+    PrecompileErrorWithContext(String),
     /// Nonce overflow.
     NonceOverflow,
     /// Create init code size exceeds limit (runtime).
@@ -644,6 +646,54 @@ pub enum OutOfGasError {
     InvalidOperand,
     /// When performing SSTORE the gasleft is less than or equal to 2300
     ReentrancySentry,
+}
+
+/// Error that includes transaction index for batch transaction processing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct TransactionIndexedError<Error> {
+    /// The original error that occurred.
+    pub error: Error,
+    /// The index of the transaction that failed.
+    pub transaction_index: usize,
+}
+
+impl<Error> TransactionIndexedError<Error> {
+    /// Create a new `TransactionIndexedError` with the given error and transaction index.
+    #[must_use]
+    pub fn new(error: Error, transaction_index: usize) -> Self {
+        Self {
+            error,
+            transaction_index,
+        }
+    }
+
+    /// Get a reference to the underlying error.
+    pub fn error(&self) -> &Error {
+        &self.error
+    }
+
+    /// Convert into the underlying error.
+    #[must_use]
+    pub fn into_error(self) -> Error {
+        self.error
+    }
+}
+
+impl<Error: fmt::Display> fmt::Display for TransactionIndexedError<Error> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "transaction {} failed: {}",
+            self.transaction_index, self.error
+        )
+    }
+}
+
+impl<Error: core::error::Error + 'static> core::error::Error for TransactionIndexedError<Error> {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        Some(&self.error)
+    }
 }
 
 impl From<&'static str> for InvalidTransaction {
