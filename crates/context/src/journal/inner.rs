@@ -623,7 +623,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         let account_load = self.load_account(db, target)?;
         let is_cold = account_load.is_cold;
         let is_empty = account_load.state_clear_aware_is_empty(spec);
-
+        tracing::debug!("Selfdestruct: address {address:?}, target {target:?}, spec {spec:?}");
         if address != target {
             // Both accounts are loaded before this point, `address` as we execute its contract.
             // and `target` at the beginning of the function.
@@ -634,8 +634,12 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             target_account.info.balance += acc_balance;
             if spec.is_enabled_in(SpecId::AMSTERDAM) {
                 target_account.balance_change = (
-                    target_account.info.balance - acc_balance,
+                    (target_account.info.balance - acc_balance),
                     target_account.info.balance,
+                );
+                tracing::debug!(
+                    "Selfdestruct: target_account.balance_change {:?}",
+                    target_account.balance_change
                 );
             }
         }
@@ -658,6 +662,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             acc.mark_selfdestructed_locally();
             acc.info.balance = U256::ZERO;
             if spec.is_enabled_in(SpecId::AMSTERDAM) {
+                tracing::debug!("Selfdestruct: address {address:?}, balance {balance:?}");
                 acc.balance_change = (balance, U256::ZERO);
             }
             Some(ENTRY::account_destroyed(
@@ -677,6 +682,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             // * if we are after Cancun upgrade and
             // * Selfdestruct account that is created in the same transaction and
             // * Specify the target is same as selfdestructed account. The balance stays unchanged.
+            tracing::debug!("Selfdestruct: No state change as address and target are same and account is created in the same tx");
             None
         };
 
