@@ -1,19 +1,55 @@
 //! Account and storage state.
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(not(feature = "std"), no_std)]
+extern crate alloc;
 
 mod account_info;
 mod types;
 pub use bytecode;
 
 pub use account_info::AccountInfo;
+use alloc::collections::{BTreeMap, BTreeSet};
+use bitflags::bitflags;
 pub use bytecode::Bytecode;
+use core::hash::Hash;
 pub use primitives;
+use primitives::hardfork::SpecId;
+use primitives::{Bytes, HashMap, StorageKey, StorageValue, U256};
 pub use types::{EvmState, EvmStorage, TransientStorage};
 
-use bitflags::bitflags;
-use primitives::hardfork::SpecId;
-use primitives::{HashMap, StorageKey, StorageValue};
+/// `StorageAccess` keeps a record of storage_reads and storage_writes as per Eip-7928
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct StorageAccess {
+    /// read_keys
+    pub reads: BTreeSet<StorageKey>,
+    /// write_key → (pre, post)
+    pub writes: BTreeMap<StorageKey, (StorageValue, StorageValue)>,
+}
+
+/// `BalanceChange` keeps a record of pre_balance and post_balance as per Eip-7928
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BalanceChange {
+    /// post_balance
+    pub change: U256,
+}
+
+/// `CodeChange` keeps a record of post_code as per Eip-7928
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CodeChange {
+    /// post_bytecode
+    pub change: Bytes,
+}
+
+/// `NonceChange` keeps a record of post_nonce as per Eip-7928
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct NonceChange {
+    /// pre_nonce , post_nonce
+    pub change: (u64, u64),
+}
 
 /// Account type used inside Journal to track changed to state.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -27,6 +63,14 @@ pub struct Account {
     pub storage: EvmStorage,
     /// Account status flags
     pub status: AccountStatus,
+    /// Storage access information for this account.
+    pub storage_access: StorageAccess,
+    /// Balance change information for this account records pre and post balance.
+    pub balance_change: (U256, U256),
+    /// Code change track post-transaction runtime bytecode for deployed/modified contracts.
+    pub code_change: Bytes,
+    /// Nonce change information for this account.
+    pub nonce_change: (u64, u64),
 }
 
 impl Account {
@@ -37,6 +81,10 @@ impl Account {
             storage: HashMap::default(),
             transaction_id,
             status: AccountStatus::LoadedAsNotExisting,
+            storage_access: StorageAccess::default(),
+            balance_change: (U256::ZERO, U256::ZERO),
+            code_change: Bytes::default(),
+            nonce_change: (0, 0),
         }
     }
 
@@ -253,6 +301,17 @@ impl Account {
         self.mark_warm_with_transaction_id(transaction_id);
         self
     }
+
+    /// Clear all the state changes in the account info.
+    /// Needed after every tx to reset the state changes for building Block Access List,
+    #[inline]
+    pub fn clear_state_changes(&mut self) {
+        self.balance_change = (U256::ZERO, U256::ZERO);
+        self.code_change = Bytes::default();
+        self.nonce_change = (0, 0);
+        self.storage_access.reads.clear();
+        self.storage_access.writes.clear();
+    }
 }
 
 impl From<AccountInfo> for Account {
@@ -262,6 +321,10 @@ impl From<AccountInfo> for Account {
             storage: HashMap::default(),
             transaction_id: 0,
             status: AccountStatus::empty(),
+            storage_access: StorageAccess::default(),
+            balance_change: (U256::ZERO, U256::ZERO),
+            code_change: Bytes::default(),
+            nonce_change: (0, 0),
         }
     }
 }

@@ -137,9 +137,15 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             warm_addresses,
         } = self;
         let is_spurious_dragon_enabled = spec.is_enabled_in(SPURIOUS_DRAGON);
+        let is_amsterdam_enabled = spec.is_enabled_in(SpecId::AMSTERDAM);
         // iterate over all journals entries and revert our global state
         journal.drain(..).rev().for_each(|entry| {
-            entry.revert(state, None, is_spurious_dragon_enabled);
+            entry.revert(
+                state,
+                None,
+                is_spurious_dragon_enabled,
+                is_amsterdam_enabled,
+            );
         });
         transient_storage.clear();
         *depth = 0;
@@ -243,6 +249,11 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
 
         account.info.code_hash = hash;
         account.info.code = Some(code);
+        if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
+            if let Some(ref code_ref) = account.info.code {
+                account.code_change = code_ref.bytecode().clone();
+            }
+        }
     }
 
     /// Use it only if you know that acc is warm.
@@ -278,6 +289,14 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         self.journal.push(ENTRY::account_touched(address));
 
         if bump_nonce {
+            if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
+                let caller_account = self.state.get_mut(&address).unwrap();
+                let pre = caller_account.info.nonce.saturating_sub(1);
+                let post = caller_account.info.nonce;
+
+                caller_account.nonce_change = (pre, post);
+            }
+
             // nonce changed.
             self.journal.push(ENTRY::nonce_changed(address));
         }
@@ -293,9 +312,13 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         address: Address,
         balance: U256,
     ) -> Result<(), DB::Error> {
+        let spec = self.spec;
         let account = self.load_account(db, address)?.data;
         let old_balance = account.info.balance;
         account.info.balance = account.info.balance.saturating_add(balance);
+        if spec.is_enabled_in(SpecId::AMSTERDAM) {
+            account.balance_change = (old_balance, account.info.balance);
+        }
 
         // march account as touched.
         if !account.is_touched() {
@@ -312,6 +335,13 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     /// Increments the nonce of the account.
     #[inline]
     pub fn nonce_bump_journal_entry(&mut self, address: Address) {
+        if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
+            let caller_account = self.state.get_mut(&address).unwrap();
+            caller_account.nonce_change = (
+                caller_account.info.nonce.saturating_sub(1),
+                caller_account.info.nonce,
+            );
+        }
         self.journal.push(ENTRY::nonce_changed(address));
     }
 
@@ -333,10 +363,20 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             if balance > from_balance {
                 return Some(TransferError::OutOfFunds);
             }
+
+            if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
+                let from_account = self.state.get_mut(&from).unwrap();
+                from_account.balance_change =
+                    (from_account.info.balance, from_account.info.balance);
+            }
             return None;
         }
 
         if balance.is_zero() {
+            if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
+                let to_account = self.state.get_mut(&to).unwrap();
+                to_account.balance_change = (to_account.info.balance, to_account.info.balance);
+            }
             Self::touch_account(&mut self.journal, to, self.state.get_mut(&to).unwrap());
             return None;
         }
@@ -350,7 +390,10 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             return Some(TransferError::OutOfFunds);
         };
         *from_balance = from_balance_decr;
-
+        if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
+            let old_balance = from_balance.checked_add(balance);
+            from_account.balance_change = (old_balance.unwrap(), *from_balance);
+        }
         // add balance to
         let to_account = self.state.get_mut(&to).unwrap();
         Self::touch_account(&mut self.journal, to, to_account);
@@ -360,6 +403,10 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             return Some(TransferError::OverflowPayment);
         };
         *to_balance = to_balance_incr;
+        if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
+            let old_balance = to_balance.checked_sub(balance);
+            to_account.balance_change = (old_balance.unwrap(), *to_balance);
+        }
 
         // add journal entry
         self.journal
@@ -381,6 +428,9 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             self.load_account(db, to)?;
             let to_account = self.state.get_mut(&to).unwrap();
             Self::touch_account(&mut self.journal, to, to_account);
+            if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
+                to_account.balance_change = (to_account.info.balance, to_account.info.balance);
+            }
             return Ok(None);
         }
         // load accounts
@@ -396,6 +446,10 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             return Ok(Some(TransferError::OutOfFunds));
         };
         *from_balance = from_balance_decr;
+        if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
+            let old_balance = from_balance.checked_add(balance);
+            from_account.balance_change = (old_balance.unwrap(), *from_balance);
+        }
 
         // add balance to
         let to_account = &mut self.state.get_mut(&to).unwrap();
@@ -406,6 +460,11 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             return Ok(Some(TransferError::OverflowPayment));
         };
         *to_balance = to_balance_incr;
+        if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
+            let old_balance = to_balance.checked_sub(balance);
+            to_account.balance_change = (old_balance.unwrap(), *to_balance);
+        }
+        // Overflow of U256 balance is not possible to happen on mainnet. We don't bother to return funds from from_acc.
 
         self.journal
             .push(ENTRY::balance_transfer(from, to, balance));
@@ -470,6 +529,13 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         if spec_id.is_enabled_in(SPURIOUS_DRAGON) {
             // nonce is going to be reset to zero in AccountCreated journal entry.
             target_acc.info.nonce = 1;
+
+            if spec_id.is_enabled_in(SpecId::AMSTERDAM) {
+                target_acc.nonce_change = (
+                    target_acc.info.nonce.saturating_sub(1),
+                    target_acc.info.nonce,
+                );
+            }
         }
 
         // touch account. This is important as for pre SpuriousDragon account could be
@@ -513,6 +579,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     #[inline]
     pub fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) {
         let is_spurious_dragon_enabled = self.spec.is_enabled_in(SPURIOUS_DRAGON);
+        let is_amsterdam_enabled = self.spec.is_enabled_in(SpecId::AMSTERDAM);
         let state = &mut self.state;
         let transient_storage = &mut self.transient_storage;
         self.depth -= 1;
@@ -524,7 +591,12 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
                 .drain(checkpoint.journal_i..)
                 .rev()
                 .for_each(|entry| {
-                    entry.revert(state, Some(transient_storage), is_spurious_dragon_enabled);
+                    entry.revert(
+                        state,
+                        Some(transient_storage),
+                        is_spurious_dragon_enabled,
+                        is_amsterdam_enabled,
+                    );
                 });
         }
     }
@@ -551,7 +623,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         let account_load = self.load_account(db, target)?;
         let is_cold = account_load.is_cold;
         let is_empty = account_load.state_clear_aware_is_empty(spec);
-
+        tracing::debug!("Selfdestruct: address {address:?}, target {target:?}, spec {spec:?}");
         if address != target {
             // Both accounts are loaded before this point, `address` as we execute its contract.
             // and `target` at the beginning of the function.
@@ -560,6 +632,16 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             let target_account = self.state.get_mut(&target).unwrap();
             Self::touch_account(&mut self.journal, target, target_account);
             target_account.info.balance += acc_balance;
+            if spec.is_enabled_in(SpecId::AMSTERDAM) {
+                target_account.balance_change = (
+                    (target_account.info.balance - acc_balance),
+                    target_account.info.balance,
+                );
+                tracing::debug!(
+                    "Selfdestruct: target_account.balance_change {:?}",
+                    target_account.balance_change
+                );
+            }
         }
 
         let acc = self.state.get_mut(&address).unwrap();
@@ -579,6 +661,10 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         let journal_entry = if acc.is_created_locally() || !is_cancun_enabled {
             acc.mark_selfdestructed_locally();
             acc.info.balance = U256::ZERO;
+            if spec.is_enabled_in(SpecId::AMSTERDAM) {
+                tracing::debug!("Selfdestruct: address {address:?}, balance {balance:?}");
+                acc.balance_change = (balance, U256::ZERO);
+            }
             Some(ENTRY::account_destroyed(
                 address,
                 target,
@@ -587,12 +673,16 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             ))
         } else if address != target {
             acc.info.balance = U256::ZERO;
+            if spec.is_enabled_in(SpecId::AMSTERDAM) {
+                acc.balance_change = (balance, U256::ZERO);
+            }
             Some(ENTRY::balance_transfer(address, target, balance))
         } else {
             // State is not changed:
             // * if we are after Cancun upgrade and
             // * Selfdestruct account that is created in the same transaction and
             // * Specify the target is same as selfdestructed account. The balance stays unchanged.
+            tracing::debug!("Selfdestruct: No state change as address and target are same and account is created in the same tx");
             None
         };
 
@@ -764,8 +854,10 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
                 db,
                 &mut self.journal,
                 self.transaction_id,
+                self.spec,
                 address,
                 storage_key,
+                false,
                 false,
             )?;
         }
@@ -784,6 +876,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         address: Address,
         key: StorageKey,
         skip_cold_load: bool,
+        from_sstore: bool,
     ) -> Result<StateLoad<StorageValue>, JournalLoadError<DB::Error>> {
         // assume acc is warm
         let account = self.state.get_mut(&address).unwrap();
@@ -793,8 +886,10 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             db,
             &mut self.journal,
             self.transaction_id,
+            self.spec,
             address,
             key,
+            from_sstore,
             skip_cold_load,
         )
     }
@@ -813,15 +908,20 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         new: StorageValue,
         skip_cold_load: bool,
     ) -> Result<StateLoad<SStoreResult>, JournalLoadError<DB::Error>> {
-        // assume that acc exists and load the slot.
-        let present = self.sload(db, address, key, skip_cold_load)?;
+        let present = self.sload(db, address, key, skip_cold_load, true)?;
         let acc = self.state.get_mut(&address).unwrap();
+        let mut pre = StorageValue::ZERO;
 
         // if there is no original value in dirty return present value, that is our original.
         let slot = acc.storage.get_mut(&key).unwrap();
-
+        if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
+            pre = present.data;
+        }
         // new value is same as present, we don't need to do anything
         if present.data == new {
+            if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
+                acc.storage_access.reads.insert(key);
+            }
             return Ok(StateLoad::new(
                 SStoreResult {
                     original_value: slot.original_value(),
@@ -836,6 +936,11 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             .push(ENTRY::storage_changed(address, key, present.data));
         // insert value into present state.
         slot.present_value = new;
+        if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
+            acc.storage_access.writes.insert(key, (pre, new));
+            tracing::debug!("REVM: Stored {:?}", new);
+            tracing::debug!("REVM: Acc Info Storage writes {:?}", acc.storage_access);
+        }
         Ok(StateLoad::new(
             SStoreResult {
                 original_value: slot.original_value(),
@@ -907,8 +1012,10 @@ pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
     db: &mut DB,
     journal: &mut Vec<ENTRY>,
     transaction_id: usize,
+    spec: SpecId,
     address: Address,
     key: StorageKey,
+    from_sstore: bool,
     skip_cold_load: bool,
 ) -> Result<StateLoad<StorageValue>, JournalLoadError<DB::Error>> {
     let is_newly_created = account.is_created();
@@ -942,6 +1049,13 @@ pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
     if is_cold {
         // add it to journal as cold loaded.
         journal.push(ENTRY::storage_warmed(address, key));
+    }
+
+    if spec.is_enabled_in(SpecId::AMSTERDAM) {
+        // Set `StorageChange` for reads here
+        if !from_sstore {
+            account.storage_access.reads.insert(key);
+        }
     }
 
     Ok(StateLoad::new(value, is_cold))

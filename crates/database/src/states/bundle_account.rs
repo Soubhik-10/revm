@@ -4,6 +4,7 @@ use super::{
 };
 use primitives::{HashMap, StorageKey, StorageValue};
 use state::AccountInfo;
+use std::boxed::Box;
 
 /// Account information focused on creating of database changesets
 /// and Reverts.
@@ -108,7 +109,7 @@ impl BundleAccount {
                     return false;
                 }
             }
-            AccountInfoRevert::RevertTo(info) => self.info = Some(info),
+            AccountInfoRevert::RevertTo(info) => self.info = Some(*info),
         };
         // Revert storage
         for (key, slot) in revert.storage {
@@ -164,7 +165,7 @@ impl BundleAccount {
 
         // Needed for some reverts.
         let info_revert = if self.info != updated_info {
-            AccountInfoRevert::RevertTo(self.info.clone().unwrap_or_default())
+            AccountInfoRevert::RevertTo(Box::new(self.info.clone().unwrap_or_default()))
         } else {
             AccountInfoRevert::DoNothing
         };
@@ -355,7 +356,9 @@ impl BundleAccount {
                             Some(AccountRevert::new_selfdestructed_again(
                                 // Destroyed again will set empty account.
                                 AccountStatus::DestroyedChanged,
-                                AccountInfoRevert::RevertTo(self.info.clone().unwrap_or_default()),
+                                AccountInfoRevert::RevertTo(Box::new(
+                                    self.info.clone().unwrap_or_default(),
+                                )),
                                 core::mem::take(&mut self.storage),
                                 HashMap::default(),
                             ))

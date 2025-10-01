@@ -65,6 +65,7 @@ async fn main() -> Result<()> {
             balance: hundred_tokens * U256::from(2),
             code_hash: KECCAK_EMPTY,
             code: None,
+            ..Default::default()
         },
     );
 

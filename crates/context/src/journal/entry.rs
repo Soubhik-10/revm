@@ -84,6 +84,7 @@ pub trait JournalEntryTr {
         state: &mut EvmState,
         transient_storage: Option<&mut TransientStorage>,
         is_spurious_dragon_enabled: bool,
+        is_amsterdam_enabled: bool,
     );
 }
 
@@ -292,6 +293,7 @@ impl JournalEntryTr for JournalEntry {
         state: &mut EvmState,
         transient_storage: Option<&mut TransientStorage>,
         is_spurious_dragon_enabled: bool,
+        is_amsterdam_enabled: bool,
     ) {
         match self {
             JournalEntry::AccountWarmed { address } => {
@@ -326,10 +328,21 @@ impl JournalEntryTr for JournalEntry {
                 }
 
                 account.info.balance += had_balance;
+                // Remove balance change for self-destructed account
+                if is_amsterdam_enabled {
+                    account.balance_change =
+                        (account.info.balance - had_balance, account.info.balance);
+                }
 
                 if address != target {
                     let target = state.get_mut(&target).unwrap();
                     target.info.balance -= had_balance;
+
+                    // Remove balance change for beneficiary if different from self-destructed account
+                    if is_amsterdam_enabled {
+                        target.balance_change =
+                            (target.info.balance + had_balance, target.info.balance);
+                    }
                 }
             }
             JournalEntry::BalanceChange {
@@ -337,18 +350,46 @@ impl JournalEntryTr for JournalEntry {
                 old_balance,
             } => {
                 let account = state.get_mut(&address).unwrap();
+                let new_balance = account.info.balance;
                 account.info.balance = old_balance;
+                // Remove balance change entry
+                if is_amsterdam_enabled {
+                    account.balance_change = (new_balance, old_balance);
+                }
             }
+
             JournalEntry::BalanceTransfer { from, to, balance } => {
                 // we don't need to check overflow and underflow when adding and subtracting the balance.
-                let from = state.get_mut(&from).unwrap();
-                from.info.balance += balance;
-                let to = state.get_mut(&to).unwrap();
-                to.info.balance -= balance;
+
+                let from_account = state.get_mut(&from).unwrap();
+                from_account.info.balance += balance;
+                // Remove balance change for `from`
+                if is_amsterdam_enabled {
+                    from_account.balance_change = (
+                        from_account.info.balance - balance,
+                        from_account.info.balance,
+                    );
+                }
+
+                let to_account = state.get_mut(&to).unwrap();
+                to_account.info.balance -= balance;
+
+                // Remove balance change for `to`
+                if is_amsterdam_enabled {
+                    to_account.balance_change =
+                        (to_account.info.balance + balance, to_account.info.balance);
+                }
             }
+
             JournalEntry::NonceChange { address } => {
-                state.get_mut(&address).unwrap().info.nonce -= 1;
+                let account = state.get_mut(&address).unwrap();
+                let prev_nonce = account.info.nonce;
+                account.info.nonce -= 1;
+                if is_amsterdam_enabled {
+                    account.nonce_change = (prev_nonce, account.info.nonce);
+                }
             }
+
             JournalEntry::AccountCreated {
                 address,
                 is_created_globally,
@@ -382,6 +423,12 @@ impl JournalEntryTr for JournalEntry {
                     .get_mut(&key)
                     .unwrap()
                     .present_value = had_value;
+
+                if is_amsterdam_enabled {
+                    if let Some(account) = state.get_mut(&address) {
+                        account.storage_access.writes.remove(&key);
+                    }
+                }
             }
             JournalEntry::TransientStorageChange {
                 address,
@@ -404,6 +451,9 @@ impl JournalEntryTr for JournalEntry {
                 let acc = state.get_mut(&address).unwrap();
                 acc.info.code_hash = KECCAK_EMPTY;
                 acc.info.code = None;
+                if is_amsterdam_enabled {
+                    acc.code_change = Default::default();
+                }
             }
         }
     }

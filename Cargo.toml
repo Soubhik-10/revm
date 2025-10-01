@@ -37,7 +37,7 @@ members = [
     "examples/custom_precompile_journal",
 ]
 resolver = "2"
-default-members = ["crates/revm"]
+default-members = ["crates/revm", "crates/op-revm"]
 
 [workspace.dependencies]
 # revm
@@ -114,7 +114,7 @@ derive-where = { version = "1.6.0", default-features = false }
 rand = "0.9"
 tokio = "1.47"
 either = { version = "1.15.0", default-features = false }
-
+tracing = "0.1.40"
 # dev-dependencies
 anyhow = "1.0.99"
 bincode = { version = "2.0", features = ["serde"] }

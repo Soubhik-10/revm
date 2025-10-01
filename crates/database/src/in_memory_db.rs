@@ -468,6 +468,7 @@ impl Database for BenchmarkDB {
                 balance: BENCH_TARGET_BALANCE,
                 code: Some(self.0.clone()),
                 code_hash: self.1,
+                ..Default::default()
             }));
         }
         if address == BENCH_CALLER {
@@ -476,6 +477,7 @@ impl Database for BenchmarkDB {
                 balance: BENCH_CALLER_BALANCE,
                 code: None,
                 code_hash: KECCAK_EMPTY,
+                ..Default::default()
             }));
         }
         Ok(None)

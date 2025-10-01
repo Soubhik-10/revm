@@ -309,6 +309,7 @@ mod tests {
             nonce: 0,
             code_hash: KECCAK_EMPTY,
             code: Some(bytecode.clone()),
+            ..Default::default()
         };
 
         let account2 = AccountInfo {
@@ -316,6 +317,7 @@ mod tests {
             nonce: 0,
             code_hash: KECCAK_EMPTY,
             code: None,
+            ..Default::default()
         };
 
         assert_eq!(account1, account2, "Accounts should be equal ignoring code");

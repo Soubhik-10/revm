@@ -10,6 +10,7 @@ use primitives::{
     hash_map::Entry, Address, HashMap, HashSet, StorageKey, StorageValue, B256, KECCAK_EMPTY,
 };
 use state::AccountInfo;
+use std::boxed::Box;
 use std::{
     collections::{BTreeMap, BTreeSet},
     vec::Vec,
@@ -283,7 +284,7 @@ impl BundleBuilder {
                     .remove(&(block_number, address))
                     .unwrap_or_default()
                 {
-                    Some(Some(account)) => AccountInfoRevert::RevertTo(account),
+                    Some(Some(account)) => AccountInfoRevert::RevertTo(Box::new(account)),
                     Some(None) => AccountInfoRevert::DeleteIt,
                     None => AccountInfoRevert::DoNothing,
                 };
@@ -477,7 +478,7 @@ impl BundleState {
                     .into_iter()
                     .map(|(address, account, storage)| {
                         let account = match account {
-                            Some(Some(account)) => AccountInfoRevert::RevertTo(account),
+                            Some(Some(account)) => AccountInfoRevert::RevertTo(Box::new(account)),
                             Some(None) => AccountInfoRevert::DeleteIt,
                             None => AccountInfoRevert::DoNothing,
                         };
@@ -883,6 +884,7 @@ mod tests {
             nonce: 1,
             code_hash: KECCAK_EMPTY,
             code: None,
+            ..Default::default()
         };
 
         let mut bundle_state = BundleState::default();
@@ -934,6 +936,7 @@ mod tests {
                         balance: U256::from(10),
                         code_hash: KECCAK_EMPTY,
                         code: None,
+                        ..Default::default()
                     }),
                     HashMap::from_iter([
                         (slot1(), (StorageValue::from(0), StorageValue::from(10))),
@@ -948,6 +951,7 @@ mod tests {
                         balance: U256::from(10),
                         code_hash: KECCAK_EMPTY,
                         code: None,
+                        ..Default::default()
                     }),
                     HashMap::default(),
                 ),
@@ -979,6 +983,7 @@ mod tests {
                     balance: U256::from(20),
                     code_hash: KECCAK_EMPTY,
                     code: None,
+                    ..Default::default()
                 }),
                 HashMap::from_iter([(slot1(), (StorageValue::from(0), StorageValue::from(15)))]),
             )],
@@ -989,6 +994,7 @@ mod tests {
                     balance: U256::from(10),
                     code_hash: KECCAK_EMPTY,
                     code: None,
+                    ..Default::default()
                 })),
                 vec![(slot1(), StorageValue::from(10))],
             )]],
@@ -1006,6 +1012,7 @@ mod tests {
                     balance: U256::from(10),
                     code_hash: KECCAK_EMPTY,
                     code: None,
+                    ..Default::default()
                 },
             )
             .state_storage(
@@ -1020,6 +1027,7 @@ mod tests {
                     balance: U256::from(10),
                     code_hash: KECCAK_EMPTY,
                     code: None,
+                    ..Default::default()
                 },
             )
             .revert_address(0, account1())
@@ -1039,6 +1047,7 @@ mod tests {
                     balance: U256::from(20),
                     code_hash: KECCAK_EMPTY,
                     code: None,
+                    ..Default::default()
                 },
             )
             .state_storage(
@@ -1054,6 +1063,7 @@ mod tests {
                     balance: U256::from(10),
                     code_hash: KECCAK_EMPTY,
                     code: None,
+                    ..Default::default()
                 })),
             )
             .revert_storage(0, account1(), vec![(slot1(), StorageValue::from(10))])

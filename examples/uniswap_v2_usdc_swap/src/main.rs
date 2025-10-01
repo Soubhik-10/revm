@@ -48,6 +48,7 @@ async fn main() -> Result<()> {
         balance: one_ether,
         code_hash: KECCAK_EMPTY,
         code: None,
+        ..Default::default()
     };
     cache_db.insert_account_info(account, acc_info);
 

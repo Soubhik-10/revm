@@ -8,6 +8,7 @@ use core::{
 };
 use primitives::{Address, HashMap, StorageKey, StorageValue};
 use state::AccountInfo;
+use std::boxed::Box;
 use std::vec::Vec;
 
 /// Contains reverts of multiple account in multiple transitions (Transitions as a block).
@@ -61,7 +62,7 @@ impl Reverts {
                     AccountInfoRevert::RevertTo(acc) => {
                         // Cloning is cheap, because account info has 3 small
                         // fields and a Bytes
-                        accounts.push((*address, Some(acc.clone())))
+                        accounts.push((*address, Some((**acc).clone())))
                     }
                     AccountInfoRevert::DeleteIt => accounts.push((*address, None)),
                     AccountInfoRevert::DoNothing => (),
@@ -302,7 +303,7 @@ pub enum AccountInfoRevert {
     /// Account was created and on revert we need to remove it with all storage.
     DeleteIt,
     /// Account was changed and on revert we need to put old state.
-    RevertTo(AccountInfo),
+    RevertTo(Box<AccountInfo>),
 }
 
 /// So storage can have multiple types:

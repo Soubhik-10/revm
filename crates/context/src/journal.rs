@@ -112,7 +112,7 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         key: StorageKey,
     ) -> Result<StateLoad<StorageValue>, <Self::Database as Database>::Error> {
         self.inner
-            .sload(&mut self.database, address, key, false)
+            .sload(&mut self.database, address, key, false, false)
             .map_err(JournalLoadError::unwrap_db_error)
     }
 
@@ -323,7 +323,7 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
     ) -> Result<StateLoad<StorageValue>, JournalLoadError<<Self::Database as Database>::Error>>
     {
         self.inner
-            .sload(&mut self.database, address, key, skip_cold_load)
+            .sload(&mut self.database, address, key, skip_cold_load, false)
     }
 
     #[inline]
