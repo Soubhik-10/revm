@@ -26,7 +26,7 @@ sha2 = { workspace = true }
 alloy-primitives = { workspace = true }
 
 [features]
-default = ["glamsterdam"]
+default = []
 glamsterdam = ["revm/glamsterdam", "op-revm/glamsterdam"]
 optional_balance_check = [
     "revm/optional_balance_check",
