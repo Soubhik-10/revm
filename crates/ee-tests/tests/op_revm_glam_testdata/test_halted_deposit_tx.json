@@ -9,7 +9,8 @@
     "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
       "balance_change": [
         "0x0",
-        "0x0"
+        "0x0",
+        false
       ],
       "code_change": "0x",
       "info": {
@@ -47,7 +48,8 @@
     "0xffffffffffffffffffffffffffffffffffffffff": {
       "balance_change": [
         "0x0",
-        "0x0"
+        "0x0",
+        false
       ],
       "code_change": "0x",
       "info": {
