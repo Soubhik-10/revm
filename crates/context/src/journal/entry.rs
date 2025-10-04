@@ -330,11 +330,8 @@ impl JournalEntryTr for JournalEntry {
                 account.info.balance += had_balance;
                 // Remove balance change for self-destructed account
                 if is_amsterdam_enabled {
-                    account.balance_change = (
-                        account.info.balance - had_balance,
-                        account.info.balance,
-                        false,
-                    );
+                    account.balance_change =
+                        (account.info.balance - had_balance, account.info.balance);
                 }
 
                 if address != target {
@@ -343,11 +340,8 @@ impl JournalEntryTr for JournalEntry {
 
                     // Remove balance change for beneficiary if different from self-destructed account
                     if is_amsterdam_enabled {
-                        target.balance_change = (
-                            target.info.balance + had_balance,
-                            target.info.balance,
-                            false,
-                        );
+                        target.balance_change =
+                            (target.info.balance + had_balance, target.info.balance);
                     }
                 }
             }
@@ -360,7 +354,7 @@ impl JournalEntryTr for JournalEntry {
                 account.info.balance = old_balance;
                 // Remove balance change entry
                 if is_amsterdam_enabled {
-                    account.balance_change = (new_balance, old_balance, false);
+                    account.balance_change = (new_balance, old_balance);
                 }
             }
 
@@ -374,7 +368,6 @@ impl JournalEntryTr for JournalEntry {
                     from_account.balance_change = (
                         from_account.info.balance - balance,
                         from_account.info.balance,
-                        false,
                     );
                 }
 
@@ -383,11 +376,8 @@ impl JournalEntryTr for JournalEntry {
 
                 // Remove balance change for `to`
                 if is_amsterdam_enabled {
-                    to_account.balance_change = (
-                        to_account.info.balance + balance,
-                        to_account.info.balance,
-                        false,
-                    );
+                    to_account.balance_change =
+                        (to_account.info.balance + balance, to_account.info.balance);
                 }
             }
 

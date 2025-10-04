@@ -635,15 +635,11 @@ mod test {
         let expected_recipient_change = U256::from(5_000_000_000u64);
         assert_eq!(
             *result_balance_change_sender,
-            (expected_sender_before_change, expected_sender_change, false)
+            (expected_sender_before_change, expected_sender_change)
         );
         assert_eq!(
             *result_balance_change_recipient,
-            (
-                expected_recipient_before_change,
-                expected_recipient_change,
-                false
-            )
+            (expected_recipient_before_change, expected_recipient_change,)
         );
     }
 
@@ -720,15 +716,11 @@ mod test {
         let expected_recipient_before_change = U256::from(3_000_000_000u64);
         assert_eq!(
             *result_balance_change_sender,
-            (expected_sender_before_change, expected_sender_change, false)
+            (expected_sender_before_change, expected_sender_change)
         );
         assert_eq!(
             *result_balance_change_recipient,
-            (
-                expected_recipient_before_change,
-                expected_recipient_change,
-                true
-            )
+            (expected_recipient_before_change, expected_recipient_change,)
         );
     }
 
@@ -801,15 +793,11 @@ mod test {
         let expected_recipient_change = U256::from(2_999_979_000u64);
         assert_eq!(
             *result_balance_change_sender,
-            (expected_sender_before_change, expected_sender_change, false)
+            (expected_sender_before_change, expected_sender_change)
         );
         assert_eq!(
             *result_balance_change_recipient,
-            (
-                expected_recipient_before_change,
-                expected_recipient_change,
-                false
-            )
+            (expected_recipient_before_change, expected_recipient_change,)
         );
     }
 
