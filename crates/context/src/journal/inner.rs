@@ -708,7 +708,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         db: &mut DB,
         address: Address,
     ) -> Result<StateLoad<&mut Account>, DB::Error> {
-        self.load_account_optional(db, address, false, [], false)
+        self.load_account_optional(db, address, false, [], false, false)
             .map_err(JournalLoadError::unwrap_db_error)
     }
 
@@ -728,7 +728,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         let spec = self.spec;
         let is_eip7702_enabled = spec.is_enabled_in(SpecId::PRAGUE);
         let account = self
-            .load_account_optional(db, address, is_eip7702_enabled, [], false)
+            .load_account_optional(db, address, is_eip7702_enabled, [], false, false)
             .map_err(JournalLoadError::unwrap_db_error)?;
         let is_empty = account.state_clear_aware_is_empty(spec);
 
@@ -744,7 +744,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         if let Some(Bytecode::Eip7702(code)) = &account.info.code {
             let address = code.address();
             let delegate_account = self
-                .load_account_optional(db, address, true, [], false)
+                .load_account_optional(db, address, true, [], false, false)
                 .map_err(JournalLoadError::unwrap_db_error)?;
             account_load.data.is_delegate_account_cold = Some(delegate_account.is_cold);
         }
@@ -764,7 +764,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         db: &mut DB,
         address: Address,
     ) -> Result<StateLoad<&mut Account>, DB::Error> {
-        self.load_account_optional(db, address, true, [], false)
+        self.load_account_optional(db, address, true, [], false, false)
             .map_err(JournalLoadError::unwrap_db_error)
     }
 
@@ -777,6 +777,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         load_code: bool,
         storage_keys: impl IntoIterator<Item = StorageKey>,
         skip_cold_load: bool,
+        is_2930: bool,
     ) -> Result<StateLoad<&mut Account>, JournalLoadError<DB::Error>> {
         let load = match self.state.entry(address) {
             Entry::Occupied(entry) => {
@@ -859,6 +860,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
                 storage_key,
                 false,
                 false,
+                is_2930,
             )?;
         }
         Ok(load)
@@ -891,6 +893,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             key,
             from_sstore,
             skip_cold_load,
+            false,
         )
     }
 
@@ -1017,6 +1020,7 @@ pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
     key: StorageKey,
     from_sstore: bool,
     skip_cold_load: bool,
+    is_2930: bool,
 ) -> Result<StateLoad<StorageValue>, JournalLoadError<DB::Error>> {
     let is_newly_created = account.is_created();
     let (value, is_cold) = match account.storage.entry(key) {
@@ -1053,7 +1057,7 @@ pub fn sload_with_account<DB: Database, ENTRY: JournalEntryTr>(
 
     if spec.is_enabled_in(SpecId::AMSTERDAM) {
         // Set `StorageChange` for reads here
-        if !from_sstore {
+        if !from_sstore && !is_2930 {
             account.storage_access.reads.insert(key);
         }
     }

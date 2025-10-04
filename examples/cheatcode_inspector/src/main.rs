@@ -114,9 +114,10 @@ impl JournalTr for Backend {
         &mut self,
         address: Address,
         storage_keys: impl IntoIterator<Item = StorageKey>,
+        is_2930: bool,
     ) -> Result<(), <Self::Database as Database>::Error> {
         self.journaled_state
-            .warm_account_and_storage(address, storage_keys)
+            .warm_account_and_storage(address, storage_keys, is_2930)
     }
 
     fn warm_coinbase_account(&mut self, address: Address) {

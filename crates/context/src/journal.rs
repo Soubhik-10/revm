@@ -173,9 +173,17 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         &mut self,
         address: Address,
         storage_keys: impl IntoIterator<Item = StorageKey>,
+        is_2930: bool,
     ) -> Result<(), <Self::Database as Database>::Error> {
         self.inner
-            .load_account_optional(&mut self.database, address, false, storage_keys, false)
+            .load_account_optional(
+                &mut self.database,
+                address,
+                false,
+                storage_keys,
+                false,
+                is_2930,
+            )
             .map_err(JournalLoadError::unwrap_db_error)?;
         Ok(())
     }
@@ -347,7 +355,14 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
     ) -> Result<AccountInfoLoad<'_>, JournalLoadError<<Self::Database as Database>::Error>> {
         let spec = self.inner.spec;
         self.inner
-            .load_account_optional(&mut self.database, address, load_code, [], skip_cold_load)
+            .load_account_optional(
+                &mut self.database,
+                address,
+                load_code,
+                [],
+                skip_cold_load,
+                false,
+            )
             .map(|a| {
                 AccountInfoLoad::new(&a.data.info, a.is_cold, a.state_clear_aware_is_empty(spec))
             })

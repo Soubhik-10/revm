@@ -58,6 +58,7 @@ pub fn load_accounts<
                 journal.warm_account_and_storage(
                     *item.address(),
                     item.storage_slots().map(|i| StorageKey::from_be_bytes(i.0)),
+                    true,
                 )?;
             }
         }
