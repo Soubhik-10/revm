@@ -3,6 +3,7 @@ use context_interface::{
     result::{HaltReason, OutOfGasError, SuccessReason},
 };
 use core::fmt::Debug;
+use primitives::Address;
 
 /// Result of executing an EVM instruction.
 ///
@@ -18,7 +19,7 @@ pub enum InstructionResult {
     /// Return from the current call.
     Return,
     /// Self-destruct the current contract.
-    SelfDestruct,
+    SelfDestruct(Address),
 
     // Revert Codes
     /// Revert the transaction.
@@ -98,7 +99,7 @@ impl From<SuccessReason> for InstructionResult {
         match value {
             SuccessReason::Return => InstructionResult::Return,
             SuccessReason::Stop => InstructionResult::Stop,
-            SuccessReason::SelfDestruct => InstructionResult::SelfDestruct,
+            SuccessReason::SelfDestruct(a) => InstructionResult::SelfDestruct(a),
         }
     }
 }
@@ -143,7 +144,7 @@ macro_rules! return_ok {
     () => {
         $crate::InstructionResult::Stop
             | $crate::InstructionResult::Return
-            | $crate::InstructionResult::SelfDestruct
+            | $crate::InstructionResult::SelfDestruct(_)
     };
 }
 
@@ -292,7 +293,7 @@ impl<HaltReasonTr: From<HaltReason>> From<InstructionResult> for SuccessOrHalt<H
         match result {
             InstructionResult::Stop => Self::Success(SuccessReason::Stop),
             InstructionResult::Return => Self::Success(SuccessReason::Return),
-            InstructionResult::SelfDestruct => Self::Success(SuccessReason::SelfDestruct),
+            InstructionResult::SelfDestruct(a) => Self::Success(SuccessReason::SelfDestruct(a)),
             InstructionResult::Revert => Self::Revert,
             InstructionResult::CreateInitCodeStartingEF00 => Self::Revert,
             InstructionResult::CallTooDeep => Self::Halt(HaltReason::CallTooDeep.into()), // not gonna happen for first call
@@ -353,6 +354,8 @@ impl<HaltReasonTr: From<HaltReason>> From<InstructionResult> for SuccessOrHalt<H
 
 #[cfg(test)]
 mod tests {
+    use primitives::Address;
+
     use crate::InstructionResult;
 
     #[test]
@@ -369,7 +372,7 @@ mod tests {
         let ok_results = [
             InstructionResult::Stop,
             InstructionResult::Return,
-            InstructionResult::SelfDestruct,
+            InstructionResult::SelfDestruct(Address::ZERO),
         ];
         for result in ok_results {
             assert!(result.is_ok());

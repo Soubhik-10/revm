@@ -1040,7 +1040,96 @@ mod test {
         let expected =
             primitives::Bytes::copy_from_slice(&primitives::hex!("602a60005260206000f300"));
 
-        println!("tracked {:?}", tracked_code);
+        println!("tracked {:?}", result1.result);
         assert_eq!(**tracked_code, expected);
+    }
+
+    #[cfg(feature = "glamsterdam")]
+    #[test]
+    fn selfdestruct() {
+        use context::{ContextTr, Database};
+        use database::{BENCH_CALLER, BENCH_TARGET};
+        use interpreter::instructions::system::address;
+
+        use crate::EvmTr;
+
+        let signer = PrivateKeySigner::random();
+        let beneficiary = PrivateKeySigner::random(); // <--- new address
+
+        let auth = Authorization {
+            chain_id: U256::ZERO,
+            nonce: 0,
+            address: FFADDRESS,
+        };
+        let signature = signer.sign_hash_sync(&auth.signature_hash()).unwrap();
+        let auth = auth.into_signed(signature);
+
+        let bytecode = Bytecode::new_legacy(
+            vec![
+                bytecode::opcode::PUSH20,
+                // beneficiary address, 20 bytes
+                0xff,
+                0xff,
+                0xff,
+                0xff,
+                0xff,
+                0xff,
+                0xff,
+                0xff,
+                0xff,
+                0xff,
+                0xff,
+                0xff,
+                0xff,
+                0xff,
+                0xff,
+                0xff,
+                0xff,
+                0xff,
+                0xff,
+                0xff,
+                bytecode::opcode::SELFDESTRUCT,
+            ]
+            .into(),
+        );
+
+        let ctx = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::AMSTERDAM)
+            .with_db(BenchmarkDB::new_bytecode(bytecode));
+
+        let mut evm = ctx.build_mainnet();
+        let sender_balance = BenchmarkDB::default()
+            .basic(BENCH_CALLER)
+            .unwrap()
+            .unwrap()
+            .balance;
+        println!("Sender Balance (before):   {sender_balance}");
+
+        let beneficiary_balance = BenchmarkDB::default()
+            .basic(BENCH_TARGET)
+            .unwrap()
+            .unwrap()
+            .balance;
+
+        println!("Beneficiary Balance (before):   {beneficiary_balance}");
+
+        let result = evm
+            .transact(
+                TxEnv::builder()
+                    .gas_limit(100_000)
+                    .authorization_list(vec![Either::Left(auth)])
+                    .caller(BENCH_CALLER)
+                    .kind(TxKind::Call(signer.address()))
+                    .value(U256::from(1000)) // give it some funds
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+
+        println!("Result: {:?}", result);
+        let bal_after = result.state.get(&BENCH_CALLER).unwrap().info.balance;
+        println!("Sender Balance (after):   {bal_after}");
+        let ben_after = result.state.get(&BENCH_TARGET).unwrap().info.balance;
+        println!("Beneficiary Balance (after):   {ben_after}");
     }
 }

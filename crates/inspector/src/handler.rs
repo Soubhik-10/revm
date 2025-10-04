@@ -231,7 +231,7 @@ where
 
     // Handle selfdestruct.
     if let InterpreterAction::Return(result) = &next_action {
-        if result.result == InstructionResult::SelfDestruct {
+        if matches!(result.result, InstructionResult::SelfDestruct(_)) {
             inspect_selfdestruct(context, &mut inspector);
         }
     }
