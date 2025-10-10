@@ -247,10 +247,15 @@ pub fn apply_eip7702_auth_list<
             (bytecode, hash)
         };
         authority_acc.info.code_hash = hash;
-        authority_acc.info.code = Some(bytecode);
+        authority_acc.info.code = Some(bytecode.clone());
+        authority_acc.code_change = bytecode.bytes();
 
         // 9. Increase the nonce of `authority` by one.
         authority_acc.info.nonce = authority_acc.info.nonce.saturating_add(1);
+        authority_acc.nonce_change = (
+            authority_acc.info.nonce.saturating_sub(1),
+            authority_acc.info.nonce,
+        );
         authority_acc.mark_touch();
     }
 
