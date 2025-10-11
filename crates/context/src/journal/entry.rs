@@ -427,6 +427,7 @@ impl JournalEntryTr for JournalEntry {
                 if is_amsterdam_enabled {
                     if let Some(account) = state.get_mut(&address) {
                         account.storage_access.writes.remove(&key);
+                        account.storage_access.reads.insert(key);
                     }
                 }
             }
