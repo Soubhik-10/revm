@@ -1043,4 +1043,11 @@ mod test {
         println!("tracked {:?}", tracked_code);
         assert_eq!(**tracked_code, expected);
     }
+
+    #[test]
+    fn test_code() {
+        let code = Bytecode::default();
+        let bytes = primitives::Bytes::default();
+        println!("code:{code:?},bytes:{bytes:?}")
+    }
 }
