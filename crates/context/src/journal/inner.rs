@@ -251,7 +251,12 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         account.info.code = Some(code);
         if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
             if let Some(ref code_ref) = account.info.code {
-                account.code_change = code_ref.bytecode().clone();
+                if account.info.code_hash == KECCAK_EMPTY {
+                    // Code is removed.
+                    account.code_change = Bytes::default();
+                } else {
+                    account.code_change = code_ref.bytecode().clone();
+                }
             }
         }
     }
