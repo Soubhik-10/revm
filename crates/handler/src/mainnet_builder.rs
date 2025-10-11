@@ -552,7 +552,11 @@ mod test {
         let storage_access = &state.get(&signer.address()).unwrap().storage_access;
         // As per the EIP it should not be stored.
         let expected_storage_access = state::StorageAccess {
-            reads: { std::collections::BTreeSet::new() },
+            reads: {
+                let mut reads = std::collections::BTreeSet::new();
+                reads.insert(U256::from(1));
+                reads
+            },
             writes: { std::collections::BTreeMap::new() },
         };
         let auth_acc = state.get(&signer.address()).unwrap();
