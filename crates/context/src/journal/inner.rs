@@ -12,7 +12,7 @@ use database_interface::Database;
 use primitives::{
     hardfork::SpecId::{self, *},
     hash_map::Entry,
-    Address, HashMap, Log, StorageKey, StorageValue, B256, KECCAK_EMPTY, U256,
+    Address, Bytes, HashMap, Log, StorageKey, StorageValue, B256, KECCAK_EMPTY, U256,
 };
 use state::{Account, EvmState, EvmStorageSlot, TransientStorage};
 use std::vec::Vec;
@@ -525,6 +525,10 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         // this entry will revert set nonce.
         last_journal.push(ENTRY::account_created(target_address, is_created_globally));
         target_acc.info.code = None;
+        if spec_id.is_enabled_in(SpecId::AMSTERDAM) {
+            target_acc.code_change = Bytes::default();
+        }
+
         // EIP-161: State trie clearing (invariant-preserving alternative)
         if spec_id.is_enabled_in(SPURIOUS_DRAGON) {
             // nonce is going to be reset to zero in AccountCreated journal entry.
