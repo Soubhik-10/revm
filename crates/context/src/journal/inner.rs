@@ -850,11 +850,6 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
                     db.code_by_hash(info.code_hash)?
                 };
                 info.code = Some(code);
-                if self.spec.is_enabled_in(SpecId::AMSTERDAM) {
-                    if let Some(ref code_ref) = info.code {
-                        load.data.code_change = code_ref.bytecode().clone();
-                    }
-                }
             }
         }
 
