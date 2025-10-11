@@ -13,8 +13,8 @@ use context_interface::{
     Block, Cfg, Database,
 };
 use core::cmp::Ordering;
-use primitives::StorageKey;
 use primitives::{eip7702, hardfork::SpecId, KECCAK_EMPTY, U256};
+use primitives::{Bytes, StorageKey};
 use state::AccountInfo;
 use std::boxed::Box;
 
@@ -248,7 +248,11 @@ pub fn apply_eip7702_auth_list<
         };
         authority_acc.info.code_hash = hash;
         authority_acc.info.code = Some(bytecode.clone());
-        authority_acc.code_change = bytecode.bytes();
+        if authority_acc.info.code_hash == KECCAK_EMPTY {
+            authority_acc.code_change = Bytes::default();
+        } else {
+            authority_acc.code_change = bytecode.bytes();
+        }
 
         // 9. Increase the nonce of `authority` by one.
         authority_acc.info.nonce = authority_acc.info.nonce.saturating_add(1);
