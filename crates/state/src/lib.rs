@@ -67,8 +67,8 @@ pub struct Account {
     pub storage_access: StorageAccess,
     /// Balance change information for this account records pre and post balance.
     pub balance_change: (U256, U256),
-    /// Code change track post-transaction runtime bytecode for deployed/modified contracts.
-    pub code_change: Bytes,
+    /// Code change track post-transaction runtime bytecode for deployed/modified contracts and if modified.
+    pub code_change: (Bytes, bool),
     /// Nonce change information for this account.
     pub nonce_change: (u64, u64),
 }
@@ -83,7 +83,7 @@ impl Account {
             status: AccountStatus::LoadedAsNotExisting,
             storage_access: StorageAccess::default(),
             balance_change: (U256::ZERO, U256::ZERO),
-            code_change: Bytes::default(),
+            code_change: (Bytes::default(), false),
             nonce_change: (0, 0),
         }
     }
@@ -307,7 +307,7 @@ impl Account {
     #[inline]
     pub fn clear_state_changes(&mut self) {
         self.balance_change = (U256::ZERO, U256::ZERO);
-        self.code_change = Bytes::default();
+        self.code_change = (Bytes::default(), false);
         self.nonce_change = (0, 0);
         self.storage_access.reads.clear();
         self.storage_access.writes.clear();
@@ -323,7 +323,7 @@ impl From<AccountInfo> for Account {
             status: AccountStatus::empty(),
             storage_access: StorageAccess::default(),
             balance_change: (U256::ZERO, U256::ZERO),
-            code_change: Bytes::default(),
+            code_change: (Bytes::default(), false),
             nonce_change: (0, 0),
         }
     }

@@ -253,9 +253,9 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             if let Some(ref code_ref) = account.info.code {
                 if account.info.code_hash == KECCAK_EMPTY {
                     // Code is removed.
-                    account.code_change = Bytes::default();
+                    account.code_change = (Bytes::default(), true);
                 } else {
-                    account.code_change = code_ref.bytecode().clone();
+                    account.code_change = (code_ref.bytecode().clone(), true);
                 }
             }
         }
@@ -531,7 +531,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         last_journal.push(ENTRY::account_created(target_address, is_created_globally));
         target_acc.info.code = None;
         if spec_id.is_enabled_in(SpecId::AMSTERDAM) {
-            target_acc.code_change = Bytes::default();
+            target_acc.code_change = (Bytes::default(), false);
         }
 
         // EIP-161: State trie clearing (invariant-preserving alternative)

@@ -249,9 +249,9 @@ pub fn apply_eip7702_auth_list<
         authority_acc.info.code_hash = hash;
         authority_acc.info.code = Some(bytecode.clone());
         if authority_acc.info.code_hash == KECCAK_EMPTY {
-            authority_acc.code_change = Bytes::default();
+            authority_acc.code_change = (Bytes::default(), true);
         } else {
-            authority_acc.code_change = bytecode.bytes();
+            authority_acc.code_change = (bytecode.bytes(), true);
         }
 
         // 9. Increase the nonce of `authority` by one.

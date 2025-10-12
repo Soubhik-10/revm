@@ -1041,8 +1041,10 @@ mod test {
 
         let code_change = &result1.state.get(&created_address).unwrap().code_change;
         let tracked_code = &code_change;
-        let expected =
-            primitives::Bytes::copy_from_slice(&primitives::hex!("602a60005260206000f300"));
+        let expected = (
+            primitives::Bytes::copy_from_slice(&primitives::hex!("602a60005260206000f300")),
+            true,
+        );
 
         println!("tracked {:?}", tracked_code);
         assert_eq!(**tracked_code, expected);

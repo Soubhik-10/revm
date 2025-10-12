@@ -16,7 +16,10 @@
         "0x0",
         "0x0"
       ],
-      "code_change": "0x",
+      "code_change": [
+        "0x",
+        false
+      ],
       "info": {
         "balance": "0x64",
         "code": {
