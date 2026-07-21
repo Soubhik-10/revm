@@ -1,9 +1,67 @@
 //! Local context trait [`LocalContextTr`] and related types.
+use alloy_eip8141::FrameStatus;
 use core::{
     cell::{Ref, RefCell},
     ops::Range,
 };
+use primitives::Address;
 use std::{rc::Rc, string::String, vec::Vec};
+
+/// EIP-8141 approvals accumulated by successful top-level frames.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct FrameApprovalState {
+    /// Account that approved payment.
+    pub payer: Option<Address>,
+    /// Whether execution as the transaction sender has been approved.
+    pub sender_approved: bool,
+}
+
+/// Per-transaction EIP-8141 interpreter runtime state.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FrameTransactionRuntime {
+    /// Index of the currently executing top-level frame.
+    pub current_frame_index: usize,
+    /// Resolved target of the current top-level frame.
+    pub resolved_target: Address,
+    /// Statuses of completed top-level frames.
+    pub statuses: Vec<FrameStatus>,
+    /// Committed approval state.
+    pub approval: FrameApprovalState,
+    /// Approval scopes corresponding to active interpreter call frames.
+    pub approval_stack: Vec<FrameApprovalState>,
+    /// Approval produced by the completed top-level interpreter frame.
+    pub root_approval: Option<FrameApprovalState>,
+}
+
+impl FrameTransactionRuntime {
+    /// Enters an interpreter call frame approval scope.
+    pub fn enter_scope(&mut self) {
+        let state = self.approval_stack.last().copied().unwrap_or(self.approval);
+        self.approval_stack.push(state);
+    }
+
+    /// Exits an interpreter call frame, committing approvals only on success.
+    pub fn exit_scope(&mut self, success: bool) {
+        let Some(state) = self.approval_stack.pop() else {
+            return;
+        };
+        if !success {
+            return;
+        }
+        if let Some(parent) = self.approval_stack.last_mut() {
+            *parent = state;
+        } else {
+            self.root_approval = Some(state);
+        }
+    }
+
+    /// Commits approvals emitted by a successful top-level frame.
+    pub const fn commit_root_approval(&mut self) {
+        if let Some(state) = self.root_approval.take() {
+            self.approval = state;
+        }
+    }
+}
 
 /// Non-empty, item-pooling Vec.
 #[derive(Debug, Clone)]
@@ -234,6 +292,24 @@ pub trait LocalContextTr {
     ///
     /// Returns `Some(String)` if a precompile error message was recorded.
     fn take_precompile_error_context(&mut self) -> Option<String>;
+
+    /// Returns the active EIP-8141 runtime state.
+    fn frame_transaction(&self) -> Option<&FrameTransactionRuntime> {
+        None
+    }
+
+    /// Returns whether this local context can store EIP-8141 runtime state.
+    fn supports_eip8141(&self) -> bool {
+        false
+    }
+
+    /// Returns the active EIP-8141 runtime state mutably.
+    fn frame_transaction_mut(&mut self) -> Option<&mut FrameTransactionRuntime> {
+        None
+    }
+
+    /// Replaces the active EIP-8141 runtime state.
+    fn set_frame_transaction(&mut self, _runtime: Option<FrameTransactionRuntime>) {}
 }
 
 #[cfg(test)]

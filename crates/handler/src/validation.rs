@@ -206,6 +206,24 @@ pub fn validate_tx_env<CTX: ContextTr>(
                 return Err(InvalidTransaction::EmptyAuthorizationList);
             }
         }
+        TransactionType::Eip8141 => {
+            if !spec_id.is_enabled_in(SpecId::BOGOTA) {
+                return Err(InvalidTransaction::Eip8141NotSupported);
+            }
+            validate_priority_fee_for_tx(tx, base_fee, disable_priority_fee_check)?;
+            if tx.blob_versioned_hashes().is_empty() {
+                if tx.max_fee_per_blob_gas() != 0 {
+                    return Err(InvalidTransaction::Eip8141InvalidFields);
+                }
+            } else {
+                validate_eip4844_tx(
+                    tx.blob_versioned_hashes(),
+                    tx.max_fee_per_blob_gas(),
+                    context.block().blob_gasprice().unwrap_or_default(),
+                    context.cfg().max_blobs_per_tx(),
+                )?;
+            }
+        }
         TransactionType::Custom => {
             // Custom transaction type check is not done here.
         }

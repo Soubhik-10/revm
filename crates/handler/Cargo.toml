@@ -27,6 +27,7 @@ context.workspace = true
 primitives.workspace = true
 state.workspace = true
 bytecode.workspace = true
+alloy-eip8141.workspace = true
 
 auto_impl.workspace = true
 derive-where.workspace = true
@@ -52,6 +53,7 @@ std = [
 	"precompile/std",
 	"primitives/std",
 	"state/std",
+	"alloy-eip8141/std",
 ]
 serde = [
 	"dep:serde",
@@ -64,6 +66,7 @@ serde = [
 	"database-interface/serde",
 	"interpreter/serde",
 	"derive-where/serde",
+	"alloy-eip8141/serde",
 ]
 asyncdb = ["std", "context/asyncdb", "database-interface/asyncdb"]
 

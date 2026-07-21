@@ -12,6 +12,8 @@ pub mod block_info;
 pub mod contract;
 /// Control flow instructions (JUMP, JUMPI, REVERT, etc.).
 pub mod control;
+/// EIP-8141 frame transaction instructions.
+pub mod frame;
 /// Host environment interactions (SLOAD, SSTORE, LOG, etc.).
 pub mod host;
 /// Signed 256-bit integer operations.
@@ -299,6 +301,13 @@ const fn instruction_table_impl<WIRE: InterpreterTypes, H: Host>() -> Instructio
     table[LOG3 as usize] = Instruction::new(host::log::<3, _>);
     table[LOG4 as usize] = Instruction::new(host::log::<4, _>);
 
+    table[APPROVE as usize] = Instruction::new(frame::approve);
+    table[TXPARAM as usize] = Instruction::new(frame::txparam);
+    table[FRAMEDATALOAD as usize] = Instruction::new(frame::framedataload);
+    table[FRAMEDATACOPY as usize] = Instruction::new(frame::framedatacopy);
+    table[FRAMEPARAM as usize] = Instruction::new(frame::frameparam);
+    table[SIGPARAM as usize] = Instruction::new(frame::sigparam);
+
     table[CREATE as usize] = Instruction::new(contract::create::<false, _, _>);
     table[CALL as usize] = Instruction::new(contract::call::<CALL, _, _>);
     table[CALLCODE as usize] = Instruction::new(contract::call::<CALLCODE, _, _>);
@@ -473,6 +482,13 @@ const fn gas_table_impl() -> GasTable {
     table[LOG2 as usize] = gas::LOG as u16;
     table[LOG3 as usize] = gas::LOG as u16;
     table[LOG4 as usize] = gas::LOG as u16;
+
+    table[APPROVE as usize] = 0;
+    table[TXPARAM as usize] = 2;
+    table[FRAMEDATALOAD as usize] = 3;
+    table[FRAMEDATACOPY as usize] = 3;
+    table[FRAMEPARAM as usize] = 2;
+    table[SIGPARAM as usize] = 2;
 
     table[CREATE as usize] = 0;
     table[CALL as usize] = 40;

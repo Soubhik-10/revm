@@ -411,6 +411,17 @@ pub enum ExecutionResult<HaltReasonTy = HaltReason> {
         /// Logs emitted before the halt.
         logs: Vec<Log>,
     },
+    /// Successful EIP-8141 frame transaction.
+    FrameTransaction {
+        /// Aggregate transaction gas accounting.
+        gas: ResultGas,
+        /// Account that approved and paid the transaction fee.
+        payer: Address,
+        /// Logs from all successful frames, in execution order.
+        logs: Vec<Log>,
+        /// Per-frame status, gas, and logs.
+        frame_receipts: Vec<alloy_eip8141::FrameReceipt<Log>>,
+    },
 }
 
 impl<HaltReasonTy> ExecutionResult<HaltReasonTy> {
@@ -420,7 +431,7 @@ impl<HaltReasonTy> ExecutionResult<HaltReasonTy> {
     ///
     /// <https://eips.ethereum.org/EIPS/eip-658>
     pub const fn is_success(&self) -> bool {
-        matches!(self, Self::Success { .. })
+        matches!(self, Self::Success { .. } | Self::FrameTransaction { .. })
     }
 
     /// Maps a `DBError` to a new error type using the provided closure, leaving other variants unchanged.
@@ -445,6 +456,17 @@ impl<HaltReasonTy> ExecutionResult<HaltReasonTy> {
                 reason: op(reason),
                 gas,
                 logs,
+            },
+            Self::FrameTransaction {
+                gas,
+                payer,
+                logs,
+                frame_receipts,
+            } => ExecutionResult::FrameTransaction {
+                gas,
+                payer,
+                logs,
+                frame_receipts,
             },
         }
     }
@@ -488,25 +510,30 @@ impl<HaltReasonTy> ExecutionResult<HaltReasonTy> {
     /// Returns the logs emitted during execution.
     pub const fn logs(&self) -> &[Log] {
         match self {
-            Self::Success { logs, .. } | Self::Revert { logs, .. } | Self::Halt { logs, .. } => {
-                logs.as_slice()
-            }
+            Self::Success { logs, .. }
+            | Self::Revert { logs, .. }
+            | Self::Halt { logs, .. }
+            | Self::FrameTransaction { logs, .. } => logs.as_slice(),
         }
     }
 
     /// Consumes [`self`] and returns the logs emitted during execution.
     pub fn into_logs(self) -> Vec<Log> {
         match self {
-            Self::Success { logs, .. } | Self::Revert { logs, .. } | Self::Halt { logs, .. } => {
-                logs
-            }
+            Self::Success { logs, .. }
+            | Self::Revert { logs, .. }
+            | Self::Halt { logs, .. }
+            | Self::FrameTransaction { logs, .. } => logs,
         }
     }
 
     /// Returns the gas accounting information.
     pub const fn gas(&self) -> &ResultGas {
         match self {
-            Self::Success { gas, .. } | Self::Revert { gas, .. } | Self::Halt { gas, .. } => gas,
+            Self::Success { gas, .. }
+            | Self::Revert { gas, .. }
+            | Self::Halt { gas, .. }
+            | Self::FrameTransaction { gas, .. } => gas,
         }
     }
 
@@ -573,6 +600,17 @@ impl<HaltReasonTy: fmt::Display> fmt::Display for ExecutionResult<HaltReasonTy> 
                 }
                 Ok(())
             }
+            Self::FrameTransaction {
+                gas,
+                payer,
+                frame_receipts,
+                ..
+            } => write!(
+                f,
+                "Frame transaction: {gas}, payer {payer}, {} frame{}",
+                frame_receipts.len(),
+                if frame_receipts.len() == 1 { "" } else { "s" }
+            ),
         }
     }
 }
@@ -940,6 +978,10 @@ pub enum InvalidTransaction {
     Eip4844NotSupported,
     /// EIP-7702 is not supported.
     Eip7702NotSupported,
+    /// EIP-8141 is not supported.
+    Eip8141NotSupported,
+    /// EIP-8141 transaction has invalid outer fields.
+    Eip8141InvalidFields,
     /// EIP-7873 is not supported.
     Eip7873NotSupported,
     /// EIP-7873 initcode transaction should have `to` address.
@@ -1042,6 +1084,10 @@ impl fmt::Display for InvalidTransaction {
             Self::Eip1559NotSupported => write!(f, "Eip1559 is not supported"),
             Self::Eip4844NotSupported => write!(f, "Eip4844 is not supported"),
             Self::Eip7702NotSupported => write!(f, "Eip7702 is not supported"),
+            Self::Eip8141NotSupported => write!(f, "Eip8141 is not supported"),
+            Self::Eip8141InvalidFields => {
+                write!(f, "Eip8141 transaction has invalid fields")
+            }
             Self::Eip7873NotSupported => write!(f, "Eip7873 is not supported"),
             Self::Eip7873MissingTarget => {
                 write!(f, "Eip7873 initcode transaction should have `to` address")

@@ -9,6 +9,8 @@ extern crate alloc as std;
 
 /// EVM execution API traits and implementations.
 pub mod api;
+/// EIP-8141 frame transaction execution.
+pub mod eip8141;
 /// Core EVM traits for execution and frame management.
 pub mod evm;
 /// EVM execution logic and utilities.

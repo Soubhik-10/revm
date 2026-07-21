@@ -9,6 +9,17 @@ use auto_impl::auto_impl;
 use primitives::{hardfork::SpecId, Address, Bytes, Log, StorageKey, StorageValue, B256, U256};
 use state::Bytecode;
 
+/// Error returned by EIP-8141 host operations.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum FrameHostError {
+    /// The operation is unavailable or a selector/index is invalid.
+    Invalid,
+    /// The current frame must revert.
+    Revert,
+    /// A database or other fatal host error occurred.
+    Fatal,
+}
+
 /// Error that can happen when loading account info.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -57,6 +68,40 @@ pub trait Host {
     fn caller(&self) -> Address;
     /// Transaction blob hash, calls `ContextTr::tx().blob_hash(number)`
     fn blob_hash(&self, number: usize) -> Option<U256>;
+
+    /// Returns an EIP-8141 transaction parameter.
+    fn frame_tx_param(&self, _param: U256) -> Option<U256> {
+        None
+    }
+
+    /// Returns one EIP-8141 frame's calldata.
+    fn frame_data(&self, _frame_index: U256) -> Option<Bytes> {
+        None
+    }
+
+    /// Returns an EIP-8141 frame parameter.
+    fn frame_param(&self, _frame_index: U256, _param: U256) -> Option<U256> {
+        None
+    }
+
+    /// Returns EIP-8141 signature metadata.
+    fn frame_signature_param(&self, _signature_index: U256, _param: U256) -> Option<U256> {
+        None
+    }
+
+    /// Returns an EIP-8141 arbitrary signature witness.
+    fn frame_signature_bytes(&self, _signature_index: U256) -> Option<Bytes> {
+        None
+    }
+
+    /// Applies an EIP-8141 approval from the current call context.
+    fn approve_frame(
+        &mut self,
+        _current_target: Address,
+        _scope: U256,
+    ) -> Result<(), FrameHostError> {
+        Err(FrameHostError::Invalid)
+    }
 
     /* Config */
 
