@@ -1,8 +1,8 @@
 //! EIP-8141 frame transaction execution payload.
 
 use alloy_eip8141::{
-    Frame, FrameSignature, FRAME_TX_DATA_TOKEN_FLOOR_COST, FRAME_TX_DATA_TOKEN_STANDARD_COST,
-    FRAME_TX_INTRINSIC_COST, FRAME_TX_PER_FRAME_COST,
+    Frame, FrameSignature, FRAME_TX_DATA_TOKEN_STANDARD_COST, FRAME_TX_INTRINSIC_COST,
+    FRAME_TX_PER_FRAME_COST, FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN,
 };
 use primitives::{B256, U256};
 use std::vec::Vec;
@@ -91,12 +91,16 @@ impl FrameTransaction {
             .checked_add(self.total_frame_gas_limit()?)
     }
 
-    /// Calculates the calldata floor used by the execution-specs EIP-8141 implementation.
+    /// Calculates the EIP-7623 total-cost floor for the charged frame transaction data.
     pub fn calldata_floor_gas(&self) -> Option<u64> {
-        self.calldata_len()
-            .checked_mul(FRAME_TX_DATA_TOKEN_STANDARD_COST)?
-            .checked_mul(FRAME_TX_DATA_TOKEN_FLOOR_COST)?
-            .checked_add(FRAME_TX_INTRINSIC_COST)
+        let frame_cost = (self.frames.len() as u64).checked_mul(FRAME_TX_PER_FRAME_COST)?;
+        let calldata_floor = self
+            .calldata_tokens()
+            .checked_mul(FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN)?;
+        FRAME_TX_INTRINSIC_COST
+            .checked_add(frame_cost)?
+            .checked_add(self.signature_verification_gas()?)?
+            .checked_add(calldata_floor)
     }
 
     /// Calculates the maximum fee exposure checked when a payer approves payment.
@@ -141,8 +145,6 @@ mod tests {
         assert_eq!(transaction.signature_verification_gas(), Some(0));
         assert_eq!(transaction.intrinsic_gas(), Some(15_515));
         assert_eq!(transaction.gas_limit(), Some(15_615));
-        // EIP-7976-style floor accounting charges every byte as four standard tokens,
-        // each at the execution-specs floor cost of sixteen.
-        assert_eq!(transaction.calldata_floor_gas(), Some(15_256));
+        assert_eq!(transaction.calldata_floor_gas(), Some(15_575));
     }
 }

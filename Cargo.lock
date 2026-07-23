@@ -43,7 +43,7 @@ dependencies = [
 [[package]]
 name = "alloy-consensus"
 version = "2.2.0"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#a1079eb880a5168555f169be69cb6ba4d114291b"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#052445b9ea4fdd4977577427038469e1536519fe"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -69,7 +69,7 @@ dependencies = [
 [[package]]
 name = "alloy-consensus-any"
 version = "2.2.0"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#a1079eb880a5168555f169be69cb6ba4d114291b"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#052445b9ea4fdd4977577427038469e1536519fe"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -134,7 +134,7 @@ dependencies = [
 [[package]]
 name = "alloy-eip8141"
 version = "0.1.0"
-source = "git+https://github.com/Soubhik-10/eips?branch=feat%2Feip8141-basic-types#ef674e336147db9efc37b0caf28d2ab3e511f0fb"
+source = "git+https://github.com/Soubhik-10/eips?branch=feat%2Feip8141-basic-types#ebc37b222afd6e850f07bcab02623fb41f177e3b"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -145,7 +145,7 @@ dependencies = [
 [[package]]
 name = "alloy-eips"
 version = "2.2.0"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#a1079eb880a5168555f169be69cb6ba4d114291b"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#052445b9ea4fdd4977577427038469e1536519fe"
 dependencies = [
  "alloy-eip2124",
  "alloy-eip2930",
@@ -180,7 +180,7 @@ dependencies = [
 [[package]]
 name = "alloy-json-rpc"
 version = "2.2.0"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#a1079eb880a5168555f169be69cb6ba4d114291b"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#052445b9ea4fdd4977577427038469e1536519fe"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -194,7 +194,7 @@ dependencies = [
 [[package]]
 name = "alloy-network"
 version = "2.2.0"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#a1079eb880a5168555f169be69cb6ba4d114291b"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#052445b9ea4fdd4977577427038469e1536519fe"
 dependencies = [
  "alloy-consensus",
  "alloy-consensus-any",
@@ -219,7 +219,7 @@ dependencies = [
 [[package]]
 name = "alloy-network-primitives"
 version = "2.2.0"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#a1079eb880a5168555f169be69cb6ba4d114291b"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#052445b9ea4fdd4977577427038469e1536519fe"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -263,7 +263,7 @@ dependencies = [
 [[package]]
 name = "alloy-provider"
 version = "2.2.0"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#a1079eb880a5168555f169be69cb6ba4d114291b"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#052445b9ea4fdd4977577427038469e1536519fe"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -323,7 +323,7 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-client"
 version = "2.2.0"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#a1079eb880a5168555f169be69cb6ba4d114291b"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#052445b9ea4fdd4977577427038469e1536519fe"
 dependencies = [
  "alloy-json-rpc",
  "alloy-primitives",
@@ -345,7 +345,7 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-types-any"
 version = "2.2.0"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#a1079eb880a5168555f169be69cb6ba4d114291b"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#052445b9ea4fdd4977577427038469e1536519fe"
 dependencies = [
  "alloy-consensus-any",
  "alloy-network-primitives",
@@ -359,7 +359,7 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-types-eth"
 version = "2.2.0"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#a1079eb880a5168555f169be69cb6ba4d114291b"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#052445b9ea4fdd4977577427038469e1536519fe"
 dependencies = [
  "alloy-consensus",
  "alloy-consensus-any",
@@ -379,7 +379,7 @@ dependencies = [
 [[package]]
 name = "alloy-serde"
 version = "2.2.0"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#a1079eb880a5168555f169be69cb6ba4d114291b"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#052445b9ea4fdd4977577427038469e1536519fe"
 dependencies = [
  "alloy-primitives",
  "serde",
@@ -389,7 +389,7 @@ dependencies = [
 [[package]]
 name = "alloy-signer"
 version = "2.2.0"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#a1079eb880a5168555f169be69cb6ba4d114291b"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#052445b9ea4fdd4977577427038469e1536519fe"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -403,7 +403,7 @@ dependencies = [
 [[package]]
 name = "alloy-signer-local"
 version = "2.2.0"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#a1079eb880a5168555f169be69cb6ba4d114291b"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#052445b9ea4fdd4977577427038469e1536519fe"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
@@ -488,7 +488,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport"
 version = "2.2.0"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#a1079eb880a5168555f169be69cb6ba4d114291b"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#052445b9ea4fdd4977577427038469e1536519fe"
 dependencies = [
  "alloy-json-rpc",
  "auto_impl",
@@ -510,7 +510,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-http"
 version = "2.2.0"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#a1079eb880a5168555f169be69cb6ba4d114291b"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#052445b9ea4fdd4977577427038469e1536519fe"
 dependencies = [
  "alloy-json-rpc",
  "alloy-transport",
@@ -541,7 +541,7 @@ dependencies = [
 [[package]]
 name = "alloy-tx-macros"
 version = "2.2.0"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#a1079eb880a5168555f169be69cb6ba4d114291b"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip8141-transaction#052445b9ea4fdd4977577427038469e1536519fe"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
