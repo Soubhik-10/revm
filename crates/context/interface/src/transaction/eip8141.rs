@@ -104,15 +104,13 @@ impl FrameTransaction {
     }
 
     /// Calculates the maximum fee exposure checked when a payer approves payment.
-    pub fn max_cost(
-        &self,
-        max_fee_per_gas: u128,
-        blob_gas: u64,
-        max_fee_per_blob_gas: u128,
-    ) -> U256 {
+    ///
+    /// `blob_base_fee` is used for blob costs because `max_fee_per_blob_gas` is only
+    /// an inclusion bound for EIP-8141 transactions.
+    pub fn max_cost(&self, max_fee_per_gas: u128, blob_gas: u64, blob_base_fee: u128) -> U256 {
         U256::from(self.gas_limit().unwrap_or(u64::MAX))
             .saturating_mul(U256::from(max_fee_per_gas))
-            .saturating_add(U256::from(blob_gas).saturating_mul(U256::from(max_fee_per_blob_gas)))
+            .saturating_add(U256::from(blob_gas).saturating_mul(U256::from(blob_base_fee)))
     }
 }
 

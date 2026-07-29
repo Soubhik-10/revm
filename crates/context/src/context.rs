@@ -537,7 +537,7 @@ impl<
             p if p == U256::from(6) => frame_tx.max_cost(
                 tx.max_fee_per_gas(),
                 tx.total_blob_gas(),
-                tx.max_fee_per_blob_gas(),
+                self.block().blob_gasprice().unwrap_or_default(),
             ),
             p if p == U256::from(7) => U256::from(tx.blob_versioned_hashes().len()),
             p if p == U256::from(8) => U256::from_be_bytes(frame_tx.signature_hash.0),
@@ -658,7 +658,7 @@ impl<
                 frame_tx.max_cost(
                     tx.max_fee_per_gas(),
                     tx.total_blob_gas(),
-                    tx.max_fee_per_blob_gas(),
+                    self.block().blob_gasprice().unwrap_or_default(),
                 ),
             )
         };

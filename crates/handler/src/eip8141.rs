@@ -395,12 +395,21 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
                 "EIP-8141 execution approval target must be the sender",
             ));
         }
-        if frame.is_atomic_batch() && index + 1 == frame_tx.frames.len() {
+        if frame.is_atomic_batch() && frame.mode == FrameMode::Verify {
+            return Err(invalid("EIP-8141 atomic flag is invalid on VERIFY frames"));
+        }
+        if frame.is_atomic_batch()
+            && (index + 1 == frame_tx.frames.len()
+                || frame_tx.frames[index + 1].mode == FrameMode::Verify)
+        {
             return Err(invalid(
-                "EIP-8141 atomic flag cannot be set on the last frame",
+                "EIP-8141 atomic batch must be followed by a non-VERIFY frame",
             ));
         }
         if frame.is_expiry_verifier() {
+            if index != 0 {
+                return Err(invalid("EIP-8141 expiry verifier must be the first frame"));
+            }
             expiry_frames += 1;
             if !frame.has_valid_expiry_verifier_fields() {
                 return Err(invalid("malformed EIP-8141 expiry verifier frame"));
@@ -527,12 +536,21 @@ fn validate_sender_and_signatures<H: Handler + ?Sized>(evm: &mut H::Evm) -> Resu
                     let mut public_key = [0u8; 64];
                     sig.copy_from_slice(&signature.signature[..64]);
                     public_key.copy_from_slice(&signature.signature[64..]);
-                    Address::from_slice(&keccak256(public_key)[12..]) == expected
-                        && precompile::crypto().secp256r1_verify_signature(
-                            &message,
-                            &sig,
-                            &public_key,
-                        )
+                    let s = U256::from_be_slice(&signature.signature[32..64]);
+                    let p256_order = U256::from_be_bytes(hex!(
+                        "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551"
+                    ));
+                    let p256_half_order = p256_order >> 1;
+                    if s.is_zero() || s > p256_half_order {
+                        false
+                    } else {
+                        Address::from_slice(&keccak256(public_key)[12..]) == expected
+                            && precompile::crypto().secp256r1_verify_signature(
+                                &message,
+                                &sig,
+                                &public_key,
+                            )
+                    }
                 }
             }
         };
@@ -636,7 +654,11 @@ fn settle_fees<H: Handler + ?Sized>(
         let tx = ctx.tx();
         let frame_tx = tx.frame_transaction().unwrap();
         let blob_gas = tx.total_blob_gas();
-        let max_cost = frame_tx.max_cost(tx.max_fee_per_gas(), blob_gas, tx.max_fee_per_blob_gas());
+        let max_cost = frame_tx.max_cost(
+            tx.max_fee_per_gas(),
+            blob_gas,
+            ctx.block().blob_gasprice().unwrap_or_default(),
+        );
         let effective_gas_price = tx.effective_gas_price(ctx.block().basefee() as u128);
         let actual_cost = U256::from(gas_used)
             .saturating_mul(U256::from(effective_gas_price))
