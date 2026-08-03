@@ -87,8 +87,8 @@ impl FrameTransaction {
 
     /// Calculates the derived transaction gas limit.
     pub fn gas_limit(&self) -> Option<u64> {
-        self.intrinsic_gas()?
-            .checked_add(self.total_frame_gas_limit()?)
+        let standard = self.intrinsic_gas()?.checked_add(self.total_frame_gas_limit()?)?;
+        Some(standard.max(self.calldata_floor_gas()?))
     }
 
     /// Calculates the EIP-7623 total-cost floor for the charged frame transaction data.
@@ -138,11 +138,11 @@ mod tests {
         };
 
         // Two zero bytes and two non-zero bytes are ten calldata tokens. Arbitrary
-        // signatures have no protocol-verification charge in execution-specs PR 3114.
+        // signatures carry the fixed protocol-verification charge from EIP-8141.
         assert_eq!(transaction.calldata_tokens(), 10);
-        assert_eq!(transaction.signature_verification_gas(), Some(0));
-        assert_eq!(transaction.intrinsic_gas(), Some(15_515));
-        assert_eq!(transaction.gas_limit(), Some(15_615));
-        assert_eq!(transaction.calldata_floor_gas(), Some(15_575));
+        assert_eq!(transaction.signature_verification_gas(), Some(100));
+        assert_eq!(transaction.intrinsic_gas(), Some(15_615));
+        assert_eq!(transaction.gas_limit(), Some(15_715));
+        assert_eq!(transaction.calldata_floor_gas(), Some(15_675));
     }
 }
