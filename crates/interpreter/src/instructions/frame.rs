@@ -122,7 +122,7 @@ pub fn frameparam<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result
 pub fn sigparam<IT: ITy, H: Host + ?Sized>(mut context: Ictx<'_, H, IT>) -> Result {
     popn!([signature_index, param], context.interpreter);
     if param == U256::from(4) {
-        popn!([len, data_offset, memory_offset], context.interpreter);
+        popn!([memory_offset, data_offset, len], context.interpreter);
         let data = context
             .host
             .frame_signature_bytes(signature_index)
