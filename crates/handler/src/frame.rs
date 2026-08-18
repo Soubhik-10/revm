@@ -151,7 +151,7 @@ impl EthFrame<EthInterpreter> {
         precompiles: &mut PRECOMPILES,
         depth: usize,
         memory: SharedMemory,
-        inputs: Box<CallInputs>,
+        mut inputs: Box<CallInputs>,
     ) -> Result<ItemOrResult<FrameToken, FrameResult>, ERROR> {
         let reservoir_remaining_gas = inputs.reservoir;
         let entry_gas = inputs.entry_gas;
@@ -190,6 +190,12 @@ impl EthFrame<EthInterpreter> {
             return return_result(InstructionResult::OutOfGas);
         }
 
+        // Precompiles receive the remaining frame gas as well. Otherwise their
+        // result would be initialized from the pre-charge limit and lose the
+        // same entry charge on the precompile path.
+        inputs.gas_limit = gas.remaining();
+        inputs.reservoir = gas.reservoir();
+
         // Create subroutine checkpoint
         let checkpoint = ctx.journal_mut().checkpoint();
 
@@ -215,7 +221,11 @@ impl EthFrame<EthInterpreter> {
             depth,
         };
         let is_static = inputs.is_static;
-        let gas_limit = inputs.gas_limit;
+        // Forward the gas after the frame-entry charge. Reusing the original
+        // limit here would discard `entry_gas` when the interpreter is built,
+        // even though it was already deducted from `gas` above.
+        let gas_limit = gas.remaining();
+        let reservoir_remaining_gas = gas.reservoir();
 
         if let Some(result) = precompiles.run(ctx, &inputs).map_err(ERROR::from_string)? {
             let mut logs = Vec::new();

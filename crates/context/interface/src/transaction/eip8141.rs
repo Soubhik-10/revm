@@ -1,10 +1,8 @@
 //! EIP-8141 frame transaction execution payload.
 
-use alloy_eip8141::{
-    Frame, FrameSignature, FRAME_TX_DATA_TOKEN_STANDARD_COST, FRAME_TX_INTRINSIC_COST,
-    FRAME_TX_PER_FRAME_COST, FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN,
-};
-use primitives::{B256, U256};
+use crate::cfg::GasParams;
+use alloy_eip8141::{Frame, FrameSignature, FRAME_TX_INTRINSIC_COST, FRAME_TX_PER_FRAME_COST};
+use primitives::{hardfork::SpecId, B256, U256};
 use std::vec::Vec;
 
 /// The consensus-decoded data REVM needs to execute an EIP-8141 frame transaction.
@@ -41,12 +39,24 @@ impl FrameTransaction {
 
     /// Counts EIP-8141 charged calldata tokens (zero byte = 1, non-zero byte = 4).
     pub fn calldata_tokens(&self) -> u64 {
-        fn tokens(bytes: &[u8]) -> u64 {
-            bytes.iter().fold(0u64, |total, byte| {
-                total.saturating_add(if *byte == 0 { 1 } else { 4 })
-            })
-        }
+        self.calldata_tokens_with_multipliers(1, 4)
+    }
 
+    /// Counts charged calldata tokens with fork-specific zero/non-zero byte multipliers.
+    pub fn calldata_tokens_with_multipliers(
+        &self,
+        zero_byte_multiplier: u64,
+        non_zero_byte_multiplier: u64,
+    ) -> u64 {
+        let tokens = |bytes: &[u8]| {
+            bytes.iter().fold(0u64, |total, byte| {
+                total.saturating_add(if *byte == 0 {
+                    zero_byte_multiplier
+                } else {
+                    non_zero_byte_multiplier
+                })
+            })
+        };
         let frame_tokens = self.frames.iter().fold(0u64, |total, frame| {
             total.saturating_add(tokens(&frame.data))
         });
@@ -75,10 +85,15 @@ impl FrameTransaction {
 
     /// Calculates the transaction intrinsic gas, excluding top-level frame allocations.
     pub fn intrinsic_gas(&self) -> Option<u64> {
+        self.intrinsic_gas_with_params(&GasParams::new_spec(SpecId::AMSTERDAM))
+    }
+
+    /// Calculates intrinsic gas using the active fork's gas parameters.
+    pub fn intrinsic_gas_with_params(&self, gas_params: &GasParams) -> Option<u64> {
         let frame_cost = (self.frames.len() as u64).checked_mul(FRAME_TX_PER_FRAME_COST)?;
         let calldata_cost = self
-            .calldata_tokens()
-            .checked_mul(FRAME_TX_DATA_TOKEN_STANDARD_COST)?;
+            .calldata_tokens_with_multipliers(1, gas_params.tx_token_non_zero_byte_multiplier())
+            .checked_mul(gas_params.tx_token_cost())?;
         FRAME_TX_INTRINSIC_COST
             .checked_add(frame_cost)?
             .checked_add(calldata_cost)?
@@ -87,16 +102,31 @@ impl FrameTransaction {
 
     /// Calculates the derived transaction gas limit.
     pub fn gas_limit(&self) -> Option<u64> {
-        let standard = self.intrinsic_gas()?.checked_add(self.total_frame_gas_limit()?)?;
-        Some(standard.max(self.calldata_floor_gas()?))
+        self.gas_limit_with_params(&GasParams::new_spec(SpecId::AMSTERDAM))
     }
 
-    /// Calculates the EIP-7623 total-cost floor for the charged frame transaction data.
+    /// Calculates the derived transaction gas limit using the active fork's gas parameters.
+    pub fn gas_limit_with_params(&self, gas_params: &GasParams) -> Option<u64> {
+        let standard = self
+            .intrinsic_gas_with_params(gas_params)?
+            .checked_add(self.total_frame_gas_limit()?)?;
+        Some(standard.max(self.calldata_floor_gas_with_params(gas_params)?))
+    }
+
+    /// Calculates the calldata floor using the default Amsterdam gas parameters.
     pub fn calldata_floor_gas(&self) -> Option<u64> {
+        self.calldata_floor_gas_with_params(&GasParams::new_spec(SpecId::AMSTERDAM))
+    }
+
+    /// Calculates the calldata floor using the active fork's gas parameters.
+    pub fn calldata_floor_gas_with_params(&self, gas_params: &GasParams) -> Option<u64> {
         let frame_cost = (self.frames.len() as u64).checked_mul(FRAME_TX_PER_FRAME_COST)?;
         let calldata_floor = self
-            .calldata_tokens()
-            .checked_mul(FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN)?;
+            .calldata_tokens_with_multipliers(
+                gas_params.tx_floor_token_zero_byte_multiplier(),
+                gas_params.tx_token_non_zero_byte_multiplier(),
+            )
+            .checked_mul(gas_params.tx_floor_cost_per_token())?;
         FRAME_TX_INTRINSIC_COST
             .checked_add(frame_cost)?
             .checked_add(self.signature_verification_gas()?)?
@@ -137,12 +167,12 @@ mod tests {
             ..Default::default()
         };
 
-        // Two zero bytes and two non-zero bytes are ten calldata tokens. Arbitrary
-        // signatures carry the fixed protocol-verification charge from EIP-8141.
+        // Two zero bytes and two non-zero bytes are ten standard calldata tokens.
+        // Arbitrary signatures carry the fixed protocol-verification charge from EIP-8141.
         assert_eq!(transaction.calldata_tokens(), 10);
         assert_eq!(transaction.signature_verification_gas(), Some(100));
         assert_eq!(transaction.intrinsic_gas(), Some(15_615));
-        assert_eq!(transaction.gas_limit(), Some(15_715));
-        assert_eq!(transaction.calldata_floor_gas(), Some(15_675));
+        assert_eq!(transaction.gas_limit(), Some(15_831));
+        assert_eq!(transaction.calldata_floor_gas(), Some(15_831));
     }
 }

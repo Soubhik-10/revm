@@ -70,9 +70,12 @@ pub fn run<H: Handler + ?Sized>(
             .tx()
             .frame_transaction()
             .expect("validated frame tx");
+        let gas_params = evm.ctx_ref().cfg().gas_params();
         (
-            frame_tx.intrinsic_gas().expect("validated gas"),
-            frame_tx.calldata_floor_gas().expect("validated gas"),
+            frame_tx.intrinsic_gas_with_params(gas_params).expect("validated gas"),
+            frame_tx
+                .calldata_floor_gas_with_params(gas_params)
+                .expect("validated gas"),
             frame_tx.frames.len(),
         )
     };
@@ -409,14 +412,15 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
     if frame_tx.frames.is_empty() || frame_tx.frames.len() > MAX_FRAMES {
         return Err(invalid("EIP-8141 frame count must be in 1..=64"));
     }
+    let gas_params = ctx.cfg().gas_params();
     let gas_limit = frame_tx
-        .gas_limit()
+        .gas_limit_with_params(gas_params)
         .ok_or_else(|| invalid::<H::Error>("EIP-8141 derived gas limit overflow"))?;
     if tx.gas_limit() != gas_limit {
         return Err(invalid("EIP-8141 transaction gas limit is not canonical"));
     }
     let floor = frame_tx
-        .calldata_floor_gas()
+        .calldata_floor_gas_with_params(gas_params)
         .ok_or_else(|| invalid::<H::Error>("EIP-8141 calldata floor overflow"))?;
     if floor > gas_limit {
         return Err(InvalidTransaction::GasFloorMoreThanGasLimit {
