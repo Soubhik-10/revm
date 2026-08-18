@@ -154,9 +154,18 @@ impl EthFrame<EthInterpreter> {
         inputs: Box<CallInputs>,
     ) -> Result<ItemOrResult<FrameToken, FrameResult>, ERROR> {
         let reservoir_remaining_gas = inputs.reservoir;
+        let entry_gas = inputs.entry_gas;
         let charged_new_account_state_gas = inputs.charged_new_account_state_gas;
-        let gas =
+        let mut gas =
             Gas::new_with_regular_gas_and_reservoir(inputs.gas_limit, reservoir_remaining_gas);
+
+        // EIP-8141 frame targets are entered as top-level calls, so their
+        // warm/cold account access is charged against the frame's own gas
+        // allocation before dispatching its code.
+        let entry_gas_sufficient = gas.record_regular_cost(entry_gas);
+        if !entry_gas_sufficient {
+            gas.spend_all();
+        }
 
         let return_result = |instruction_result: InstructionResult| {
             Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
@@ -175,6 +184,10 @@ impl EthFrame<EthInterpreter> {
         // Check depth
         if depth > CALL_STACK_LIMIT as usize {
             return return_result(InstructionResult::CallTooDeep);
+        }
+
+        if !entry_gas_sufficient {
+            return return_result(InstructionResult::OutOfGas);
         }
 
         // Create subroutine checkpoint

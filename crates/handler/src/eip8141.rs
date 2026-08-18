@@ -648,11 +648,19 @@ fn frame_input<H: Handler + ?Sized>(
     frame: &alloy_eip8141::Frame,
     target: Address,
 ) -> Result<(primitives::B256, FrameInput), H::Error> {
+    let gas_params = evm.ctx_ref().cfg().gas_params();
+    let warm_access_cost = gas_params.warm_storage_read_cost();
+    let cold_account_additional_cost = gas_params.cold_account_additional_cost();
     let account = evm
         .ctx()
         .journal_mut()
         .load_account_with_code(target)
         .map_err(H::Error::from)?;
+    let mut entry_gas = account_access_gas(
+        account.is_cold,
+        warm_access_cost,
+        cold_account_additional_cost,
+    );
     let target_code_hash = account.info.code_hash();
     let mut bytecode_address = target;
     let mut bytecode = account.info.code.clone().unwrap_or_default();
@@ -663,6 +671,11 @@ fn frame_input<H: Handler + ?Sized>(
             .journal_mut()
             .load_account_with_code(delegated)
             .map_err(H::Error::from)?;
+        entry_gas = entry_gas.saturating_add(account_access_gas(
+            delegated_account.is_cold,
+            warm_access_cost,
+            cold_account_additional_cost,
+        ));
         bytecode_address = delegated;
         bytecode_hash = delegated_account.info.code_hash();
         bytecode = delegated_account.info.code.clone().unwrap_or_default();
@@ -700,9 +713,23 @@ fn frame_input<H: Handler + ?Sized>(
             is_static: frame.mode == FrameMode::Verify,
             return_memory_offset: 0..0,
             reservoir: 0,
+            entry_gas,
             charged_new_account_state_gas: false,
         })),
     ))
+}
+
+#[inline]
+fn account_access_gas(
+    is_cold: bool,
+    warm_access_cost: u64,
+    cold_account_additional_cost: u64,
+) -> u64 {
+    if is_cold {
+        warm_access_cost.saturating_add(cold_account_additional_cost)
+    } else {
+        warm_access_cost
+    }
 }
 
 fn default_verification_is_valid<H: Handler + ?Sized>(
