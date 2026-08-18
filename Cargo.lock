@@ -3897,6 +3897,7 @@ dependencies = [
  "revm-primitives",
  "revm-state",
  "serde",
+ "tracing",
 ]
 
 [[package]]
@@ -3973,6 +3974,7 @@ dependencies = [
  "revm-primitives",
  "revm-state",
  "serde",
+ "tracing",
 ]
 
 [[package]]
@@ -4002,6 +4004,7 @@ dependencies = [
  "revm-state",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]

@@ -76,6 +76,15 @@ pub fn run<H: Handler + ?Sized>(
             frame_tx.frames.len(),
         )
     };
+    tracing::info!(
+        target: "revm::eip8141",
+        sender = ?sender,
+        nonce = evm.ctx_ref().tx().nonce(),
+        frame_count,
+        intrinsic,
+        floor_gas,
+        "Starting EIP-8141 frame transaction"
+    );
     let mut receipts = Vec::with_capacity(frame_count);
     let mut frame_state_gas = Vec::with_capacity(frame_count);
     let mut frame_refunds = Vec::with_capacity(frame_count);
@@ -105,6 +114,18 @@ pub fn run<H: Handler + ?Sized>(
             ));
         }
 
+        tracing::info!(
+            target: "revm::eip8141",
+            frame_index,
+            mode = ?frame.mode,
+            target = ?target,
+            gas_limit = frame.gas_limit,
+            flags = frame.flags,
+            atomic = frame.is_atomic_batch(),
+            sender_approved,
+            "Starting EIP-8141 frame"
+        );
+
         if batch.is_none() && frame.is_atomic_batch() {
             let checkpoint = evm.ctx().journal_mut().checkpoint();
             let runtime = evm.ctx_ref().local().frame_transaction().unwrap();
@@ -114,6 +135,11 @@ pub fn run<H: Handler + ?Sized>(
                 warm_accesses: evm.ctx_ref().journal().warm_access_snapshot(),
                 receipt_start: receipts.len(),
             });
+            tracing::info!(
+                target: "revm::eip8141",
+                frame_index,
+                "Opened atomic frame batch checkpoint"
+            );
         }
         {
             let runtime = evm.ctx().local_mut().frame_transaction_mut().unwrap();
@@ -195,6 +221,17 @@ pub fn run<H: Handler + ?Sized>(
 
         take_error::<H::Error, _>(evm.ctx().error())?;
         let success = result.is_ok();
+        tracing::info!(
+            target: "revm::eip8141",
+            frame_index,
+            mode = ?frame.mode,
+            result = ?result,
+            success,
+            gas_used = spent,
+            state_gas,
+            refund,
+            "Finished EIP-8141 frame"
+        );
         if success {
             evm.ctx().journal_mut().checkpoint_commit();
             evm.ctx()
@@ -240,6 +277,11 @@ pub fn run<H: Handler + ?Sized>(
 
         if !success {
             if let Some(atomic) = batch.take() {
+                tracing::info!(
+                    target: "revm::eip8141",
+                    frame_index,
+                    "Reverting failed atomic frame batch"
+                );
                 evm.ctx().journal_mut().checkpoint_revert(atomic.checkpoint);
                 evm.ctx()
                     .journal_mut()
@@ -282,6 +324,12 @@ pub fn run<H: Handler + ?Sized>(
                         .statuses
                         .push(FrameStatus::SkippedAtomicBatch);
                 }
+                tracing::info!(
+                    target: "revm::eip8141",
+                    failed_frame = frame_index,
+                    skipped_through = end,
+                    "Marked remaining atomic frames as skipped"
+                );
                 frame_index = end + 1;
                 continue;
             }
@@ -311,6 +359,18 @@ pub fn run<H: Handler + ?Sized>(
         .with_refunded(refund)
         .with_floor_gas(floor_gas)
         .with_state_gas_spent(frame_state_gas.into_iter().fold(0u64, u64::saturating_add));
+    tracing::info!(
+        target: "revm::eip8141",
+        payer = ?payer,
+        frame_count,
+        intrinsic,
+        floor_gas,
+        total_frame_spent,
+        total_spent,
+        refund,
+        tx_gas_used = result_gas.tx_gas_used(),
+        "Settling EIP-8141 frame transaction"
+    );
     settle_fees::<H>(evm, payer, result_gas.tx_gas_used())?;
     take_error::<H::Error, _>(evm.ctx().error())?;
 
@@ -444,6 +504,15 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
             ));
         }
     }
+    tracing::info!(
+        target: "revm::eip8141",
+        sender = ?tx.caller(),
+        frame_count = frame_tx.frames.len(),
+        signature_count = frame_tx.signatures.len(),
+        gas_limit,
+        calldata_floor_gas = floor,
+        "Validated EIP-8141 transaction structure"
+    );
     Ok(())
 }
 
@@ -557,7 +626,20 @@ fn validate_sender_and_signatures<H: Handler + ?Sized>(evm: &mut H::Evm) -> Resu
         if !valid {
             return Err(invalid("EIP-8141 signature validation failed"));
         }
+        tracing::info!(
+            target: "revm::eip8141",
+            scheme = ?signature.scheme,
+            signer = ?expected,
+            "Validated EIP-8141 signature"
+        );
     }
+    tracing::info!(
+        target: "revm::eip8141",
+        sender = ?sender,
+        nonce,
+        signature_count = signatures.len(),
+        "Validated EIP-8141 sender and signatures"
+    );
     Ok(())
 }
 

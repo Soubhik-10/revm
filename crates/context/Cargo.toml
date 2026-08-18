@@ -30,6 +30,7 @@ alloy-eip8141.workspace = true
 derive-where.workspace = true
 cfg-if.workspace = true
 bitvec.workspace = true
+tracing.workspace = true
 
 # Optional
 serde = { workspace = true, features = ["derive", "rc"], optional = true }

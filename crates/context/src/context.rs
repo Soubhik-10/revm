@@ -738,6 +738,16 @@ impl<
             .approval_stack
             .last_mut()
             .ok_or(FrameHostError::Invalid)?;
+        tracing::info!(
+            target: "revm::eip8141",
+            frame_index = current_frame_index,
+            target = ?resolved_target,
+            scope,
+            approves_payment,
+            approves_execution,
+            max_cost = ?max_cost,
+            "Applying EIP-8141 frame approval"
+        );
         *approval = context_interface::local::FrameApprovalState {
             payer: if approves_payment {
                 Some(resolved_target)
