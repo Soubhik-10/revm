@@ -48,14 +48,11 @@ pub fn run<H: Handler + ?Sized>(
     handler.load_accounts(evm)?;
 
     let sender = evm.ctx_ref().tx().caller();
-    // EIP-8141 starts with the sender and protocol entry point warm.
+    // EIP-8141 starts with the sender warm. The protocol entry point is not
+    // pre-warmed and must only be recorded if execution actually accesses it.
     evm.ctx()
         .journal_mut()
         .load_account(sender)
-        .map_err(H::Error::from)?;
-    evm.ctx()
-        .journal_mut()
-        .load_account(ENTRY_POINT)
         .map_err(H::Error::from)?;
     evm.ctx()
         .local_mut()
