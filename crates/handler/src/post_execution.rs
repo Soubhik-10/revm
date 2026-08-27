@@ -99,12 +99,17 @@ pub fn reward_beneficiary<CTX: ContextTr>(
     context: &mut CTX,
     gas: &Gas,
 ) -> Result<(), <CTX::Db as Database>::Error> {
-    // If fee charge was disabled (e.g. eth_call simulations), the caller was
-    // never charged for gas so there are no fees to transfer to the beneficiary.
-    if context.cfg().is_fee_charge_disabled() {
+    let (block, tx, cfg, journal, _, _) = context.all_mut();
+    // A validation-off RPC simulation with zero fee caps mirrors geth's
+    // `NoBaseFee` path: it does not touch the beneficiary at all. In
+    // particular, avoid creating an empty account access for a zero coinbase.
+    if cfg.is_fee_charge_disabled()
+        || (cfg.is_base_fee_check_disabled()
+            && tx.max_fee_per_gas() == 0
+            && tx.max_priority_fee_per_gas().unwrap_or_default() == 0)
+    {
         return Ok(());
     }
-    let (block, tx, cfg, journal, _, _) = context.all_mut();
     let basefee = block.basefee() as u128;
     let effective_gas_price = tx.effective_gas_price(basefee);
 
