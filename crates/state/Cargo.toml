@@ -1,7 +1,7 @@
 [package]
 name = "revm-state"
 description = "Revm state types"
-version = "42.0.0"
+version = "43.0.0"
 authors.workspace = true
 edition.workspace = true
 keywords.workspace = true
@@ -33,6 +33,7 @@ nonmax = { version = "0.5.5", default-features = false }
 serde = { workspace = true, features = ["derive", "rc"], optional = true }
 
 [dev-dependencies]
+postcard = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 
 [features]
