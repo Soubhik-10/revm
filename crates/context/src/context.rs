@@ -568,7 +568,7 @@ impl<
             .or_else(|| frame.target.is_empty().then_some(tx.caller()))?;
         Some(match param {
             p if p == U256::from(0) => U256::from_be_slice(target.as_slice()),
-            p if p == U256::from(1) => U256::from(frame.limits.execution),
+            p if p == U256::from(1) => U256::from(frame.gas_limit),
             p if p == U256::from(2) => U256::from(u8::from(frame.mode)),
             p if p == U256::from(3) => U256::from(frame.flags),
             p if p == U256::from(4) => U256::from(frame.data.len()),

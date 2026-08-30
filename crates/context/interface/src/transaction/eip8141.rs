@@ -25,25 +25,9 @@ pub struct FrameTransaction {
 impl FrameTransaction {
     /// Returns the sum of all top-level frame gas allocations.
     pub fn total_frame_gas_limit(&self) -> Option<u64> {
-        self.frames.iter().try_fold(0u64, |total, frame| {
-            total
-                .checked_add(frame.limits.execution)?
-                .checked_add(frame.limits.state)
-        })
-    }
-
-    /// Returns the sum of all top-level frame execution-gas allocations.
-    pub fn total_frame_execution_gas_limit(&self) -> Option<u64> {
-        self.frames.iter().try_fold(0u64, |total, frame| {
-            total.checked_add(frame.limits.execution)
-        })
-    }
-
-    /// Returns the sum of all top-level frame state-gas allocations.
-    pub fn total_frame_state_gas_limit(&self) -> Option<u64> {
         self.frames
             .iter()
-            .try_fold(0u64, |total, frame| total.checked_add(frame.limits.state))
+            .try_fold(0u64, |total, frame| total.checked_add(frame.gas_limit))
     }
 
     /// Returns gas charged for protocol validation of all signatures.
@@ -126,10 +110,7 @@ impl FrameTransaction {
         let standard = self
             .intrinsic_gas_with_params(gas_params)?
             .checked_add(self.total_frame_gas_limit()?)?;
-        let floor = self
-            .calldata_floor_gas_with_params(gas_params)?
-            .checked_add(self.total_frame_state_gas_limit()?)?;
-        Some(standard.max(floor))
+        Some(standard.max(self.calldata_floor_gas_with_params(gas_params)?))
     }
 
     /// Calculates the calldata floor using the default Amsterdam gas parameters.
@@ -174,10 +155,7 @@ mod tests {
         let transaction = FrameTransaction {
             frames: vec![Frame {
                 mode: FrameMode::Default,
-                limits: alloy_eip8141::FrameLimits {
-                    execution: 100,
-                    state: 0,
-                },
+                gas_limit: 100,
                 data: Bytes::from_static(&[0, 1]),
                 ..Default::default()
             }],

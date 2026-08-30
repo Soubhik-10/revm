@@ -33,12 +33,6 @@ pub struct GasTracker {
     state_gas_spilled: u64,
     /// Refunded gas. Used to refund the gas to the caller at the end of execution.
     refunded: i64,
-    /// Whether state gas is an explicit frame-local budget.
-    ///
-    /// EIP-8141 frames do not use the legacy EIP-8037 spill behavior: a state
-    /// gas charge that exceeds this budget must halt the frame instead of
-    /// consuming execution gas.
-    state_gas_isolated: bool,
 }
 
 impl GasTracker {
@@ -52,21 +46,6 @@ impl GasTracker {
             state_gas_spent: 0,
             state_gas_spilled: 0,
             refunded: 0,
-            state_gas_isolated: false,
-        }
-    }
-
-    /// Creates a tracker with an explicit, non-spilling state gas budget.
-    #[inline]
-    pub const fn new_isolated_state_gas(gas_limit: u64, remaining: u64, state_gas: u64) -> Self {
-        Self {
-            gas_limit,
-            remaining,
-            reservoir: state_gas,
-            state_gas_spent: 0,
-            state_gas_spilled: 0,
-            refunded: 0,
-            state_gas_isolated: true,
         }
     }
 
@@ -105,12 +84,6 @@ impl GasTracker {
     #[inline]
     pub const fn reservoir(&self) -> u64 {
         self.reservoir
-    }
-
-    /// Returns whether state gas is an explicit non-spilling budget.
-    #[inline]
-    pub const fn state_gas_isolated(&self) -> bool {
-        self.state_gas_isolated
     }
 
     /// Sets the reservoir gas.
@@ -188,15 +161,6 @@ impl GasTracker {
     #[inline]
     #[must_use = "In case of not enough gas, the interpreter should halt with an out-of-gas error"]
     pub const fn record_state_cost(&mut self, cost: u64) -> bool {
-        if self.state_gas_isolated {
-            if self.reservoir < cost {
-                return false;
-            }
-            self.state_gas_spent = self.state_gas_spent.saturating_add(cost as i64);
-            self.reservoir -= cost;
-            return true;
-        }
-
         if self.reservoir >= cost {
             self.state_gas_spent = self.state_gas_spent.saturating_add(cost as i64);
             self.reservoir -= cost;

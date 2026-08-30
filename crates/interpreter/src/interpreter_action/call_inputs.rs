@@ -141,8 +141,6 @@ pub struct CallInputs {
     pub gas_limit: u64,
     /// State gas reservoir (EIP-8037). Passed from parent frame to child frame.
     pub reservoir: u64,
-    /// Whether `reservoir` is an explicit frame-local state gas budget.
-    pub state_gas_isolated: bool,
     /// Gas charged when entering an EIP-8141 frame target.
     pub entry_gas: u64,
     /// The account address of bytecode that is going to be executed.

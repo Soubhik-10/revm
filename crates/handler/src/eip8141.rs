@@ -69,9 +69,7 @@ pub fn run<H: Handler + ?Sized>(
             .expect("validated frame tx");
         let gas_params = evm.ctx_ref().cfg().gas_params();
         (
-            frame_tx
-                .intrinsic_gas_with_params(gas_params)
-                .expect("validated gas"),
+            frame_tx.intrinsic_gas_with_params(gas_params).expect("validated gas"),
             frame_tx
                 .calldata_floor_gas_with_params(gas_params)
                 .expect("validated gas"),
@@ -121,8 +119,7 @@ pub fn run<H: Handler + ?Sized>(
             frame_index,
             mode = ?frame.mode,
             target = ?target,
-            execution_gas_limit = frame.limits.execution,
-            state_gas_limit = frame.limits.state,
+            gas_limit = frame.gas_limit,
             flags = frame.flags,
             atomic = frame.is_atomic_batch(),
             sender_approved,
@@ -209,9 +206,10 @@ pub fn run<H: Handler + ?Sized>(
             if !result.is_ok_or_revert() {
                 gas.spend_all();
             }
-            // Frame execution and state gas are independent budgets. The
-            // state budget must not be subtracted from execution gas used.
-            let spent = frame.limits.execution.saturating_sub(gas.remaining());
+            let spent = frame
+                .gas_limit
+                .saturating_sub(gas.remaining())
+                .saturating_sub(gas.reservoir());
             let state_gas = gas.state_gas_spent().max(0) as u64;
             let refund = if result.is_ok() {
                 gas.refunded().max(0) as u64
@@ -352,16 +350,7 @@ pub fn run<H: Handler + ?Sized>(
     let total_frame_spent = receipts.iter().fold(0u64, |total, receipt| {
         total.saturating_add(receipt.gas_used)
     });
-    let total_state_gas = frame_state_gas
-        .iter()
-        .copied()
-        .fold(0u64, u64::saturating_add);
-    // Receipts and fee settlement use the combined execution + state gas. The
-    // block adapter derives the regular/state dimensions separately from this
-    // value and uses their bottleneck for the block header gas_used.
-    let total_spent = intrinsic
-        .saturating_add(total_frame_spent)
-        .saturating_add(total_state_gas);
+    let total_spent = intrinsic.saturating_add(total_frame_spent);
     let refund_counter = frame_refunds.into_iter().fold(0u64, u64::saturating_add);
     let refund =
         refund_counter.min(total_spent / evm.ctx_ref().cfg().gas_params().max_refund_quotient());
@@ -369,7 +358,7 @@ pub fn run<H: Handler + ?Sized>(
         .with_total_gas_spent(total_spent)
         .with_refunded(refund)
         .with_floor_gas(floor_gas)
-        .with_state_gas_spent(total_state_gas);
+        .with_state_gas_spent(frame_state_gas.into_iter().fold(0u64, u64::saturating_add));
     tracing::info!(
         target: "revm::eip8141",
         payer = ?payer,
@@ -437,14 +426,9 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
         }
         .into());
     }
-    let execution_reservation = frame_tx
-        .intrinsic_gas_with_params(gas_params)
-        .and_then(|intrinsic| intrinsic.checked_add(frame_tx.total_frame_execution_gas_limit()?))
-        .ok_or_else(|| invalid::<H::Error>("EIP-8141 execution gas reservation overflow"))?
-        .max(floor);
-    if execution_reservation > ctx.cfg().tx_gas_limit_cap() {
+    if gas_limit > ctx.cfg().tx_gas_limit_cap() {
         return Err(InvalidTransaction::TxGasLimitGreaterThanCap {
-            gas_limit: execution_reservation,
+            gas_limit,
             cap: ctx.cfg().tx_gas_limit_cap(),
         }
         .into());
@@ -679,7 +663,6 @@ fn frame_input<H: Handler + ?Sized>(
         cold_account_additional_cost,
     );
     let target_code_hash = account.info.code_hash();
-    let target_is_empty = account.info.is_empty();
     let mut bytecode_address = target;
     let mut bytecode = account.info.code.clone().unwrap_or_default();
     let mut bytecode_hash = target_code_hash;
@@ -713,7 +696,7 @@ fn frame_input<H: Handler + ?Sized>(
         target_code_hash,
         FrameInput::Call(Box::new(CallInputs {
             input: CallInput::Bytes(frame.data.clone()),
-            gas_limit: frame.limits.execution,
+            gas_limit: frame.gas_limit,
             target_address: target,
             bytecode_address,
             known_bytecode: (bytecode_hash, bytecode),
@@ -730,12 +713,9 @@ fn frame_input<H: Handler + ?Sized>(
             },
             is_static: frame.mode == FrameMode::Verify,
             return_memory_offset: 0..0,
-            reservoir: frame.limits.state,
-            state_gas_isolated: true,
+            reservoir: 0,
             entry_gas,
-            charged_new_account_state_gas: frame.mode != FrameMode::Verify
-                && !frame.value.is_zero()
-                && target_is_empty,
+            charged_new_account_state_gas: false,
         })),
     ))
 }
@@ -821,7 +801,7 @@ fn settle_fees<H: Handler + ?Sized>(
 mod tests {
     use super::*;
     use crate::{ExecuteEvm, MainBuilder, MainContext};
-    use alloy_eip8141::{Frame, FrameLimits, FrameSignature};
+    use alloy_eip8141::{Frame, FrameSignature};
     use alloy_signer::{Signature, SignerSync};
     use alloy_signer_local::PrivateKeySigner;
     use bytecode::opcode::{APPROVE, PUSH0, PUSH1, REVERT, SSTORE, STOP};
@@ -889,10 +869,7 @@ mod tests {
                 mode: FrameMode::Default,
                 flags: 0x03,
                 target: Bytes::new(),
-                limits: FrameLimits {
-                    execution: 10_000,
-                    state: 0,
-                },
+                gas_limit: 10_000,
                 value: U256::ZERO,
                 data: Bytes::new(),
             }],
@@ -933,10 +910,7 @@ mod tests {
                 mode: FrameMode::Verify,
                 flags: 0x02,
                 target: Bytes::new(),
-                limits: FrameLimits {
-                    execution: 2_000,
-                    state: 0,
-                },
+                gas_limit: 2_000,
                 value: U256::ZERO,
                 data: Bytes::new(),
             },
@@ -944,10 +918,7 @@ mod tests {
                 mode: FrameMode::Verify,
                 flags: 0x01,
                 target: encoded_target(sponsor.address()),
-                limits: FrameLimits {
-                    execution: 2_000,
-                    state: 0,
-                },
+                gas_limit: 2_000,
                 value: U256::ZERO,
                 data: Bytes::new(),
             },
@@ -1064,10 +1035,7 @@ mod tests {
     fn max_blob_fee_without_blobs_has_frame_transaction_error() {
         let payload = FrameTransaction {
             frames: vec![Frame {
-                limits: FrameLimits {
-                    execution: 1,
-                    state: 0,
-                },
+                gas_limit: 1,
                 ..Default::default()
             }],
             ..Default::default()

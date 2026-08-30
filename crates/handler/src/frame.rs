@@ -156,14 +156,8 @@ impl EthFrame<EthInterpreter> {
         let reservoir_remaining_gas = inputs.reservoir;
         let entry_gas = inputs.entry_gas;
         let charged_new_account_state_gas = inputs.charged_new_account_state_gas;
-        let mut gas = if inputs.state_gas_isolated {
-            Gas::new_with_regular_gas_and_isolated_state_gas(
-                inputs.gas_limit,
-                reservoir_remaining_gas,
-            )
-        } else {
-            Gas::new_with_regular_gas_and_reservoir(inputs.gas_limit, reservoir_remaining_gas)
-        };
+        let mut gas =
+            Gas::new_with_regular_gas_and_reservoir(inputs.gas_limit, reservoir_remaining_gas);
 
         // EIP-8141 frame targets are entered as top-level calls, so their
         // warm/cold account access is charged against the frame's own gas
@@ -173,7 +167,7 @@ impl EthFrame<EthInterpreter> {
             gas.spend_all();
         }
 
-        let return_result = |gas: Gas, instruction_result: InstructionResult| {
+        let return_result = |instruction_result: InstructionResult| {
             Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
                 result: InterpreterResult {
                     result: instruction_result,
@@ -189,11 +183,11 @@ impl EthFrame<EthInterpreter> {
 
         // Check depth
         if depth > CALL_STACK_LIMIT as usize {
-            return return_result(gas, InstructionResult::CallTooDeep);
+            return return_result(InstructionResult::CallTooDeep);
         }
 
         if !entry_gas_sufficient {
-            return return_result(gas, InstructionResult::OutOfGas);
+            return return_result(InstructionResult::OutOfGas);
         }
 
         // Precompiles receive the remaining frame gas as well. Otherwise their
@@ -214,14 +208,7 @@ impl EthFrame<EthInterpreter> {
                     .transfer_loaded(inputs.caller, inputs.target_address, value)
             {
                 ctx.journal_mut().checkpoint_revert(checkpoint);
-                return return_result(gas, i.into());
-            }
-
-            if charged_new_account_state_gas
-                && !gas.record_state_cost(ctx.cfg().gas_params().new_account_state_gas())
-            {
-                ctx.journal_mut().checkpoint_revert(checkpoint);
-                return return_result(gas, InstructionResult::OutOfGas);
+                return return_result(i.into());
             }
         }
 
@@ -267,7 +254,7 @@ impl EthFrame<EthInterpreter> {
         // Returns success if bytecode is empty.
         if bytecode.is_empty() {
             ctx.journal_mut().checkpoint_commit();
-            return return_result(gas, InstructionResult::Stop);
+            return return_result(InstructionResult::Stop);
         }
 
         // Create interpreter and executes call and push new CallStackFrame.
