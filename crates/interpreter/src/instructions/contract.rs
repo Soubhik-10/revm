@@ -241,6 +241,7 @@ pub fn call<const KIND: u8, IT: ITy, H: Host + ?Sized>(mut context: Ictx<'_, H, 
                 return_memory_offset,
                 reservoir: context.interpreter.gas.reservoir(),
                 entry_gas: 0,
+                entry_state_gas: 0,
                 charged_new_account_state_gas,
             },
         ))));

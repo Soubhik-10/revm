@@ -69,7 +69,9 @@ pub fn run<H: Handler + ?Sized>(
             .expect("validated frame tx");
         let gas_params = evm.ctx_ref().cfg().gas_params();
         (
-            frame_tx.intrinsic_gas_with_params(gas_params).expect("validated gas"),
+            frame_tx
+                .intrinsic_gas_with_params(gas_params)
+                .expect("validated gas"),
             frame_tx
                 .calldata_floor_gas_with_params(gas_params)
                 .expect("validated gas"),
@@ -290,15 +292,13 @@ pub fn run<H: Handler + ?Sized>(
                 runtime.approval = atomic.approval;
                 runtime.root_approval = None;
                 runtime.approval_stack.clear();
-                // The failing frame keeps its own gas accounting. Earlier successful frames in
-                // the batch become failures and lose state-gas credit when their state is rolled
-                // back, while their regular gas remains charged.
+                // The failing frame keeps its own gas accounting. Earlier frames remain
+                // successful in the receipt, but their rolled-back state changes no longer earn
+                // state-gas credit or retain logs.
                 for index in atomic.receipt_start..receipts.len() - 1 {
-                    receipts[index].status = FrameStatus::Failure;
                     receipts[index].logs.clear();
                     frame_state_gas[index] = 0;
                     frame_refunds[index] = 0;
-                    runtime.statuses[index] = FrameStatus::Failure;
                 }
                 let mut end = frame_index;
                 loop {
@@ -433,6 +433,12 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
         }
         .into());
     }
+    if U256::from(ctx.cfg().tx_gas_limit_cap())
+        .checked_mul(frame_tx.max_fee_per_gas)
+        .is_none()
+    {
+        return Err(InvalidTransaction::OverflowPaymentInTransaction.into());
+    }
     if frame_tx
         .frames
         .iter()
@@ -468,9 +474,6 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
             ));
         }
         if frame.is_expiry_verifier() {
-            if index != 0 {
-                return Err(invalid("EIP-8141 expiry verifier must be the first frame"));
-            }
             expiry_frames += 1;
             if !frame.has_valid_expiry_verifier_fields() {
                 return Err(invalid("malformed EIP-8141 expiry verifier frame"));
@@ -652,35 +655,25 @@ fn frame_input<H: Handler + ?Sized>(
     let gas_params = evm.ctx_ref().cfg().gas_params();
     let warm_access_cost = gas_params.warm_storage_read_cost();
     let cold_account_additional_cost = gas_params.cold_account_additional_cost();
+    let new_account_state_gas = gas_params.new_account_state_gas();
     let account = evm
         .ctx()
         .journal_mut()
         .load_account_with_code(target)
         .map_err(H::Error::from)?;
-    let mut entry_gas = account_access_gas(
+    let entry_gas = account_access_gas(
         account.is_cold,
         warm_access_cost,
         cold_account_additional_cost,
     );
+    let entry_state_gas =
+        (frame.mode == FrameMode::Sender && !frame.value.is_zero() && account.info.is_empty())
+            .then_some(new_account_state_gas)
+            .unwrap_or_default();
     let target_code_hash = account.info.code_hash();
     let mut bytecode_address = target;
     let mut bytecode = account.info.code.clone().unwrap_or_default();
     let mut bytecode_hash = target_code_hash;
-    if let Some(delegated) = bytecode.eip7702_address() {
-        let delegated_account = evm
-            .ctx()
-            .journal_mut()
-            .load_account_with_code(delegated)
-            .map_err(H::Error::from)?;
-        entry_gas = entry_gas.saturating_add(account_access_gas(
-            delegated_account.is_cold,
-            warm_access_cost,
-            cold_account_additional_cost,
-        ));
-        bytecode_address = delegated;
-        bytecode_hash = delegated_account.info.code_hash();
-        bytecode = delegated_account.info.code.clone().unwrap_or_default();
-    }
     if frame.mode == FrameMode::Verify && target == EXPIRY_VERIFIER {
         bytecode_address = EXPIRY_VERIFIER;
         bytecode = StateBytecode::new_legacy(Bytes::copy_from_slice(&EXPIRY_VERIFIER_RUNTIME));
@@ -715,7 +708,8 @@ fn frame_input<H: Handler + ?Sized>(
             return_memory_offset: 0..0,
             reservoir: 0,
             entry_gas,
-            charged_new_account_state_gas: false,
+            entry_state_gas,
+            charged_new_account_state_gas: entry_state_gas != 0,
         })),
     ))
 }
@@ -764,11 +758,7 @@ fn settle_fees<H: Handler + ?Sized>(
         let tx = ctx.tx();
         let frame_tx = tx.frame_transaction().unwrap();
         let blob_gas = tx.total_blob_gas();
-        let max_cost = frame_tx.max_cost(
-            tx.max_fee_per_gas(),
-            blob_gas,
-            ctx.block().blob_gasprice().unwrap_or_default(),
-        );
+        let max_cost = frame_tx.max_cost(blob_gas, ctx.block().blob_gasprice().unwrap_or_default());
         let effective_gas_price = tx.effective_gas_price(ctx.block().basefee() as u128);
         let actual_cost = U256::from(gas_used)
             .saturating_mul(U256::from(effective_gas_price))
@@ -875,6 +865,7 @@ mod tests {
             }],
             signatures: Vec::new(),
             signature_hash: B256::ZERO,
+            ..Default::default()
         };
         let mut evm = Context::mainnet()
             .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
@@ -927,6 +918,7 @@ mod tests {
             frames,
             signatures,
             signature_hash,
+            ..Default::default()
         };
         let mut evm = Context::mainnet()
             .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
@@ -998,6 +990,7 @@ mod tests {
             ],
             signatures: Vec::new(),
             signature_hash: B256::ZERO,
+            ..Default::default()
         };
         let mut evm = Context::mainnet()
             .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
@@ -1015,7 +1008,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 FrameStatus::Success,
-                FrameStatus::Failure,
+                FrameStatus::Success,
                 FrameStatus::Failure,
                 FrameStatus::SkippedAtomicBatch,
             ]

@@ -143,6 +143,8 @@ pub struct CallInputs {
     pub reservoir: u64,
     /// Gas charged when entering an EIP-8141 frame target.
     pub entry_gas: u64,
+    /// State gas charged when entering an EIP-8141 frame target.
+    pub entry_state_gas: u64,
     /// The account address of bytecode that is going to be executed.
     ///
     /// Previously `context.code_address`.

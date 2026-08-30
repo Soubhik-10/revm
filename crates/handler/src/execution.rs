@@ -122,6 +122,7 @@ pub fn create_init_frame<CTX: ContextTr>(
                 return_memory_offset: 0..0,
                 reservoir: gas.reservoir(),
                 entry_gas: 0,
+                entry_state_gas: 0,
                 charged_new_account_state_gas,
             }))))
         }

@@ -5,7 +5,9 @@ use crate::{
 use context::result::FromStringError;
 use context_interface::{
     context::{take_error, ContextError},
-    journaled_state::{account::JournaledAccountTr, JournalCheckpoint, JournalTr},
+    journaled_state::{
+        account::JournaledAccountTr, JournalCheckpoint, JournalLoadError, JournalTr,
+    },
     local::{FrameToken, OutFrame},
     Cfg, ContextTr, Database,
 };
@@ -155,6 +157,7 @@ impl EthFrame<EthInterpreter> {
     ) -> Result<ItemOrResult<FrameToken, FrameResult>, ERROR> {
         let reservoir_remaining_gas = inputs.reservoir;
         let entry_gas = inputs.entry_gas;
+        let entry_state_gas = inputs.entry_state_gas;
         let charged_new_account_state_gas = inputs.charged_new_account_state_gas;
         let mut gas =
             Gas::new_with_regular_gas_and_reservoir(inputs.gas_limit, reservoir_remaining_gas);
@@ -162,9 +165,93 @@ impl EthFrame<EthInterpreter> {
         // EIP-8141 frame targets are entered as top-level calls, so their
         // warm/cold account access is charged against the frame's own gas
         // allocation before dispatching its code.
-        let entry_gas_sufficient = gas.record_regular_cost(entry_gas);
+        let entry_gas_sufficient =
+            gas.record_state_cost(entry_state_gas) && gas.record_regular_cost(entry_gas);
         if !entry_gas_sufficient {
             gas.spend_all();
+        }
+
+        if !entry_gas_sufficient {
+            return Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
+                result: InterpreterResult {
+                    result: InstructionResult::OutOfGas,
+                    gas,
+                    output: Bytes::new(),
+                },
+                memory_offset: inputs.return_memory_offset.clone(),
+                was_precompile_called: false,
+                precompile_call_logs: Vec::new(),
+                charged_new_account_state_gas,
+            })));
+        }
+
+        // Resolve a designated target only after its own frame-entry charge
+        // succeeds. This makes an unaffordable delegated target observable as
+        // a bare access without touching its delegate in the block access list.
+        if inputs.entry_gas != 0 {
+            if let Some(delegated_address) = inputs.known_bytecode.1.eip7702_address() {
+                let gas_params = ctx.cfg().gas_params();
+                let warm_access_cost = gas_params.warm_storage_read_cost();
+                let cold_account_additional_cost = gas_params.cold_account_additional_cost();
+                if !gas.record_regular_cost(warm_access_cost) {
+                    gas.spend_all();
+                    return Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::OutOfGas,
+                            gas,
+                            output: Bytes::new(),
+                        },
+                        memory_offset: inputs.return_memory_offset.clone(),
+                        was_precompile_called: false,
+                        precompile_call_logs: Vec::new(),
+                        charged_new_account_state_gas,
+                    })));
+                }
+                let skip_cold_load = gas.remaining() < cold_account_additional_cost;
+                let delegated_account = match ctx.journal_mut().load_account_info_skip_cold_load(
+                    delegated_address,
+                    true,
+                    skip_cold_load,
+                ) {
+                    Ok(account) => account,
+                    Err(JournalLoadError::ColdLoadSkipped) => {
+                        gas.spend_all();
+                        return Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
+                            result: InterpreterResult {
+                                result: InstructionResult::OutOfGas,
+                                gas,
+                                output: Bytes::new(),
+                            },
+                            memory_offset: inputs.return_memory_offset.clone(),
+                            was_precompile_called: false,
+                            precompile_call_logs: Vec::new(),
+                            charged_new_account_state_gas,
+                        })));
+                    }
+                    Err(JournalLoadError::DBError(error)) => return Err(error.into()),
+                };
+                if delegated_account.is_cold
+                    && !gas.record_regular_cost(cold_account_additional_cost)
+                {
+                    gas.spend_all();
+                    return Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::OutOfGas,
+                            gas,
+                            output: Bytes::new(),
+                        },
+                        memory_offset: inputs.return_memory_offset.clone(),
+                        was_precompile_called: false,
+                        precompile_call_logs: Vec::new(),
+                        charged_new_account_state_gas,
+                    })));
+                }
+                inputs.bytecode_address = delegated_address;
+                inputs.known_bytecode = (
+                    delegated_account.code_hash(),
+                    delegated_account.code.clone().unwrap_or_default(),
+                );
+            }
         }
 
         let return_result = |instruction_result: InstructionResult| {
@@ -184,10 +271,6 @@ impl EthFrame<EthInterpreter> {
         // Check depth
         if depth > CALL_STACK_LIMIT as usize {
             return return_result(InstructionResult::CallTooDeep);
-        }
-
-        if !entry_gas_sufficient {
-            return return_result(InstructionResult::OutOfGas);
         }
 
         // Precompiles receive the remaining frame gas as well. Otherwise their
