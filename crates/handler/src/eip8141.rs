@@ -533,33 +533,6 @@ fn validate_sender_and_signatures<H: Handler + ?Sized>(evm: &mut H::Evm) -> Resu
             frame_tx.signature_hash,
         )
     };
-    let state_nonce = evm
-        .ctx()
-        .journal_mut()
-        .load_account_with_code(sender)
-        .map_err(H::Error::from)?
-        .info
-        .nonce;
-    if !nonce_check_disabled {
-        if nonce > state_nonce {
-            return Err(InvalidTransaction::NonceTooHigh {
-                tx: nonce,
-                state: state_nonce,
-            }
-            .into());
-        }
-        if nonce < state_nonce {
-            return Err(InvalidTransaction::NonceTooLow {
-                tx: nonce,
-                state: state_nonce,
-            }
-            .into());
-        }
-        if nonce == u64::MAX {
-            return Err(InvalidTransaction::NonceOverflowInTransaction.into());
-        }
-    }
-
     for signature in &signatures {
         let message = if signature.msg.is_empty() {
             signature_hash.0
@@ -637,6 +610,38 @@ fn validate_sender_and_signatures<H: Handler + ?Sized>(evm: &mut H::Evm) -> Resu
             "Validated EIP-8141 signature"
         );
     }
+
+    // EIP-8141 static validation, including every signature, precedes the
+    // sender-state lookup. Invalid transactions may legitimately omit the
+    // sender from an attached block access list, so loading it first can
+    // incorrectly turn a transaction error into a BAL database error.
+    if !nonce_check_disabled {
+        let state_nonce = evm
+            .ctx()
+            .journal_mut()
+            .load_account_with_code(sender)
+            .map_err(H::Error::from)?
+            .info
+            .nonce;
+        if nonce > state_nonce {
+            return Err(InvalidTransaction::NonceTooHigh {
+                tx: nonce,
+                state: state_nonce,
+            }
+            .into());
+        }
+        if nonce < state_nonce {
+            return Err(InvalidTransaction::NonceTooLow {
+                tx: nonce,
+                state: state_nonce,
+            }
+            .into());
+        }
+        if nonce == u64::MAX {
+            return Err(InvalidTransaction::NonceOverflowInTransaction.into());
+        }
+    }
+
     tracing::info!(
         target: "revm::eip8141",
         sender = ?sender,
