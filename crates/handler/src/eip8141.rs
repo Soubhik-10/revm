@@ -567,11 +567,14 @@ fn validate_sender_and_signatures<H: Handler + ?Sized>(evm: &mut H::Evm) -> Resu
                     }
                     let mut rs = [0u8; 64];
                     rs.copy_from_slice(&signature.signature[1..]);
-                    precompile::crypto()
+                    let recovered = precompile::crypto()
                         .secp256k1_ecrecover(&rs, signature.signature[0], &message)
                         .map(|word| Address::from_slice(&word[12..]))
-                        .ok()
-                        == Some(expected)
+                        .ok();
+                    if recovered.is_some() && recovered != Some(expected) {
+                        return Err(invalid("EIP-8141 signature signer does not match"));
+                    }
+                    recovered == Some(expected)
                 }
             }
             SignatureScheme::P256 => {
@@ -582,21 +585,20 @@ fn validate_sender_and_signatures<H: Handler + ?Sized>(evm: &mut H::Evm) -> Resu
                     let mut public_key = [0u8; 64];
                     sig.copy_from_slice(&signature.signature[..64]);
                     public_key.copy_from_slice(&signature.signature[64..]);
+                    let r = U256::from_be_slice(&signature.signature[..32]);
                     let s = U256::from_be_slice(&signature.signature[32..64]);
                     let p256_order = U256::from_be_bytes(hex!(
                         "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551"
                     ));
                     let p256_half_order = p256_order >> 1;
-                    if s.is_zero() || s > p256_half_order {
-                        false
-                    } else {
-                        Address::from_slice(&keccak256(public_key)[12..]) == expected
-                            && precompile::crypto().secp256r1_verify_signature(
-                                &message,
-                                &sig,
-                                &public_key,
-                            )
+                    if r.is_zero() || r >= p256_order || s.is_zero() || s > p256_half_order {
+                        return Err(invalid("EIP-8141 signature validation failed"));
                     }
+                    let recovered = Address::from_slice(&keccak256(public_key)[12..]);
+                    if recovered != expected {
+                        return Err(invalid("EIP-8141 signature signer does not match"));
+                    }
+                    precompile::crypto().secp256r1_verify_signature(&message, &sig, &public_key)
                 }
             }
         };
