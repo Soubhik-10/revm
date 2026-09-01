@@ -495,7 +495,7 @@ impl TxEnvBuilder {
                     self.value = U256::ZERO;
                     self.data = Bytes::new();
                     if let Some(frame_tx) = &self.frame_transaction {
-                        self.gas_limit = frame_tx.gas_limit().unwrap_or(u64::MAX);
+                        self.gas_limit = frame_tx.gas_limit(self.caller).unwrap_or(u64::MAX);
                     }
                 }
                 TransactionType::Custom => {

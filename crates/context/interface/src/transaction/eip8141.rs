@@ -2,7 +2,7 @@
 
 use crate::cfg::GasParams;
 use alloy_eip8141::{Frame, FrameSignature, FRAME_TX_INTRINSIC_COST, FRAME_TX_PER_FRAME_COST};
-use primitives::{hardfork::SpecId, B256, U256};
+use primitives::{hardfork::SpecId, Address, B256, U256};
 use std::vec::Vec;
 
 /// The consensus-decoded data REVM needs to execute an EIP-8141 frame transaction.
@@ -102,13 +102,33 @@ impl FrameTransaction {
         })
     }
 
+    /// Returns the EIP-2780 value-transfer charge for frames with an explicit target other than
+    /// the transaction sender.
+    pub fn value_transfer_gas(&self, sender: Address, gas_params: &GasParams) -> u64 {
+        self.frames.iter().fold(0u64, |total, frame| {
+            let cost = if !frame.value.is_zero()
+                && !frame.target.is_empty()
+                && frame.target_address() != Some(sender)
+            {
+                gas_params.transfer_value_cost()
+            } else {
+                0
+            };
+            total.saturating_add(cost)
+        })
+    }
+
     /// Calculates the transaction intrinsic gas, excluding top-level frame allocations.
-    pub fn intrinsic_gas(&self) -> Option<u64> {
-        self.intrinsic_gas_with_params(&GasParams::new_spec(SpecId::AMSTERDAM))
+    pub fn intrinsic_gas(&self, sender: Address) -> Option<u64> {
+        self.intrinsic_gas_with_params(sender, &GasParams::new_spec(SpecId::AMSTERDAM))
     }
 
     /// Calculates intrinsic gas using the active fork's gas parameters.
-    pub fn intrinsic_gas_with_params(&self, gas_params: &GasParams) -> Option<u64> {
+    pub fn intrinsic_gas_with_params(
+        &self,
+        sender: Address,
+        gas_params: &GasParams,
+    ) -> Option<u64> {
         let frame_cost = (self.frames.len() as u64).checked_mul(FRAME_TX_PER_FRAME_COST)?;
         let calldata_cost = self
             .calldata_tokens_with_multipliers(1, gas_params.tx_token_non_zero_byte_multiplier())
@@ -117,31 +137,36 @@ impl FrameTransaction {
             .checked_add(frame_cost)?
             .checked_add(calldata_cost)?
             .checked_add(self.signature_verification_gas()?)
+            .and_then(|gas| gas.checked_add(self.value_transfer_gas(sender, gas_params)))
     }
 
     /// Calculates the derived transaction gas limit.
-    pub fn gas_limit(&self) -> Option<u64> {
-        self.gas_limit_with_params(&GasParams::new_spec(SpecId::AMSTERDAM))
+    pub fn gas_limit(&self, sender: Address) -> Option<u64> {
+        self.gas_limit_with_params(sender, &GasParams::new_spec(SpecId::AMSTERDAM))
     }
 
     /// Calculates the derived transaction gas limit using the active fork's gas parameters.
-    pub fn gas_limit_with_params(&self, gas_params: &GasParams) -> Option<u64> {
+    pub fn gas_limit_with_params(&self, sender: Address, gas_params: &GasParams) -> Option<u64> {
         let standard = self
-            .intrinsic_gas_with_params(gas_params)?
+            .intrinsic_gas_with_params(sender, gas_params)?
             .checked_add(self.total_frame_gas_limit()?)?;
         let floor = self
-            .calldata_floor_gas_with_params(gas_params)?
+            .calldata_floor_gas_with_params(sender, gas_params)?
             .checked_add(self.total_frame_state_gas_limit()?)?;
         Some(standard.max(floor))
     }
 
     /// Calculates the calldata floor using the default Amsterdam gas parameters.
-    pub fn calldata_floor_gas(&self) -> Option<u64> {
-        self.calldata_floor_gas_with_params(&GasParams::new_spec(SpecId::AMSTERDAM))
+    pub fn calldata_floor_gas(&self, sender: Address) -> Option<u64> {
+        self.calldata_floor_gas_with_params(sender, &GasParams::new_spec(SpecId::AMSTERDAM))
     }
 
     /// Calculates the calldata floor using the active fork's gas parameters.
-    pub fn calldata_floor_gas_with_params(&self, gas_params: &GasParams) -> Option<u64> {
+    pub fn calldata_floor_gas_with_params(
+        &self,
+        sender: Address,
+        gas_params: &GasParams,
+    ) -> Option<u64> {
         let frame_cost = (self.frames.len() as u64).checked_mul(FRAME_TX_PER_FRAME_COST)?;
         let calldata_floor = self
             .calldata_tokens_with_multipliers(
@@ -152,15 +177,16 @@ impl FrameTransaction {
         FRAME_TX_INTRINSIC_COST
             .checked_add(frame_cost)?
             .checked_add(self.signature_verification_gas()?)?
-            .checked_add(calldata_floor)
+            .checked_add(calldata_floor)?
+            .checked_add(self.value_transfer_gas(sender, gas_params))
     }
 
     /// Calculates the maximum fee exposure checked when a payer approves payment.
     ///
     /// `blob_base_fee` is used for blob costs because `max_fee_per_blob_gas` is only
     /// an inclusion bound for EIP-8141 transactions.
-    pub fn max_cost(&self, blob_gas: u64, blob_base_fee: u128) -> U256 {
-        U256::from(self.gas_limit().unwrap_or(u64::MAX))
+    pub fn max_cost(&self, sender: Address, blob_gas: u64, blob_base_fee: u128) -> U256 {
+        U256::from(self.gas_limit(sender).unwrap_or(u64::MAX))
             .saturating_mul(self.max_fee_per_gas)
             .saturating_add(U256::from(blob_gas).saturating_mul(U256::from(blob_base_fee)))
     }
@@ -196,8 +222,8 @@ mod tests {
         // Arbitrary signatures carry the fixed protocol-verification charge from EIP-8141.
         assert_eq!(transaction.calldata_tokens(), 10);
         assert_eq!(transaction.signature_verification_gas(), Some(100));
-        assert_eq!(transaction.intrinsic_gas(), Some(15_615));
-        assert_eq!(transaction.gas_limit(), Some(15_831));
-        assert_eq!(transaction.calldata_floor_gas(), Some(15_831));
+        assert_eq!(transaction.intrinsic_gas(Address::ZERO), Some(15_615));
+        assert_eq!(transaction.gas_limit(Address::ZERO), Some(15_831));
+        assert_eq!(transaction.calldata_floor_gas(Address::ZERO), Some(15_831));
     }
 }

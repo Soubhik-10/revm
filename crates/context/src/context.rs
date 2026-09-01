@@ -535,6 +535,7 @@ impl<
             p if p == U256::from(4) => frame_tx.max_fee_per_gas,
             p if p == U256::from(5) => U256::from(tx.max_fee_per_blob_gas()),
             p if p == U256::from(6) => frame_tx.max_cost(
+                tx.caller(),
                 tx.total_blob_gas(),
                 self.block().blob_gasprice().unwrap_or_default(),
             ),
@@ -668,6 +669,7 @@ impl<
                 tx.caller(),
                 frame.allowed_scope(),
                 frame_tx.max_cost(
+                    tx.caller(),
                     tx.total_blob_gas(),
                     self.block().blob_gasprice().unwrap_or_default(),
                 ),

@@ -2,8 +2,8 @@
 
 use crate::{EvmTr, Handler};
 use alloy_eip8141::{
-    FrameMode, FrameReceipt, FrameStatus, SignatureScheme, APPROVE_SCOPE_MASK, ENTRY_POINT,
-    EXPIRY_VERIFIER, EXPIRY_VERIFIER_RUNTIME, MAX_FRAMES,
+    FrameGasUsed, FrameMode, FrameReceipt, FrameStatus, SignatureScheme, APPROVE_SCOPE_MASK,
+    ENTRY_POINT, EXPIRY_VERIFIER, EXPIRY_VERIFIER_RUNTIME, MAX_FRAMES,
 };
 use context::{ContextTr, LocalContextTr};
 use context_interface::{
@@ -68,12 +68,13 @@ pub fn run<H: Handler + ?Sized>(
             .frame_transaction()
             .expect("validated frame tx");
         let gas_params = evm.ctx_ref().cfg().gas_params();
+        let sender = evm.ctx_ref().tx().caller();
         (
             frame_tx
-                .intrinsic_gas_with_params(gas_params)
+                .intrinsic_gas_with_params(sender, gas_params)
                 .expect("validated gas"),
             frame_tx
-                .calldata_floor_gas_with_params(gas_params)
+                .calldata_floor_gas_with_params(sender, gas_params)
                 .expect("validated gas"),
             frame_tx.frames.len(),
         )
@@ -265,7 +266,10 @@ pub fn run<H: Handler + ?Sized>(
         };
         receipts.push(FrameReceipt {
             status,
-            gas_used: spent,
+            gas_used: FrameGasUsed {
+                execution: spent,
+                state: state_gas,
+            },
             logs,
         });
         frame_state_gas.push(state_gas);
@@ -313,7 +317,10 @@ pub fn run<H: Handler + ?Sized>(
                 for _ in frame_index + 1..=end {
                     receipts.push(FrameReceipt {
                         status: FrameStatus::SkippedAtomicBatch,
-                        gas_used: 0,
+                        gas_used: FrameGasUsed {
+                            execution: 0,
+                            state: 0,
+                        },
                         logs: Vec::new(),
                     });
                     frame_state_gas.push(0);
@@ -347,7 +354,7 @@ pub fn run<H: Handler + ?Sized>(
         .payer
         .ok_or_else(|| invalid::<H::Error>("EIP-8141 transaction did not approve a payer"))?;
     let total_frame_spent = receipts.iter().fold(0u64, |total, receipt| {
-        total.saturating_add(receipt.gas_used)
+        total.saturating_add(receipt.gas_used.execution)
     });
     let total_state_gas = frame_state_gas
         .iter()
@@ -418,14 +425,15 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
         return Err(invalid("EIP-8141 frame count must be in 1..=64"));
     }
     let gas_params = ctx.cfg().gas_params();
+    let sender = tx.caller();
     let gas_limit = frame_tx
-        .gas_limit_with_params(gas_params)
+        .gas_limit_with_params(sender, gas_params)
         .ok_or_else(|| invalid::<H::Error>("EIP-8141 derived gas limit overflow"))?;
     if tx.gas_limit() != gas_limit {
         return Err(invalid("EIP-8141 transaction gas limit is not canonical"));
     }
     let floor = frame_tx
-        .calldata_floor_gas_with_params(gas_params)
+        .calldata_floor_gas_with_params(sender, gas_params)
         .ok_or_else(|| invalid::<H::Error>("EIP-8141 calldata floor overflow"))?;
     if floor > gas_limit {
         return Err(InvalidTransaction::GasFloorMoreThanGasLimit {
@@ -435,7 +443,7 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
         .into());
     }
     let execution_reservation = frame_tx
-        .intrinsic_gas_with_params(gas_params)
+        .intrinsic_gas_with_params(sender, gas_params)
         .and_then(|intrinsic| intrinsic.checked_add(frame_tx.total_frame_execution_gas_limit()?))
         .ok_or_else(|| invalid::<H::Error>("EIP-8141 execution gas reservation overflow"))?
         .max(floor);
@@ -484,6 +492,13 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
         {
             return Err(invalid(
                 "EIP-8141 atomic batch must be followed by a non-VERIFY frame",
+            ));
+        }
+        if (frame.is_atomic_batch() || (index > 0 && frame_tx.frames[index - 1].is_atomic_batch()))
+            && frame.allowed_scope() != 0
+        {
+            return Err(invalid(
+                "EIP-8141 atomic batch frames cannot carry approval scope",
             ));
         }
         if frame.is_expiry_verifier() {
@@ -779,7 +794,11 @@ fn settle_fees<H: Handler + ?Sized>(
         let tx = ctx.tx();
         let frame_tx = tx.frame_transaction().unwrap();
         let blob_gas = tx.total_blob_gas();
-        let max_cost = frame_tx.max_cost(blob_gas, ctx.block().blob_gasprice().unwrap_or_default());
+        let max_cost = frame_tx.max_cost(
+            tx.caller(),
+            blob_gas,
+            ctx.block().blob_gasprice().unwrap_or_default(),
+        );
         let effective_gas_price = tx.effective_gas_price(ctx.block().basefee() as u128);
         let actual_cost = U256::from(gas_used)
             .saturating_mul(U256::from(effective_gas_price))
@@ -834,7 +853,7 @@ mod tests {
     }
 
     fn tx_env(caller: Address, frame_transaction: FrameTransaction) -> TxEnv {
-        let gas_limit = frame_transaction.gas_limit().unwrap();
+        let gas_limit = frame_transaction.gas_limit(caller).unwrap();
         TxEnv::builder()
             .tx_type(Some(0x06))
             .caller(caller)
@@ -1043,8 +1062,8 @@ mod tests {
                 FrameStatus::SkippedAtomicBatch,
             ]
         );
-        assert!(frame_receipts[1].gas_used > 0);
-        assert_eq!(frame_receipts[3].gas_used, 0);
+        assert!(frame_receipts[1].gas_used.execution > 0);
+        assert_eq!(frame_receipts[3].gas_used.execution, 0);
         let stored = output
             .state
             .get(&STORAGE_TARGET)

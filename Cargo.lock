@@ -134,7 +134,7 @@ dependencies = [
 [[package]]
 name = "alloy-eip8141"
 version = "0.1.0"
-source = "git+https://github.com/Soubhik-10/eips?branch=feat%2Feip8141-basic-types#147c25f9aa02603d42065e467c52ceeed68691da"
+source = "git+https://github.com/Soubhik-10/eips?branch=feat%2Feip8141-basic-types#f8c9b31b5e2ba3294cc305b47fc9c1568f55cf7f"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
