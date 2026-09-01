@@ -70,7 +70,11 @@ pub trait Host {
     fn blob_hash(&self, number: usize) -> Option<U256>;
 
     /// Returns an EIP-8141 transaction parameter.
-    fn frame_tx_param(&self, _param: U256) -> Option<U256> {
+    ///
+    /// `state_gas_left` is the remaining state-gas budget of the currently executing frame. It is
+    /// supplied by the interpreter because it is dynamic execution state rather than transaction
+    /// metadata.
+    fn frame_tx_param(&self, _param: U256, _state_gas_left: u64) -> Option<U256> {
         None
     }
 

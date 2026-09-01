@@ -307,6 +307,7 @@ const fn instruction_table_impl<WIRE: InterpreterTypes, H: Host>() -> Instructio
     table[FRAMEDATACOPY as usize] = Instruction::new(frame::framedatacopy);
     table[FRAMEPARAM as usize] = Instruction::new(frame::frameparam);
     table[SIGPARAM as usize] = Instruction::new(frame::sigparam);
+    table[SIGDATACOPY as usize] = Instruction::new(frame::sigdatacopy);
 
     table[CREATE as usize] = Instruction::new(contract::create::<false, _, _>);
     table[CALL as usize] = Instruction::new(contract::call::<CALL, _, _>);
@@ -489,6 +490,7 @@ const fn gas_table_impl() -> GasTable {
     table[FRAMEDATACOPY as usize] = 3;
     table[FRAMEPARAM as usize] = 2;
     table[SIGPARAM as usize] = 2;
+    table[SIGDATACOPY as usize] = 3;
 
     table[CREATE as usize] = 0;
     table[CALL as usize] = 40;

@@ -183,7 +183,7 @@ impl OpCode {
                 | OpCode::CALLDATACOPY
                 | OpCode::RETURNDATACOPY
                 | OpCode::FRAMEDATACOPY
-                | OpCode::SIGPARAM
+                | OpCode::SIGDATACOPY
                 | OpCode::CALL
                 | OpCode::CALLCODE
                 | OpCode::DELEGATECALL
@@ -582,9 +582,9 @@ opcodes! {
     0xB1 => FRAMEDATALOAD => stack_io(2, 1);
     0xB2 => FRAMEDATACOPY => stack_io(4, 0);
     0xB3 => FRAMEPARAM => stack_io(2, 1);
-    // Selectors 0..=3 have a 2 -> 1 effect; selector 4 is a 5 -> 0 copy operation.
+    // Selectors 0..=3 have a 2 -> 1 effect.
     0xB4 => SIGPARAM => stack_io(2, 1);
-    // 0xB5
+    0xB5 => SIGDATACOPY => stack_io(4, 0);
     // 0xB6
     // 0xB7
     // 0xB8
@@ -714,7 +714,7 @@ mod tests {
             0x90..=0x9f,
             0xa0..=0xa4,
             0xaa..=0xaa,
-            0xb0..=0xb4,
+            0xb0..=0xb5,
             0xf0..=0xf5,
             0xfa..=0xfa,
             0xfd..=0xfd,
@@ -734,7 +734,7 @@ mod tests {
         for _ in OPCODE_INFO.into_iter().flatten() {
             opcode_num += 1;
         }
-        assert_eq!(opcode_num, 160);
+        assert_eq!(opcode_num, 161);
     }
 
     #[test]

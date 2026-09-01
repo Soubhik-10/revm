@@ -523,7 +523,7 @@ impl<
             .map(|t| U256::from_be_bytes(t.0))
     }
 
-    fn frame_tx_param(&self, param: U256) -> Option<U256> {
+    fn frame_tx_param(&self, param: U256, state_gas_left: u64) -> Option<U256> {
         let tx = self.tx();
         let frame_tx = tx.frame_transaction()?;
         let runtime = self.local().frame_transaction()?;
@@ -544,6 +544,7 @@ impl<
             p if p == U256::from(9) => U256::from(frame_tx.frames.len()),
             p if p == U256::from(10) => U256::from(runtime.current_frame_index),
             p if p == U256::from(11) => U256::from(frame_tx.signatures.len()),
+            p if p == U256::from(12) => U256::from(state_gas_left),
             _ => return None,
         })
     }
@@ -622,7 +623,12 @@ impl<
                     U256::from_be_slice(&signature.msg)
                 }
             }
-            p if p == U256::from(3) => U256::from(signature.signature.len()),
+            p if p == U256::from(3) => {
+                if signature.scheme != alloy_eip8141::SignatureScheme::Arbitrary {
+                    return None;
+                }
+                U256::from(signature.signature.len())
+            }
             _ => return None,
         })
     }

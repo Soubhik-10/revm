@@ -7,7 +7,7 @@ use crate::{
 use context_interface::{host::FrameHostError, Host};
 use primitives::{Bytes, B256, U256};
 
-use super::system::copy_cost_and_memory_resize;
+use super::{system::copy_cost_and_memory_resize, VERYLOW};
 
 #[inline]
 const fn host_error(error: FrameHostError) -> InstructionResult {
@@ -56,7 +56,7 @@ pub fn txparam<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
     tracing::info!(target: "revm::eip8141::instruction", ?param, "Executing TXPARAM");
     *param = context
         .host
-        .frame_tx_param(*param)
+        .frame_tx_param(*param, context.interpreter.gas.reservoir())
         .ok_or(InstructionResult::OpcodeNotFound)?;
     Ok(())
 }
@@ -122,6 +122,7 @@ pub fn framedatacopy<IT: ITy, H: Host + ?Sized>(mut context: Ictx<'_, H, IT>) ->
         ?frame_index,
         "Executing FRAMEDATACOPY"
     );
+    gas!(context.interpreter, VERYLOW);
     let data = context
         .host
         .frame_data(frame_index)
@@ -147,7 +148,7 @@ pub fn frameparam<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result
 }
 
 /// EIP-8141 `SIGPARAM` (0xb4).
-pub fn sigparam<IT: ITy, H: Host + ?Sized>(mut context: Ictx<'_, H, IT>) -> Result {
+pub fn sigparam<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
     popn!([signature_index, param], context.interpreter);
     tracing::info!(
         target: "revm::eip8141::instruction",
@@ -155,27 +156,32 @@ pub fn sigparam<IT: ITy, H: Host + ?Sized>(mut context: Ictx<'_, H, IT>) -> Resu
         ?param,
         "Executing SIGPARAM"
     );
-    if param == U256::from(4) {
-        popn!([memory_offset, data_offset, len], context.interpreter);
-        tracing::info!(
-            target: "revm::eip8141::instruction",
-            ?signature_index,
-            ?memory_offset,
-            ?data_offset,
-            ?len,
-            "Copying EIP-8141 signature bytes"
-        );
-        let data = context
-            .host
-            .frame_signature_bytes(signature_index)
-            .ok_or(InstructionResult::OpcodeNotFound)?;
-        gas!(context.interpreter, 1);
-        return copy_data(&mut context, memory_offset, data_offset, len, &data);
-    }
     let value = context
         .host
         .frame_signature_param(signature_index, param)
         .ok_or(InstructionResult::OpcodeNotFound)?;
     push!(context.interpreter, value);
     Ok(())
+}
+
+/// EIP-8141 `SIGDATACOPY` (0xb5).
+pub fn sigdatacopy<IT: ITy, H: Host + ?Sized>(mut context: Ictx<'_, H, IT>) -> Result {
+    popn!(
+        [memory_offset, data_offset, len, signature_index],
+        context.interpreter
+    );
+    tracing::info!(
+        target: "revm::eip8141::instruction",
+        ?signature_index,
+        ?memory_offset,
+        ?data_offset,
+        ?len,
+        "Executing SIGDATACOPY"
+    );
+    gas!(context.interpreter, VERYLOW);
+    let data = context
+        .host
+        .frame_signature_bytes(signature_index)
+        .ok_or(InstructionResult::OpcodeNotFound)?;
+    copy_data(&mut context, memory_offset, data_offset, len, &data)
 }
