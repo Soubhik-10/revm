@@ -2,8 +2,8 @@
 
 use crate::{EvmTr, Handler};
 use alloy_eip8141::{
-    FrameGasUsed, FrameMode, FrameReceipt, FrameStatus, SignatureScheme, APPROVE_SCOPE_MASK,
-    ENTRY_POINT, EXPIRY_VERIFIER, EXPIRY_VERIFIER_RUNTIME, MAX_FRAMES,
+    FrameGasUsed, FrameMode, FrameReceipt, FrameStatus, SignatureScheme, ENTRY_POINT,
+    EXPIRY_VERIFIER, EXPIRY_VERIFIER_RUNTIME, FRAME_FLAGS_MASK, MAX_FRAMES, SECP256K1N, SECP256R1N,
 };
 use context::{ContextTr, LocalContextTr};
 use context_interface::{
@@ -17,7 +17,7 @@ use interpreter::{
     interpreter_action::FrameInit, CallInput, CallInputs, CallScheme, CallValue, FrameInput,
     InstructionResult, SharedMemory,
 };
-use primitives::{hex, keccak256, Address, Bytes, KECCAK_EMPTY, U256};
+use primitives::{keccak256, Address, Bytes, KECCAK_EMPTY, U256};
 use state::Bytecode as StateBytecode;
 use std::{boxed::Box, vec::Vec};
 
@@ -463,7 +463,7 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
     if frame_tx
         .frames
         .iter()
-        .any(|frame| frame.flags & !(APPROVE_SCOPE_MASK | 0x04) != 0)
+        .any(|frame| frame.flags & !FRAME_FLAGS_MASK != 0)
     {
         return Err(invalid("EIP-8141 reserved frame flag is set"));
     }
@@ -584,13 +584,8 @@ fn validate_sender_and_signatures<H: Handler + ?Sized>(evm: &mut H::Evm) -> Resu
                 } else {
                     let r = U256::from_be_slice(&signature.signature[1..33]);
                     let s = U256::from_be_slice(&signature.signature[33..65]);
-                    let curve_order = U256::from_be_bytes(hex!(
-                        "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141"
-                    ));
-                    let half_curve_order = U256::from_be_bytes(hex!(
-                        "7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0"
-                    ));
-                    if r.is_zero() || r >= curve_order || s.is_zero() || s > half_curve_order {
+                    let half_curve_order = SECP256K1N >> 1;
+                    if r.is_zero() || r >= SECP256K1N || s.is_zero() || s > half_curve_order {
                         return Err(invalid("EIP-8141 signature validation failed"));
                     }
                     let mut rs = [0u8; 64];
@@ -615,11 +610,8 @@ fn validate_sender_and_signatures<H: Handler + ?Sized>(evm: &mut H::Evm) -> Resu
                     public_key.copy_from_slice(&signature.signature[64..]);
                     let r = U256::from_be_slice(&signature.signature[..32]);
                     let s = U256::from_be_slice(&signature.signature[32..64]);
-                    let p256_order = U256::from_be_bytes(hex!(
-                        "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551"
-                    ));
-                    let p256_half_order = p256_order >> 1;
-                    if r.is_zero() || r >= p256_order || s.is_zero() || s > p256_half_order {
+                    let p256_half_order = SECP256R1N >> 1;
+                    if r.is_zero() || r >= SECP256R1N || s.is_zero() || s > p256_half_order {
                         return Err(invalid("EIP-8141 signature validation failed"));
                     }
                     let recovered = Address::from_slice(&keccak256(public_key)[12..]);
