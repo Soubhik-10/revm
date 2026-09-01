@@ -25,6 +25,10 @@ pub struct FrameTransactionRuntime {
     pub resolved_target: Address,
     /// Statuses of completed top-level frames.
     pub statuses: Vec<FrameStatus>,
+    /// Execution-gas usage reported by completed top-level frames.
+    pub execution_gas_used: Vec<u64>,
+    /// State-gas usage reported by completed top-level frames.
+    pub state_gas_used: Vec<u64>,
     /// Committed approval state.
     pub approval: FrameApprovalState,
     /// Approval scopes corresponding to active interpreter call frames.

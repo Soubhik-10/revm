@@ -270,12 +270,12 @@ pub fn run<H: Handler + ?Sized>(
         });
         frame_state_gas.push(state_gas);
         frame_refunds.push(refund);
-        evm.ctx()
-            .local_mut()
-            .frame_transaction_mut()
-            .unwrap()
-            .statuses
-            .push(status);
+        {
+            let runtime = evm.ctx().local_mut().frame_transaction_mut().unwrap();
+            runtime.statuses.push(status);
+            runtime.execution_gas_used.push(spent);
+            runtime.state_gas_used.push(state_gas);
+        }
 
         if !success {
             if let Some(atomic) = batch.take() {
@@ -299,6 +299,7 @@ pub fn run<H: Handler + ?Sized>(
                     receipts[index].logs.clear();
                     frame_state_gas[index] = 0;
                     frame_refunds[index] = 0;
+                    runtime.state_gas_used[index] = 0;
                 }
                 let mut end = frame_index;
                 loop {
@@ -317,12 +318,10 @@ pub fn run<H: Handler + ?Sized>(
                     });
                     frame_state_gas.push(0);
                     frame_refunds.push(0);
-                    evm.ctx()
-                        .local_mut()
-                        .frame_transaction_mut()
-                        .unwrap()
-                        .statuses
-                        .push(FrameStatus::SkippedAtomicBatch);
+                    let runtime = evm.ctx().local_mut().frame_transaction_mut().unwrap();
+                    runtime.statuses.push(FrameStatus::SkippedAtomicBatch);
+                    runtime.execution_gas_used.push(0);
+                    runtime.state_gas_used.push(0);
                 }
                 tracing::info!(
                     target: "revm::eip8141",

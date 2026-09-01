@@ -580,6 +580,19 @@ impl<
             p if p == U256::from(6) => U256::from(frame.allowed_scope()),
             p if p == U256::from(7) => U256::from(frame.is_atomic_batch() as u8),
             p if p == U256::from(8) => frame.value,
+            p if p == U256::from(9) => U256::from(frame.limits.state),
+            p if p == U256::from(10) => {
+                if index >= runtime.current_frame_index {
+                    return None;
+                }
+                U256::from(*runtime.execution_gas_used.get(index)?)
+            }
+            p if p == U256::from(11) => {
+                if index >= runtime.current_frame_index {
+                    return None;
+                }
+                U256::from(*runtime.state_gas_used.get(index)?)
+            }
             _ => return None,
         })
     }
