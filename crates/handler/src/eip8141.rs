@@ -306,6 +306,7 @@ pub fn run<H: Handler + ?Sized>(
                 // state-gas credit or retain logs.
                 for index in atomic.receipt_start..receipts.len() - 1 {
                     receipts[index].logs.clear();
+                    receipts[index].gas_used.state = 0;
                     frame_state_gas[index] = 0;
                     frame_refunds[index] = 0;
                     runtime.state_gas_used[index] = 0;
