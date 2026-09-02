@@ -155,7 +155,8 @@ pub fn run<H: Handler + ?Sized>(
 
         let frame_checkpoint = evm.ctx().journal_mut().checkpoint();
         let log_start = evm.ctx_ref().journal().logs().len();
-        let (target_code_hash, frame_input) = frame_input::<H>(evm, &frame, target)?;
+        let (target_code_hash, frame_input, entry_gas, entry_state_gas) =
+            frame_input::<H>(evm, &frame, target)?;
         let uses_default_code = frame.mode == FrameMode::Verify
             && target_code_hash == KECCAK_EMPTY
             && target != EXPIRY_VERIFIER;
@@ -182,8 +183,12 @@ pub fn run<H: Handler + ?Sized>(
                 } else {
                     InstructionResult::Revert
                 },
-                0,
-                0,
+                // Default verification bypasses the regular call-frame
+                // constructor, so charge the resolved target access here.
+                // The EIP applies this entry charge to every frame,
+                // including VERIFY frames that use default verification.
+                entry_gas,
+                entry_state_gas,
                 0,
             )
         } else {
@@ -678,7 +683,7 @@ fn frame_input<H: Handler + ?Sized>(
     evm: &mut H::Evm,
     frame: &alloy_eip8141::Frame,
     target: Address,
-) -> Result<(primitives::B256, FrameInput), H::Error> {
+) -> Result<(primitives::B256, FrameInput, u64, u64), H::Error> {
     let gas_params = evm.ctx_ref().cfg().gas_params();
     let warm_access_cost = gas_params.warm_storage_read_cost();
     let cold_account_additional_cost = gas_params.cold_account_additional_cost();
@@ -739,6 +744,8 @@ fn frame_input<H: Handler + ?Sized>(
             entry_state_gas,
             charged_new_account_state_gas: entry_state_gas != 0,
         })),
+        entry_gas,
+        entry_state_gas,
     ))
 }
 
