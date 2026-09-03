@@ -2,7 +2,7 @@
 
 use crate::cfg::GasParams;
 use alloy_eip8141::{Frame, FrameSignature, FRAME_TX_INTRINSIC_COST, FRAME_TX_PER_FRAME_COST};
-use primitives::{hardfork::SpecId, Address, B256, U256};
+use primitives::{eip2780, hardfork::SpecId, Address, B256, U256};
 use std::vec::Vec;
 
 /// The consensus-decoded data REVM needs to execute an EIP-8141 frame transaction.
@@ -104,13 +104,17 @@ impl FrameTransaction {
 
     /// Returns the EIP-2780 value-transfer charge for frames with an explicit target other than
     /// the transaction sender.
-    pub fn value_transfer_gas(&self, sender: Address, gas_params: &GasParams) -> u64 {
+    pub fn value_transfer_gas(&self, sender: Address, _gas_params: &GasParams) -> u64 {
         self.frames.iter().fold(0u64, |total, frame| {
             let cost = if !frame.value.is_zero()
                 && !frame.target.is_empty()
                 && frame.target_address() != Some(sender)
             {
-                gas_params.transfer_value_cost()
+                // EIP-8141 uses EIP-2780's transaction value charge for
+                // value-bearing frames. This is distinct from CALLVALUE,
+                // which includes the call stipend and is used by the EVM
+                // CALL path.
+                eip2780::TX_VALUE_COST
             } else {
                 0
             };
@@ -222,8 +226,8 @@ mod tests {
         // Arbitrary signatures carry the fixed protocol-verification charge from EIP-8141.
         assert_eq!(transaction.calldata_tokens(), 10);
         assert_eq!(transaction.signature_verification_gas(), Some(100));
-        assert_eq!(transaction.intrinsic_gas(Address::ZERO), Some(15_615));
-        assert_eq!(transaction.gas_limit(Address::ZERO), Some(15_831));
-        assert_eq!(transaction.calldata_floor_gas(Address::ZERO), Some(15_831));
+        assert_eq!(transaction.intrinsic_gas(Address::ZERO), Some(12_615));
+        assert_eq!(transaction.gas_limit(Address::ZERO), Some(12_831));
+        assert_eq!(transaction.calldata_floor_gas(Address::ZERO), Some(12_831));
     }
 }

@@ -389,10 +389,10 @@ pub fn run<H: Handler + ?Sized>(
         total_frame_spent,
         total_spent,
         refund,
-        tx_gas_used = result_gas.tx_gas_used(),
+        tx_gas_used = result_gas.frame_tx_gas_used(),
         "Settling EIP-8141 frame transaction"
     );
-    settle_fees::<H>(evm, payer, result_gas.tx_gas_used())?;
+    settle_fees::<H>(evm, payer, result_gas.frame_tx_gas_used())?;
     take_error::<H::Error, _>(evm.ctx().error())?;
 
     evm.ctx().journal_mut().commit_tx();
