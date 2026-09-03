@@ -534,8 +534,9 @@ impl<
             p if p == U256::from(3) => U256::from(tx.max_priority_fee_per_gas()?),
             p if p == U256::from(4) => frame_tx.max_fee_per_gas,
             p if p == U256::from(5) => U256::from(tx.max_fee_per_blob_gas()),
-            p if p == U256::from(6) => frame_tx.max_cost(
+            p if p == U256::from(6) => frame_tx.max_cost_with_params(
                 tx.caller(),
+                self.cfg().gas_params(),
                 tx.total_blob_gas(),
                 self.block().blob_gasprice().unwrap_or_default(),
             ),
@@ -640,11 +641,12 @@ impl<
             .then(|| signature.signature.clone())
     }
 
-    fn approve_frame(
+    fn approve_frame_with_state_gas(
         &mut self,
         current_target: Address,
         scope: U256,
-    ) -> Result<(), FrameHostError> {
+        state_gas_left: u64,
+    ) -> Result<u64, FrameHostError> {
         let (resolved_target, current_frame_index, current) = {
             let runtime = self
                 .local()
@@ -674,8 +676,9 @@ impl<
             (
                 tx.caller(),
                 frame.allowed_scope(),
-                frame_tx.max_cost(
+                frame_tx.max_cost_with_params(
                     tx.caller(),
+                    self.cfg().gas_params(),
                     tx.total_blob_gas(),
                     self.block().blob_gasprice().unwrap_or_default(),
                 ),
@@ -696,9 +699,22 @@ impl<
             return Err(FrameHostError::Revert);
         }
 
+        let mut charged_state_gas = 0;
         if approves_payment {
             let balance_check_disabled = self.cfg().is_balance_check_disabled();
             let fee_charge_disabled = self.cfg().is_fee_charge_disabled();
+            let new_account_state_gas = self.cfg().gas_params().new_account_state_gas();
+            let sender_is_empty_result = self
+                .journal_mut()
+                .load_account_info_skip_cold_load(sender, false, false)
+                .map(|account| account.is_empty);
+            let sender_is_empty = match sender_is_empty_result {
+                Ok(is_empty) => is_empty,
+                Err(error) => {
+                    *self.error() = Err(error.unwrap_db_error().into());
+                    return Err(FrameHostError::Fatal);
+                }
+            };
             let payer_balance_result = self
                 .journal_mut()
                 .load_account_mut(resolved_target)
@@ -722,6 +738,12 @@ impl<
                     *self.error() = Err(error.into());
                     return Err(FrameHostError::Fatal);
                 }
+            }
+            if sender_is_empty {
+                if state_gas_left < new_account_state_gas {
+                    return Err(FrameHostError::OutOfGas);
+                }
+                charged_state_gas = new_account_state_gas;
             }
             let bump_result = self
                 .journal_mut()
@@ -775,7 +797,21 @@ impl<
             },
             sender_approved: current.sender_approved || approves_execution,
         };
-        Ok(())
+        Ok(charged_state_gas)
+    }
+
+    fn frame_sstore_state_gas(
+        &mut self,
+        address: Address,
+        key: StorageKey,
+        charge: u64,
+        refill: u64,
+    ) -> u64 {
+        let Some(runtime) = self.local_mut().frame_transaction_mut() else {
+            return refill;
+        };
+        runtime.record_sstore_state_gas(address, key, charge);
+        runtime.refill_sstore_state_gas(address, key, refill)
     }
 
     /* Config */

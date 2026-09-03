@@ -4,7 +4,7 @@ use core::{
     cell::{Ref, RefCell},
     ops::Range,
 };
-use primitives::Address;
+use primitives::{Address, HashMap, StorageKey};
 use std::{rc::Rc, string::String, vec::Vec};
 
 /// EIP-8141 approvals accumulated by successful top-level frames.
@@ -35,18 +35,53 @@ pub struct FrameTransactionRuntime {
     pub approval_stack: Vec<FrameApprovalState>,
     /// Approval produced by the completed top-level interpreter frame.
     pub root_approval: Option<FrameApprovalState>,
+    /// Top-level frame that owns the outstanding state-gas charge for each storage slot.
+    state_gas_owners: HashMap<(Address, StorageKey), usize>,
+    /// Journal of state-gas attribution changes retained across top-level frames.
+    state_gas_journal: Vec<FrameStateGasJournalEntry>,
+    /// State-gas journal checkpoints corresponding to active interpreter call frames.
+    state_gas_checkpoints: Vec<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum FrameStateGasJournalEntry {
+    Owner {
+        slot: (Address, StorageKey),
+        previous: Option<usize>,
+    },
+    GasUsed {
+        frame_index: usize,
+        previous: u64,
+    },
 }
 
 impl FrameTransactionRuntime {
+    /// Creates runtime state for a frame transaction.
+    pub fn new(resolved_target: Address) -> Self {
+        Self {
+            resolved_target,
+            ..Self::default()
+        }
+    }
+
     /// Enters an interpreter call frame approval scope.
     pub fn enter_scope(&mut self) {
         let state = self.approval_stack.last().copied().unwrap_or(self.approval);
         self.approval_stack.push(state);
+        self.state_gas_checkpoints
+            .push(self.state_gas_journal.len());
     }
 
     /// Exits an interpreter call frame, committing approvals only on success.
     pub fn exit_scope(&mut self, success: bool) {
-        let Some(state) = self.approval_stack.pop() else {
+        let state = self.approval_stack.pop();
+        let state_gas_checkpoint = self.state_gas_checkpoints.pop();
+        if !success {
+            if let Some(checkpoint) = state_gas_checkpoint {
+                self.revert_state_gas(checkpoint);
+            }
+        }
+        let Some(state) = state else {
             return;
         };
         if !success {
@@ -63,6 +98,100 @@ impl FrameTransactionRuntime {
     pub const fn commit_root_approval(&mut self) {
         if let Some(state) = self.root_approval.take() {
             self.approval = state;
+        }
+    }
+
+    /// Returns a checkpoint for state-gas ownership and receipt attribution.
+    pub const fn state_gas_checkpoint(&self) -> usize {
+        self.state_gas_journal.len()
+    }
+
+    /// Reverts state-gas ownership and receipt attribution to `checkpoint`.
+    pub fn revert_state_gas(&mut self, checkpoint: usize) {
+        while self.state_gas_journal.len() > checkpoint {
+            match self.state_gas_journal.pop().expect("length checked") {
+                FrameStateGasJournalEntry::Owner { slot, previous } => {
+                    if let Some(owner) = previous {
+                        self.state_gas_owners.insert(slot, owner);
+                    } else {
+                        self.state_gas_owners.remove(&slot);
+                    }
+                }
+                FrameStateGasJournalEntry::GasUsed {
+                    frame_index,
+                    previous,
+                } => {
+                    if let Some(gas_used) = self.state_gas_used.get_mut(frame_index) {
+                        *gas_used = previous;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Attributes a successful storage-creation state-gas charge to the current frame.
+    pub fn record_sstore_state_gas(&mut self, address: Address, key: StorageKey, amount: u64) {
+        if amount == 0 {
+            return;
+        }
+        let slot = (address, key);
+        let previous_owner = self.state_gas_owners.insert(slot, self.current_frame_index);
+        self.state_gas_journal
+            .push(FrameStateGasJournalEntry::Owner {
+                slot,
+                previous: previous_owner,
+            });
+        let gas_used = self
+            .state_gas_used
+            .get_mut(self.current_frame_index)
+            .expect("current frame receipt initialized");
+        let previous = *gas_used;
+        self.state_gas_journal
+            .push(FrameStateGasJournalEntry::GasUsed {
+                frame_index: self.current_frame_index,
+                previous,
+            });
+        *gas_used = gas_used
+            .checked_add(amount)
+            .expect("frame state gas is bounded by its u64 limit");
+    }
+
+    /// Applies a storage-restoration refill and returns the amount spendable by this frame.
+    pub fn refill_sstore_state_gas(
+        &mut self,
+        address: Address,
+        key: StorageKey,
+        amount: u64,
+    ) -> u64 {
+        if amount == 0 {
+            return 0;
+        }
+        let slot = (address, key);
+        let Some(owner) = self.state_gas_owners.remove(&slot) else {
+            return 0;
+        };
+        self.state_gas_journal
+            .push(FrameStateGasJournalEntry::Owner {
+                slot,
+                previous: Some(owner),
+            });
+        let gas_used = self
+            .state_gas_used
+            .get_mut(owner)
+            .expect("outstanding charge owner has a receipt");
+        let previous = *gas_used;
+        self.state_gas_journal
+            .push(FrameStateGasJournalEntry::GasUsed {
+                frame_index: owner,
+                previous,
+            });
+        *gas_used = gas_used
+            .checked_sub(amount)
+            .expect("refill cannot exceed its outstanding state-gas charge");
+        if owner == self.current_frame_index {
+            amount
+        } else {
+            0
         }
     }
 }

@@ -7,13 +7,14 @@ use crate::{
 use context_interface::{host::FrameHostError, Host};
 use primitives::{Bytes, B256, U256};
 
-use super::{system::copy_cost_and_memory_resize, VERYLOW};
+use super::system::copy_cost_and_memory_resize;
 
 #[inline]
 const fn host_error(error: FrameHostError) -> InstructionResult {
     match error {
         FrameHostError::Invalid => InstructionResult::OpcodeNotFound,
         FrameHostError::Revert => InstructionResult::Revert,
+        FrameHostError::OutOfGas => InstructionResult::OutOfGas,
         FrameHostError::Fatal => InstructionResult::FatalExternalError,
     }
 }
@@ -42,10 +43,15 @@ pub fn approve<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
         )?;
         Bytes::copy_from_slice(context.interpreter.memory.slice_len(offset, len).as_ref())
     };
-    context
+    let state_gas = context
         .host
-        .approve_frame(context.interpreter.input.target_address(), scope)
+        .approve_frame_with_state_gas(
+            context.interpreter.input.target_address(),
+            scope,
+            context.interpreter.gas.reservoir(),
+        )
         .map_err(host_error)?;
+    state_gas!(context.interpreter, state_gas);
     context.interpreter.return_with_output(output);
     Err(InstructionResult::Return)
 }
@@ -122,7 +128,6 @@ pub fn framedatacopy<IT: ITy, H: Host + ?Sized>(mut context: Ictx<'_, H, IT>) ->
         ?frame_index,
         "Executing FRAMEDATACOPY"
     );
-    gas!(context.interpreter, VERYLOW);
     let data = context
         .host
         .frame_data(frame_index)
@@ -178,7 +183,6 @@ pub fn sigdatacopy<IT: ITy, H: Host + ?Sized>(mut context: Ictx<'_, H, IT>) -> R
         ?len,
         "Executing SIGDATACOPY"
     );
-    gas!(context.interpreter, VERYLOW);
     let data = context
         .host
         .frame_signature_bytes(signature_index)

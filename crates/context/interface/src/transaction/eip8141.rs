@@ -189,10 +189,51 @@ impl FrameTransaction {
     ///
     /// `blob_base_fee` is used for blob costs because `max_fee_per_blob_gas` is only
     /// an inclusion bound for EIP-8141 transactions.
+    pub fn checked_max_cost(
+        &self,
+        sender: Address,
+        blob_gas: u64,
+        blob_base_fee: u128,
+    ) -> Option<U256> {
+        self.checked_max_cost_with_params(
+            sender,
+            &GasParams::new_spec(SpecId::AMSTERDAM),
+            blob_gas,
+            blob_base_fee,
+        )
+    }
+
+    /// Calculates maximum fee exposure using the active fork's gas parameters.
+    pub fn checked_max_cost_with_params(
+        &self,
+        sender: Address,
+        gas_params: &GasParams,
+        blob_gas: u64,
+        blob_base_fee: u128,
+    ) -> Option<U256> {
+        U256::from(self.gas_limit_with_params(sender, gas_params)?)
+            .checked_mul(self.max_fee_per_gas)?
+            .checked_add(U256::from(blob_gas).checked_mul(U256::from(blob_base_fee))?)
+    }
+
+    /// Calculates the validated maximum fee exposure.
+    ///
+    /// Frame transactions whose maximum cost overflows are rejected during validation.
     pub fn max_cost(&self, sender: Address, blob_gas: u64, blob_base_fee: u128) -> U256 {
-        U256::from(self.gas_limit(sender).unwrap_or(u64::MAX))
-            .saturating_mul(self.max_fee_per_gas)
-            .saturating_add(U256::from(blob_gas).saturating_mul(U256::from(blob_base_fee)))
+        self.checked_max_cost(sender, blob_gas, blob_base_fee)
+            .expect("EIP-8141 maximum cost must be validated before execution")
+    }
+
+    /// Calculates validated maximum fee exposure using the active fork's gas parameters.
+    pub fn max_cost_with_params(
+        &self,
+        sender: Address,
+        gas_params: &GasParams,
+        blob_gas: u64,
+        blob_base_fee: u128,
+    ) -> U256 {
+        self.checked_max_cost_with_params(sender, gas_params, blob_gas, blob_base_fee)
+            .expect("EIP-8141 maximum cost must be validated before execution")
     }
 }
 

@@ -9,7 +9,7 @@ use context_interface::{
         account::JournaledAccountTr, JournalCheckpoint, JournalLoadError, JournalTr,
     },
     local::{FrameToken, OutFrame},
-    Cfg, ContextTr, Database,
+    Cfg, ContextTr, Database, LocalContextTr,
 };
 use core::cmp::min;
 use derive_where::derive_where;
@@ -117,6 +117,39 @@ impl EthFrame<EthInterpreter> {
         reservoir_remaining_gas: u64,
         checkpoint: JournalCheckpoint,
     ) {
+        self.clear_with_state_gas(
+            data,
+            input,
+            depth,
+            memory,
+            bytecode,
+            inputs,
+            is_static,
+            spec_id,
+            gas_limit,
+            reservoir_remaining_gas,
+            false,
+            checkpoint,
+        );
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    #[inline(always)]
+    fn clear_with_state_gas(
+        &mut self,
+        data: FrameData,
+        input: FrameInput,
+        depth: usize,
+        memory: SharedMemory,
+        bytecode: ExtBytecode,
+        inputs: InputsImpl,
+        is_static: bool,
+        spec_id: SpecId,
+        gas_limit: u64,
+        reservoir_remaining_gas: u64,
+        state_gas_isolated: bool,
+        checkpoint: JournalCheckpoint,
+    ) {
         let Self {
             data: data_ref,
             input: input_ref,
@@ -138,6 +171,12 @@ impl EthFrame<EthInterpreter> {
             gas_limit,
             reservoir_remaining_gas,
         );
+        if state_gas_isolated {
+            interpreter.gas = Gas::new_with_regular_gas_and_isolated_state_gas(
+                gas_limit,
+                reservoir_remaining_gas,
+            );
+        }
         *checkpoint_ref = checkpoint;
     }
 
@@ -156,8 +195,8 @@ impl EthFrame<EthInterpreter> {
         mut inputs: Box<CallInputs>,
     ) -> Result<ItemOrResult<FrameToken, FrameResult>, ERROR> {
         let reservoir_remaining_gas = inputs.reservoir;
+        let state_gas_isolated = inputs.state_gas_isolated;
         let entry_gas = inputs.entry_gas;
-        let entry_state_gas = inputs.entry_state_gas;
         let charged_new_account_state_gas = inputs.charged_new_account_state_gas;
         let mut gas = if inputs.state_gas_isolated {
             Gas::new_with_regular_gas_and_isolated_state_gas(
@@ -171,8 +210,7 @@ impl EthFrame<EthInterpreter> {
         // EIP-8141 frame targets are entered as top-level calls, so their
         // warm/cold account access is charged against the frame's own gas
         // allocation before dispatching its code.
-        let entry_gas_sufficient =
-            gas.record_state_cost(entry_state_gas) && gas.record_regular_cost(entry_gas);
+        let entry_gas_sufficient = gas.record_regular_cost(entry_gas);
         if !entry_gas_sufficient {
             gas.spend_all();
         }
@@ -284,12 +322,6 @@ impl EthFrame<EthInterpreter> {
             return return_result(gas, InstructionResult::CallTooDeep);
         }
 
-        // Precompiles receive the remaining frame gas as well. Otherwise their
-        // result would be initialized from the pre-charge limit and lose the
-        // same entry charge on the precompile path.
-        inputs.gas_limit = gas.remaining();
-        inputs.reservoir = gas.reservoir();
-
         // Create subroutine checkpoint
         let checkpoint = ctx.journal_mut().checkpoint();
 
@@ -312,6 +344,12 @@ impl EthFrame<EthInterpreter> {
                 return return_result(gas, InstructionResult::OutOfGas);
             }
         }
+
+        // Forward both pools after all frame-entry charges. Reusing the original
+        // limits would discard the target-access and new-account charges when
+        // the interpreter or precompile result is initialized.
+        inputs.gas_limit = gas.remaining();
+        inputs.reservoir = gas.reservoir();
 
         let interpreter_input = InputsImpl {
             target_address: inputs.target_address,
@@ -361,7 +399,7 @@ impl EthFrame<EthInterpreter> {
         }
 
         // Create interpreter and executes call and push new CallStackFrame.
-        this.get(EthFrame::invalid).clear(
+        this.get(EthFrame::invalid).clear_with_state_gas(
             FrameData::Call(CallFrame {
                 return_memory_range: inputs.return_memory_offset.clone(),
             }),
@@ -374,6 +412,7 @@ impl EthFrame<EthInterpreter> {
             ctx.cfg().spec().into(),
             gas_limit,
             reservoir_remaining_gas,
+            state_gas_isolated,
             checkpoint,
         );
 
@@ -393,6 +432,7 @@ impl EthFrame<EthInterpreter> {
         inputs: Box<CreateInputs>,
     ) -> Result<ItemOrResult<FrameToken, FrameResult>, ERROR> {
         let reservoir_remaining_gas = inputs.reservoir();
+        let state_gas_isolated = context.local().frame_transaction().is_some();
         let spec = context.cfg().spec().into();
         // EIP-8037 refund for the CREATE opcode's upfront `create_state_gas` is
         // applied uniformly in `return_result` when the create fails (revert,
@@ -472,7 +512,7 @@ impl EthFrame<EthInterpreter> {
         };
         let gas_limit = inputs.gas_limit();
 
-        this.get(EthFrame::invalid).clear(
+        this.get(EthFrame::invalid).clear_with_state_gas(
             FrameData::Create(CreateFrame { created_address }),
             FrameInput::Create(inputs),
             depth,
@@ -483,6 +523,7 @@ impl EthFrame<EthInterpreter> {
             spec,
             gas_limit,
             reservoir_remaining_gas,
+            state_gas_isolated,
             checkpoint,
         );
 

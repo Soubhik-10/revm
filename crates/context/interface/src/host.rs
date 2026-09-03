@@ -16,6 +16,8 @@ pub enum FrameHostError {
     Invalid,
     /// The current frame must revert.
     Revert,
+    /// The current call frame has insufficient state gas.
+    OutOfGas,
     /// A database or other fatal host error occurred.
     Fatal,
 }
@@ -105,6 +107,34 @@ pub trait Host {
         _scope: U256,
     ) -> Result<(), FrameHostError> {
         Err(FrameHostError::Invalid)
+    }
+
+    /// Applies an EIP-8141 approval and returns any sender-creation state-gas charge.
+    ///
+    /// `state_gas_left` is supplied by the interpreter so the host can reject an unaffordable
+    /// approval before changing state. The default preserves compatibility with hosts that do not
+    /// implement EIP-8141 state-gas accounting.
+    fn approve_frame_with_state_gas(
+        &mut self,
+        current_target: Address,
+        scope: U256,
+        _state_gas_left: u64,
+    ) -> Result<u64, FrameHostError> {
+        self.approve_frame(current_target, scope)?;
+        Ok(0)
+    }
+
+    /// Records EIP-8141 storage state-gas ownership and returns the spendable refill.
+    ///
+    /// Outside a frame transaction, the full refill remains spendable under EIP-8037.
+    fn frame_sstore_state_gas(
+        &mut self,
+        _address: Address,
+        _key: StorageKey,
+        _charge: u64,
+        refill: u64,
+    ) -> u64 {
+        refill
     }
 
     /* Config */

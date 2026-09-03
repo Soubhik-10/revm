@@ -25,6 +25,7 @@ struct AtomicBatch {
     checkpoint: context_interface::journaled_state::JournalCheckpoint,
     approval: FrameApprovalState,
     warm_accesses: WarmAccessSnapshot,
+    state_gas_checkpoint: usize,
     receipt_start: usize,
 }
 
@@ -56,10 +57,7 @@ pub fn run<H: Handler + ?Sized>(
         .map_err(H::Error::from)?;
     evm.ctx()
         .local_mut()
-        .set_frame_transaction(Some(FrameTransactionRuntime {
-            resolved_target: sender,
-            ..Default::default()
-        }));
+        .set_frame_transaction(Some(FrameTransactionRuntime::new(sender)));
 
     let (intrinsic, floor_gas, frame_count) = {
         let frame_tx = evm
@@ -89,7 +87,6 @@ pub fn run<H: Handler + ?Sized>(
         "Starting EIP-8141 frame transaction"
     );
     let mut receipts = Vec::with_capacity(frame_count);
-    let mut frame_state_gas = Vec::with_capacity(frame_count);
     let mut frame_refunds = Vec::with_capacity(frame_count);
     let mut batch: Option<AtomicBatch> = None;
     let mut frame_index = 0usize;
@@ -137,6 +134,7 @@ pub fn run<H: Handler + ?Sized>(
                 checkpoint,
                 approval: runtime.approval,
                 warm_accesses: evm.ctx_ref().journal().warm_access_snapshot(),
+                state_gas_checkpoint: runtime.state_gas_checkpoint(),
                 receipt_start: receipts.len(),
             });
             tracing::info!(
@@ -151,44 +149,77 @@ pub fn run<H: Handler + ?Sized>(
             runtime.resolved_target = target;
             runtime.root_approval = None;
             runtime.approval_stack.clear();
+            debug_assert_eq!(runtime.state_gas_used.len(), frame_index);
+            runtime.state_gas_used.push(0);
         }
 
         let frame_checkpoint = evm.ctx().journal_mut().checkpoint();
         let log_start = evm.ctx_ref().journal().logs().len();
-        let (target_code_hash, frame_input, entry_gas, entry_state_gas) =
-            frame_input::<H>(evm, &frame, target)?;
+        let (target_code_hash, frame_input, entry_gas) = frame_input::<H>(evm, &frame, target)?;
         let uses_default_code = frame.mode == FrameMode::Verify
             && target_code_hash == KECCAK_EMPTY
+            && !evm
+                .ctx_ref()
+                .journal()
+                .precompile_addresses()
+                .contains(&target)
             && target != EXPIRY_VERIFIER;
 
         let (result, spent, state_gas, refund) = if uses_default_code {
-            let valid = default_verification_is_valid::<H>(evm, target, frame.allowed_scope());
-            let runtime = evm.ctx().local_mut().frame_transaction_mut().unwrap();
-            runtime.enter_scope();
+            let mut gas = interpreter::Gas::new_with_regular_gas_and_isolated_state_gas(
+                frame.limits.execution,
+                frame.limits.state,
+            );
+            let entry_gas_sufficient = gas.record_regular_cost(entry_gas);
+            if !entry_gas_sufficient {
+                gas.spend_all();
+            }
+            let valid = entry_gas_sufficient
+                && default_verification_is_valid::<H>(evm, target, frame.allowed_scope());
+            evm.ctx()
+                .local_mut()
+                .frame_transaction_mut()
+                .unwrap()
+                .enter_scope();
             let approval_result = if valid {
-                evm.ctx()
-                    .approve_frame(target, U256::from(frame.allowed_scope()))
-            } else {
+                evm.ctx().approve_frame_with_state_gas(
+                    target,
+                    U256::from(frame.allowed_scope()),
+                    gas.reservoir(),
+                )
+            } else if entry_gas_sufficient {
                 Err(context_interface::host::FrameHostError::Revert)
+            } else {
+                Err(context_interface::host::FrameHostError::OutOfGas)
             };
-            let success = approval_result.is_ok();
+            let result = match approval_result {
+                Ok(state_gas) if gas.record_state_cost(state_gas) => InstructionResult::Return,
+                Ok(_) | Err(context_interface::host::FrameHostError::OutOfGas) => {
+                    gas.spend_all();
+                    InstructionResult::OutOfGas
+                }
+                Err(context_interface::host::FrameHostError::Revert) => InstructionResult::Revert,
+                Err(context_interface::host::FrameHostError::Invalid) => {
+                    InstructionResult::OpcodeNotFound
+                }
+                Err(context_interface::host::FrameHostError::Fatal) => {
+                    InstructionResult::FatalExternalError
+                }
+            };
+            let success = result.is_ok();
             evm.ctx()
                 .local_mut()
                 .frame_transaction_mut()
                 .unwrap()
                 .exit_scope(success);
             (
+                result,
+                frame.limits.execution.saturating_sub(gas.remaining()),
                 if success {
-                    InstructionResult::Return
+                    frame.limits.state.saturating_sub(gas.reservoir())
                 } else {
-                    InstructionResult::Revert
+                    0
                 },
-                // Default verification bypasses the regular call-frame
-                // constructor, so charge the resolved target access here.
-                // The EIP applies this entry charge to every frame,
-                // including VERIFY frames that use default verification.
-                entry_gas,
-                entry_state_gas,
                 0,
             )
         } else {
@@ -218,7 +249,11 @@ pub fn run<H: Handler + ?Sized>(
             // Frame execution and state gas are independent budgets. The
             // state budget must not be subtracted from execution gas used.
             let spent = frame.limits.execution.saturating_sub(gas.remaining());
-            let state_gas = gas.state_gas_spent().max(0) as u64;
+            let state_gas = if result.is_ok() {
+                frame.limits.state.saturating_sub(gas.reservoir())
+            } else {
+                0
+            };
             let refund = if result.is_ok() {
                 gas.refunded().max(0) as u64
             } else {
@@ -277,13 +312,12 @@ pub fn run<H: Handler + ?Sized>(
             },
             logs,
         });
-        frame_state_gas.push(state_gas);
         frame_refunds.push(refund);
         {
             let runtime = evm.ctx().local_mut().frame_transaction_mut().unwrap();
             runtime.statuses.push(status);
             runtime.execution_gas_used.push(spent);
-            runtime.state_gas_used.push(state_gas);
+            runtime.state_gas_used[frame_index] = state_gas;
         }
 
         if !success {
@@ -301,13 +335,13 @@ pub fn run<H: Handler + ?Sized>(
                 runtime.approval = atomic.approval;
                 runtime.root_approval = None;
                 runtime.approval_stack.clear();
+                runtime.revert_state_gas(atomic.state_gas_checkpoint);
                 // The failing frame keeps its own gas accounting. Earlier frames remain
                 // successful in the receipt, but their rolled-back state changes no longer earn
                 // state-gas credit or retain logs.
                 for index in atomic.receipt_start..receipts.len() - 1 {
                     receipts[index].logs.clear();
                     receipts[index].gas_used.state = 0;
-                    frame_state_gas[index] = 0;
                     frame_refunds[index] = 0;
                     runtime.state_gas_used[index] = 0;
                 }
@@ -329,7 +363,6 @@ pub fn run<H: Handler + ?Sized>(
                         },
                         logs: Vec::new(),
                     });
-                    frame_state_gas.push(0);
                     frame_refunds.push(0);
                     let runtime = evm.ctx().local_mut().frame_transaction_mut().unwrap();
                     runtime.statuses.push(FrameStatus::SkippedAtomicBatch);
@@ -362,7 +395,17 @@ pub fn run<H: Handler + ?Sized>(
     let total_frame_spent = receipts.iter().fold(0u64, |total, receipt| {
         total.saturating_add(receipt.gas_used.execution)
     });
-    let total_state_gas = frame_state_gas
+    let final_frame_state_gas = evm
+        .ctx_ref()
+        .local()
+        .frame_transaction()
+        .unwrap()
+        .state_gas_used
+        .clone();
+    for (receipt, state_gas) in receipts.iter_mut().zip(&final_frame_state_gas) {
+        receipt.gas_used.state = *state_gas;
+    }
+    let total_state_gas = final_frame_state_gas
         .iter()
         .copied()
         .fold(0u64, u64::saturating_add);
@@ -460,8 +503,12 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
         }
         .into());
     }
-    if U256::from(ctx.cfg().tx_gas_limit_cap())
+    let blob_cost = U256::from(tx.total_blob_gas())
+        .checked_mul(U256::from(ctx.block().blob_gasprice().unwrap_or_default()))
+        .ok_or(InvalidTransaction::OverflowPaymentInTransaction)?;
+    if U256::from(gas_limit)
         .checked_mul(frame_tx.max_fee_per_gas)
+        .and_then(|execution_cost| execution_cost.checked_add(blob_cost))
         .is_none()
     {
         return Err(InvalidTransaction::OverflowPaymentInTransaction.into());
@@ -684,7 +731,7 @@ fn frame_input<H: Handler + ?Sized>(
     evm: &mut H::Evm,
     frame: &alloy_eip8141::Frame,
     target: Address,
-) -> Result<(primitives::B256, FrameInput, u64, u64), H::Error> {
+) -> Result<(primitives::B256, FrameInput, u64), H::Error> {
     let gas_params = evm.ctx_ref().cfg().gas_params();
     let warm_access_cost = gas_params.warm_storage_read_cost();
     let cold_account_additional_cost = gas_params.cold_account_additional_cost();
@@ -700,9 +747,11 @@ fn frame_input<H: Handler + ?Sized>(
         cold_account_additional_cost,
     );
     let entry_state_gas =
-        (frame.mode == FrameMode::Sender && !frame.value.is_zero() && account.info.is_empty())
-            .then_some(new_account_state_gas)
-            .unwrap_or_default();
+        if frame.mode == FrameMode::Sender && !frame.value.is_zero() && account.info.is_empty() {
+            new_account_state_gas
+        } else {
+            0
+        };
     let target_code_hash = account.info.code_hash();
     let mut bytecode_address = target;
     let mut bytecode = account.info.code.clone().unwrap_or_default();
@@ -746,12 +795,11 @@ fn frame_input<H: Handler + ?Sized>(
             charged_new_account_state_gas: entry_state_gas != 0,
         })),
         entry_gas,
-        entry_state_gas,
     ))
 }
 
 #[inline]
-fn account_access_gas(
+const fn account_access_gas(
     is_cold: bool,
     warm_access_cost: u64,
     cold_account_additional_cost: u64,
@@ -794,8 +842,9 @@ fn settle_fees<H: Handler + ?Sized>(
         let tx = ctx.tx();
         let frame_tx = tx.frame_transaction().unwrap();
         let blob_gas = tx.total_blob_gas();
-        let max_cost = frame_tx.max_cost(
+        let max_cost = frame_tx.max_cost_with_params(
             tx.caller(),
+            ctx.cfg().gas_params(),
             blob_gas,
             ctx.block().blob_gasprice().unwrap_or_default(),
         );
@@ -834,15 +883,22 @@ mod tests {
     use alloy_eip8141::{Frame, FrameLimits, FrameSignature};
     use alloy_signer::{Signature, SignerSync};
     use alloy_signer_local::PrivateKeySigner;
-    use bytecode::opcode::{APPROVE, PUSH0, PUSH1, REVERT, SSTORE, STOP};
+    use bytecode::opcode::{
+        APPROVE, CALLDATALOAD, FRAMEDATACOPY, PUSH0, PUSH1, REVERT, SIGDATACOPY, SSTORE, STOP,
+    };
     use context::{result::EVMError, transaction::FrameTransaction, Context, TxEnv};
     use database::{CacheDB, EmptyDB};
-    use primitives::{address, hardfork::SpecId, TxKind, B256};
+    use primitives::{address, eip7825, eip8037, hardfork::SpecId, TxKind, B256};
     use state::{AccountInfo, Bytecode};
 
     const SENDER: Address = address!("1000000000000000000000000000000000000001");
     const STORAGE_TARGET: Address = address!("2000000000000000000000000000000000000002");
     const REVERT_TARGET: Address = address!("3000000000000000000000000000000000000003");
+    const VALUE_TARGET: Address = address!("4000000000000000000000000000000000000004");
+    const ECRECOVER: Address = address!("0000000000000000000000000000000000000001");
+
+    const NEW_ACCOUNT_STATE_GAS: u64 = eip8037::NEW_ACCOUNT_BYTES * eip8037::CPSB_GLAMSTERDAM;
+    const NEW_SLOT_STATE_GAS: u64 = eip8037::SSTORE_SET_BYTES * eip8037::CPSB_GLAMSTERDAM;
 
     fn encoded_target(target: Address) -> Bytes {
         Bytes::copy_from_slice(target.as_slice())
@@ -956,8 +1012,8 @@ mod tests {
                 flags: 0x01,
                 target: encoded_target(sponsor.address()),
                 limits: FrameLimits {
-                    execution: 2_000,
-                    state: 0,
+                    execution: 3_000,
+                    state: NEW_ACCOUNT_STATE_GAS,
                 },
                 value: U256::ZERO,
                 data: Bytes::new(),
@@ -988,6 +1044,361 @@ mod tests {
             .iter()
             .all(|receipt| receipt.status == FrameStatus::Success));
         assert_eq!(output.state[&sender.address()].info.nonce, 1);
+    }
+
+    #[test]
+    fn default_code_halts_when_target_access_exceeds_execution_limit() {
+        let sender = PrivateKeySigner::random();
+        let signature_hash = keccak256("frame transaction default entry gas");
+        let payload = FrameTransaction {
+            frames: vec![Frame {
+                mode: FrameMode::Verify,
+                flags: 0x03,
+                target: Bytes::new(),
+                limits: FrameLimits {
+                    execution: 99,
+                    state: NEW_ACCOUNT_STATE_GAS,
+                },
+                value: U256::ZERO,
+                data: Bytes::new(),
+            }],
+            signatures: vec![signed_entry(&sender, Bytes::new(), signature_hash)],
+            signature_hash,
+            ..Default::default()
+        };
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+            .with_db(CacheDB::<EmptyDB>::default())
+            .build_mainnet();
+
+        assert!(matches!(
+            evm.transact(tx_env(sender.address(), payload)),
+            Err(EVMError::Transaction(InvalidTransaction::Str(_)))
+        ));
+    }
+
+    #[test]
+    fn payment_approval_halts_when_new_sender_state_gas_is_insufficient() {
+        let sender = PrivateKeySigner::random();
+        let signature_hash = keccak256("frame transaction approval state gas");
+        let payload = FrameTransaction {
+            frames: vec![Frame {
+                mode: FrameMode::Verify,
+                flags: 0x03,
+                target: Bytes::new(),
+                limits: FrameLimits {
+                    execution: 100,
+                    state: NEW_ACCOUNT_STATE_GAS - 1,
+                },
+                value: U256::ZERO,
+                data: Bytes::new(),
+            }],
+            signatures: vec![signed_entry(&sender, Bytes::new(), signature_hash)],
+            signature_hash,
+            ..Default::default()
+        };
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+            .with_db(CacheDB::<EmptyDB>::default())
+            .build_mainnet();
+
+        assert!(matches!(
+            evm.transact(tx_env(sender.address(), payload)),
+            Err(EVMError::Transaction(InvalidTransaction::Str(_)))
+        ));
+    }
+
+    #[test]
+    fn value_frame_charges_new_account_state_gas_once() {
+        let approve_code = [PUSH1, 0x03, PUSH0, PUSH0, APPROVE];
+        let mut db = CacheDB::<EmptyDB>::default();
+        db.insert_account_info(
+            SENDER,
+            account_with_code(approve_code).with_balance(U256::from(1)),
+        );
+        let payload = FrameTransaction {
+            frames: vec![
+                Frame {
+                    mode: FrameMode::Default,
+                    flags: 0x03,
+                    target: Bytes::new(),
+                    limits: FrameLimits {
+                        execution: 10_000,
+                        state: 0,
+                    },
+                    value: U256::ZERO,
+                    data: Bytes::new(),
+                },
+                Frame {
+                    mode: FrameMode::Sender,
+                    flags: 0,
+                    target: encoded_target(VALUE_TARGET),
+                    limits: FrameLimits {
+                        execution: 3_000,
+                        state: NEW_ACCOUNT_STATE_GAS,
+                    },
+                    value: U256::from(1),
+                    data: Bytes::new(),
+                },
+            ],
+            ..Default::default()
+        };
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+            .with_db(db)
+            .build_mainnet();
+
+        let output = evm.transact(tx_env(SENDER, payload)).unwrap();
+        let ExecutionResult::FrameTransaction { frame_receipts, .. } = output.result else {
+            panic!("expected frame transaction result")
+        };
+        assert_eq!(frame_receipts[1].status, FrameStatus::Success);
+        assert_eq!(frame_receipts[1].gas_used.state, NEW_ACCOUNT_STATE_GAS);
+        assert_eq!(output.state[&VALUE_TARGET].info.balance, U256::from(1));
+    }
+
+    #[test]
+    fn verify_frame_dispatches_active_precompile_before_default_code() {
+        let approve_code = [PUSH1, 0x03, PUSH0, PUSH0, APPROVE];
+        let mut db = CacheDB::<EmptyDB>::default();
+        db.insert_account_info(SENDER, account_with_code(approve_code));
+        let payload = FrameTransaction {
+            frames: vec![
+                Frame::new(
+                    FrameMode::Default,
+                    0x03,
+                    Bytes::new(),
+                    10_000,
+                    U256::ZERO,
+                    Bytes::new(),
+                ),
+                Frame::new(
+                    FrameMode::Verify,
+                    0,
+                    encoded_target(ECRECOVER),
+                    4_000,
+                    U256::ZERO,
+                    Bytes::new(),
+                ),
+            ],
+            ..Default::default()
+        };
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+            .with_db(db)
+            .build_mainnet();
+
+        let output = evm.transact(tx_env(SENDER, payload)).unwrap();
+        let ExecutionResult::FrameTransaction { frame_receipts, .. } = output.result else {
+            panic!("expected frame transaction result")
+        };
+        assert_eq!(frame_receipts[1].status, FrameStatus::Success);
+        assert_eq!(frame_receipts[1].gas_used.execution, 3_100);
+    }
+
+    #[test]
+    fn cross_frame_refill_reduces_the_owning_receipt() {
+        let approve_code = [PUSH1, 0x03, PUSH0, PUSH0, APPROVE];
+        let store_calldata_code = [PUSH0, CALLDATALOAD, PUSH0, SSTORE, STOP];
+        let mut db = CacheDB::<EmptyDB>::default();
+        db.insert_account_info(SENDER, account_with_code(approve_code));
+        db.insert_account_info(STORAGE_TARGET, account_with_code(store_calldata_code));
+        let mut create_data = vec![0; 32];
+        create_data[31] = 1;
+        let payload = FrameTransaction {
+            frames: vec![
+                Frame::new(
+                    FrameMode::Default,
+                    0x03,
+                    Bytes::new(),
+                    10_000,
+                    U256::ZERO,
+                    Bytes::new(),
+                ),
+                Frame {
+                    mode: FrameMode::Default,
+                    target: encoded_target(STORAGE_TARGET),
+                    limits: FrameLimits {
+                        execution: 100_000,
+                        state: NEW_SLOT_STATE_GAS,
+                    },
+                    data: create_data.into(),
+                    ..Default::default()
+                },
+                Frame {
+                    mode: FrameMode::Default,
+                    target: encoded_target(STORAGE_TARGET),
+                    limits: FrameLimits {
+                        execution: 100_000,
+                        state: 0,
+                    },
+                    data: Bytes::from(vec![0; 32]),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+            .with_db(db)
+            .build_mainnet();
+
+        let output = evm.transact(tx_env(SENDER, payload)).unwrap();
+        let ExecutionResult::FrameTransaction { frame_receipts, .. } = output.result else {
+            panic!("expected frame transaction result")
+        };
+        assert_eq!(frame_receipts[1].gas_used.state, 0);
+        assert_eq!(frame_receipts[2].gas_used.state, 0);
+    }
+
+    #[test]
+    fn cross_frame_refill_is_not_spendable_by_the_restoring_frame() {
+        let approve_code = [PUSH1, 0x03, PUSH0, PUSH0, APPROVE];
+        let store_two_slots_code = [
+            PUSH0,
+            CALLDATALOAD,
+            PUSH0,
+            SSTORE,
+            PUSH1,
+            0x20,
+            CALLDATALOAD,
+            PUSH1,
+            0x01,
+            SSTORE,
+            STOP,
+        ];
+        let mut db = CacheDB::<EmptyDB>::default();
+        db.insert_account_info(SENDER, account_with_code(approve_code));
+        db.insert_account_info(STORAGE_TARGET, account_with_code(store_two_slots_code));
+        let mut create_data = vec![0; 64];
+        create_data[31] = 1;
+        let mut restore_then_create_data = vec![0; 64];
+        restore_then_create_data[63] = 1;
+        let payload = FrameTransaction {
+            frames: vec![
+                Frame::new(
+                    FrameMode::Default,
+                    0x03,
+                    Bytes::new(),
+                    10_000,
+                    U256::ZERO,
+                    Bytes::new(),
+                ),
+                Frame {
+                    mode: FrameMode::Default,
+                    target: encoded_target(STORAGE_TARGET),
+                    limits: FrameLimits {
+                        execution: 200_000,
+                        state: NEW_SLOT_STATE_GAS,
+                    },
+                    data: create_data.into(),
+                    ..Default::default()
+                },
+                Frame {
+                    mode: FrameMode::Default,
+                    target: encoded_target(STORAGE_TARGET),
+                    limits: FrameLimits {
+                        execution: 200_000,
+                        state: 0,
+                    },
+                    data: restore_then_create_data.into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+            .with_db(db)
+            .build_mainnet();
+
+        let output = evm.transact(tx_env(SENDER, payload)).unwrap();
+        let ExecutionResult::FrameTransaction { frame_receipts, .. } = output.result else {
+            panic!("expected frame transaction result")
+        };
+        assert_eq!(frame_receipts[1].gas_used.state, NEW_SLOT_STATE_GAS);
+        assert_eq!(frame_receipts[2].status, FrameStatus::Failure);
+        assert_eq!(frame_receipts[2].gas_used.state, 0);
+    }
+
+    #[test]
+    fn frame_copy_opcodes_charge_their_fixed_cost_once() {
+        let code = [
+            PUSH0,
+            PUSH0,
+            PUSH0,
+            PUSH0,
+            FRAMEDATACOPY,
+            PUSH0,
+            PUSH0,
+            PUSH0,
+            PUSH0,
+            SIGDATACOPY,
+            PUSH1,
+            0x03,
+            PUSH0,
+            PUSH0,
+            APPROVE,
+        ];
+        let mut db = CacheDB::<EmptyDB>::default();
+        db.insert_account_info(SENDER, account_with_code(code));
+        let payload = FrameTransaction {
+            frames: vec![Frame::new(
+                FrameMode::Default,
+                0x03,
+                Bytes::new(),
+                1_000,
+                U256::ZERO,
+                Bytes::new(),
+            )],
+            signatures: vec![FrameSignature {
+                scheme: SignatureScheme::Arbitrary,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+            .with_db(db)
+            .build_mainnet();
+
+        let output = evm.transact(tx_env(SENDER, payload)).unwrap();
+        let ExecutionResult::FrameTransaction { frame_receipts, .. } = output.result else {
+            panic!("expected frame transaction result")
+        };
+        assert_eq!(frame_receipts[0].gas_used.execution, 129);
+    }
+
+    #[test]
+    fn max_cost_overflow_uses_actual_max_gas() {
+        let mut payload = FrameTransaction {
+            frames: vec![Frame {
+                limits: FrameLimits {
+                    execution: 0,
+                    state: 1,
+                },
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let intrinsic = payload.intrinsic_gas(SENDER).unwrap();
+        payload.frames[0].limits.execution = eip7825::TX_GAS_LIMIT_CAP - intrinsic;
+        payload.max_fee_per_gas = U256::MAX / U256::from(eip7825::TX_GAS_LIMIT_CAP);
+        assert_eq!(
+            payload.gas_limit(SENDER),
+            Some(eip7825::TX_GAS_LIMIT_CAP + 1)
+        );
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+            .with_db(CacheDB::<EmptyDB>::default())
+            .build_mainnet();
+
+        assert!(matches!(
+            evm.transact(tx_env(SENDER, payload)),
+            Err(EVMError::Transaction(
+                InvalidTransaction::OverflowPaymentInTransaction
+            ))
+        ));
     }
 
     #[test]

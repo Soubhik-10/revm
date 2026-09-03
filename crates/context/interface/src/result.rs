@@ -63,7 +63,7 @@ impl<R, S> ExecResultAndState<R, S> {
 /// ## Derived values
 ///
 /// - [`tx_gas_used()`](ResultGas::tx_gas_used) = `max(total_gas_spent − refunded, floor_gas)` for standard transactions
-/// - [`frame_tx_gas_used()`](ResultGas::frame_tx_gas_used) = `frame_block_regular_gas_used + state_gas_spent` for EIP-8141
+/// - [`frame_tx_gas_used()`](ResultGas::frame_tx_gas_used) = `max(total_gas_spent - refunded - state_gas_spent, floor_gas) + state_gas_spent` for EIP-8141
 /// - [`block_regular_gas_used()`](ResultGas::block_regular_gas_used) = `max(total_gas_spent − state_gas_spent, floor_gas)` for standard transactions
 /// - [`block_state_gas_used()`](ResultGas::block_state_gas_used) = `state_gas_spent`
 /// - [`spent_sub_refunded()`](ResultGas::spent_sub_refunded) = `total_gas_spent − refunded` (before floor gas check)
@@ -275,8 +275,12 @@ impl ResultGas {
     /// the floor, so it must not be absorbed by the floor calculation.
     #[inline]
     pub const fn frame_tx_gas_used(&self) -> u64 {
-        self.frame_block_regular_gas_used()
-            .saturating_add(self.state_gas_spent_final())
+        max(
+            self.spent_sub_refunded()
+                .saturating_sub(self.state_gas_spent_final()),
+            self.floor_gas(),
+        )
+        .saturating_add(self.state_gas_spent_final())
     }
 
     /// Returns the execution gas charged to the block by an EIP-8141 frame
@@ -284,7 +288,7 @@ impl ResultGas {
     #[inline]
     pub const fn frame_block_regular_gas_used(&self) -> u64 {
         max(
-            self.spent_sub_refunded()
+            self.total_gas_spent()
                 .saturating_sub(self.state_gas_spent_final()),
             self.floor_gas(),
         )
@@ -1517,10 +1521,10 @@ mod tests {
         let gas = ResultGas::default()
             .with_total_gas_spent(100_000)
             .with_refunded(10_000)
-            .with_floor_gas(95_000)
+            .with_floor_gas(50_000)
             .with_state_gas_spent(30_000);
 
-        assert_eq!(gas.frame_block_regular_gas_used(), 95_000);
-        assert_eq!(gas.frame_tx_gas_used(), 125_000);
+        assert_eq!(gas.frame_block_regular_gas_used(), 70_000);
+        assert_eq!(gas.frame_tx_gas_used(), 90_000);
     }
 }
