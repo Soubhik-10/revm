@@ -34,6 +34,7 @@ serde_json = { workspace = true, features = ["alloc"] }
 [features]
 default = ["std"]
 std = [
+	"tracing/std",
 	"serde?/std",
 	"primitives/std",
 	"context-interface/std",

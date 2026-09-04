@@ -41,6 +41,7 @@ database.workspace = true
 [features]
 default = ["std"]
 std = [
+	"tracing/std",
 	"serde?/std",
 	"bytecode/std",
 	"context-interface/std",
