@@ -119,6 +119,15 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         }
     }
 
+    /// Returns whether accessing `address` would be cold without changing journal state.
+    #[inline]
+    pub fn is_account_cold(&self, address: Address) -> bool {
+        match self.state.get(&address) {
+            Some(account) if !account.is_cold_transaction_id(self.transaction_id) => false,
+            _ => self.warm_addresses.is_cold(&address),
+        }
+    }
+
     /// Returns the logs.
     ///
     /// Before returning, this function applies EIP-8246 to any self-destructed

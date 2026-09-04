@@ -136,6 +136,14 @@ pub trait JournalTr {
     /// Returns the addresses of the precompiles.
     fn precompile_addresses(&self) -> &AddressSet;
 
+    /// Returns whether an account access would be cold without accessing or warming it.
+    ///
+    /// EIP-8141 uses this to validate a frame target's entry charge before resolving the
+    /// target. Journals that opt in to EIP-8141 support must override this method.
+    fn is_account_cold(&self, _address: Address) -> bool {
+        true
+    }
+
     /// Sets the spec id.
     fn set_spec_id(&mut self, spec_id: SpecId);
 

@@ -191,6 +191,11 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         self.inner.warm_addresses.precompiles()
     }
 
+    #[inline]
+    fn is_account_cold(&self, address: Address) -> bool {
+        self.inner.is_account_cold(address)
+    }
+
     /// Returns call depth.
     #[inline]
     fn depth(&self) -> usize {

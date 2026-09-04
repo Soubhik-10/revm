@@ -155,111 +155,132 @@ pub fn run<H: Handler + ?Sized>(
 
         let frame_checkpoint = evm.ctx().journal_mut().checkpoint();
         let log_start = evm.ctx_ref().journal().logs().len();
-        let (target_code_hash, frame_input, entry_gas) = frame_input::<H>(evm, &frame, target)?;
-        let uses_default_code = frame.mode == FrameMode::Verify
-            && target_code_hash == KECCAK_EMPTY
-            && !evm
-                .ctx_ref()
-                .journal()
-                .precompile_addresses()
-                .contains(&target)
-            && target != EXPIRY_VERIFIER;
+        let entry_gas = {
+            let gas_params = evm.ctx_ref().cfg().gas_params();
+            account_access_gas(
+                evm.ctx_ref().journal().is_account_cold(target),
+                gas_params.warm_storage_read_cost(),
+                gas_params.cold_account_additional_cost(),
+            )
+        };
 
-        let (result, spent, state_gas, refund) = if uses_default_code {
-            let mut gas = interpreter::Gas::new_with_regular_gas_and_isolated_state_gas(
-                frame.limits.execution,
-                frame.limits.state,
-            );
-            let entry_gas_sufficient = gas.record_regular_cost(entry_gas);
-            if !entry_gas_sufficient {
-                gas.spend_all();
-            }
-            let valid = entry_gas_sufficient
-                && default_verification_is_valid::<H>(evm, target, frame.allowed_scope());
-            evm.ctx()
-                .local_mut()
-                .frame_transaction_mut()
-                .unwrap()
-                .enter_scope();
-            let approval_result = if valid {
-                evm.ctx().approve_frame_with_state_gas(
-                    target,
-                    U256::from(frame.allowed_scope()),
-                    gas.reservoir(),
-                )
-            } else if entry_gas_sufficient {
-                Err(context_interface::host::FrameHostError::Revert)
-            } else {
-                Err(context_interface::host::FrameHostError::OutOfGas)
-            };
-            let result = match approval_result {
-                Ok(state_gas) if gas.record_state_cost(state_gas) => InstructionResult::Return,
-                Ok(_) | Err(context_interface::host::FrameHostError::OutOfGas) => {
+        // The frame target is only accessed after the entry charge succeeds. In
+        // particular, an underfunded cold access must not load the target or add it
+        // to the EIP-7928 block access list.
+        let (result, spent, state_gas, refund) = if frame.limits.execution < entry_gas {
+            (InstructionResult::OutOfGas, frame.limits.execution, 0, 0)
+        } else {
+            let (target_code_hash, frame_input, loaded_entry_gas) =
+                frame_input::<H>(evm, &frame, target)?;
+            debug_assert_eq!(entry_gas, loaded_entry_gas);
+            let uses_default_code = frame.mode == FrameMode::Verify
+                && target_code_hash == KECCAK_EMPTY
+                && !evm
+                    .ctx_ref()
+                    .journal()
+                    .precompile_addresses()
+                    .contains(&target)
+                && target != EXPIRY_VERIFIER;
+
+            if uses_default_code {
+                let mut gas = interpreter::Gas::new_with_regular_gas_and_isolated_state_gas(
+                    frame.limits.execution,
+                    frame.limits.state,
+                );
+                let entry_gas_sufficient = gas.record_regular_cost(entry_gas);
+                if !entry_gas_sufficient {
                     gas.spend_all();
-                    InstructionResult::OutOfGas
                 }
-                Err(context_interface::host::FrameHostError::Revert) => InstructionResult::Revert,
-                Err(context_interface::host::FrameHostError::Invalid) => {
-                    InstructionResult::OpcodeNotFound
+                let valid = entry_gas_sufficient
+                    && default_verification_is_valid::<H>(evm, target, frame.allowed_scope());
+                evm.ctx()
+                    .local_mut()
+                    .frame_transaction_mut()
+                    .unwrap()
+                    .enter_scope();
+                let approval_result = if valid {
+                    evm.ctx().approve_frame_with_state_gas(
+                        target,
+                        U256::from(frame.allowed_scope()),
+                        gas.reservoir(),
+                    )
+                } else if entry_gas_sufficient {
+                    Err(context_interface::host::FrameHostError::Revert)
+                } else {
+                    Err(context_interface::host::FrameHostError::OutOfGas)
+                };
+                let result = match approval_result {
+                    Ok(state_gas) if gas.record_state_cost(state_gas) => InstructionResult::Return,
+                    Ok(_) | Err(context_interface::host::FrameHostError::OutOfGas) => {
+                        gas.spend_all();
+                        InstructionResult::OutOfGas
+                    }
+                    Err(context_interface::host::FrameHostError::Revert) => {
+                        InstructionResult::Revert
+                    }
+                    Err(context_interface::host::FrameHostError::Invalid) => {
+                        InstructionResult::OpcodeNotFound
+                    }
+                    Err(context_interface::host::FrameHostError::Fatal) => {
+                        InstructionResult::FatalExternalError
+                    }
+                };
+                let success = result.is_ok();
+                evm.ctx()
+                    .local_mut()
+                    .frame_transaction_mut()
+                    .unwrap()
+                    .exit_scope(success);
+                (
+                    result,
+                    frame.limits.execution.saturating_sub(gas.remaining()),
+                    if success {
+                        frame.limits.state.saturating_sub(gas.reservoir())
+                    } else {
+                        0
+                    },
+                    0,
+                )
+            } else {
+                let memory = SharedMemory::new_with_buffer(
+                    evm.ctx_ref().local().shared_memory_buffer().clone(),
+                );
+                let mut frame_result = handler.run_exec_loop(
+                    evm,
+                    FrameInit {
+                        depth: 0,
+                        memory,
+                        frame_input,
+                    },
+                )?;
+                let result = frame_result.instruction_result();
+                let gas = frame_result.gas_mut();
+                // Each EIP-8141 frame is a top-level call. Apply the same EIP-8037
+                // finalization as the ordinary transaction top frame: reverted state-gas
+                // charges are unwound, refunds are discarded, and exceptional halts consume
+                // all regular gas.
+                if !result.is_ok() {
+                    gas.rollback_state_gas();
+                    gas.set_refunded(0);
                 }
-                Err(context_interface::host::FrameHostError::Fatal) => {
-                    InstructionResult::FatalExternalError
+                if !result.is_ok_or_revert() {
+                    gas.spend_all();
                 }
-            };
-            let success = result.is_ok();
-            evm.ctx()
-                .local_mut()
-                .frame_transaction_mut()
-                .unwrap()
-                .exit_scope(success);
-            (
-                result,
-                frame.limits.execution.saturating_sub(gas.remaining()),
-                if success {
+                // Frame execution and state gas are independent budgets. The
+                // state budget must not be subtracted from execution gas used.
+                let spent = frame.limits.execution.saturating_sub(gas.remaining());
+                let state_gas = if result.is_ok() {
                     frame.limits.state.saturating_sub(gas.reservoir())
                 } else {
                     0
-                },
-                0,
-            )
-        } else {
-            let memory =
-                SharedMemory::new_with_buffer(evm.ctx_ref().local().shared_memory_buffer().clone());
-            let mut frame_result = handler.run_exec_loop(
-                evm,
-                FrameInit {
-                    depth: 0,
-                    memory,
-                    frame_input,
-                },
-            )?;
-            let result = frame_result.instruction_result();
-            let gas = frame_result.gas_mut();
-            // Each EIP-8141 frame is a top-level call. Apply the same EIP-8037
-            // finalization as the ordinary transaction top frame: reverted state-gas
-            // charges are unwound, refunds are discarded, and exceptional halts consume
-            // all regular gas.
-            if !result.is_ok() {
-                gas.rollback_state_gas();
-                gas.set_refunded(0);
+                };
+                let refund = if result.is_ok() {
+                    gas.refunded().max(0) as u64
+                } else {
+                    0
+                };
+                (result, spent, state_gas, refund)
             }
-            if !result.is_ok_or_revert() {
-                gas.spend_all();
-            }
-            // Frame execution and state gas are independent budgets. The
-            // state budget must not be subtracted from execution gas used.
-            let spent = frame.limits.execution.saturating_sub(gas.remaining());
-            let state_gas = if result.is_ok() {
-                frame.limits.state.saturating_sub(gas.reservoir())
-            } else {
-                0
-            };
-            let refund = if result.is_ok() {
-                gas.refunded().max(0) as u64
-            } else {
-                0
-            };
-            (result, spent, state_gas, refund)
         };
 
         take_error::<H::Error, _>(evm.ctx().error())?;
@@ -1482,6 +1503,131 @@ mod tests {
             .map(|slot| slot.present_value)
             .unwrap_or_default();
         assert_eq!(stored, U256::from(1));
+    }
+
+    #[test]
+    fn entry_charge_halt_unrolls_atomic_batch() {
+        let sender = PrivateKeySigner::random();
+        let signature_hash = keccak256("entry charge halt unrolls atomic batch");
+        let worker_code = [PUSH1, 0x01, PUSH1, 0x01, SSTORE];
+        let halting_target = address!("5000000000000000000000000000000000000005");
+        let worker_execution_gas = primitives::eip8038::COLD_ACCOUNT_ACCESS
+            + 2 * context_interface::cfg::gas::VERYLOW
+            + primitives::eip8038::WARM_ACCESS
+            + primitives::eip8038::COLD_STORAGE_ACCESS_ADDITIONAL
+            + primitives::eip8038::STORAGE_WRITE;
+        let mut db = CacheDB::<EmptyDB>::default();
+        db.insert_account_info(
+            sender.address(),
+            AccountInfo::default().with_balance(U256::MAX),
+        );
+        db.insert_account_info(STORAGE_TARGET, account_with_code(worker_code));
+        db.insert_account_info(
+            halting_target,
+            AccountInfo::default().with_balance(U256::from(1)),
+        );
+
+        let payload = FrameTransaction {
+            frames: vec![
+                Frame {
+                    mode: FrameMode::Verify,
+                    flags: 0x03,
+                    limits: FrameLimits {
+                        execution: primitives::eip8038::WARM_ACCESS,
+                        state: 0,
+                    },
+                    ..Default::default()
+                },
+                Frame {
+                    mode: FrameMode::Default,
+                    flags: 0x04,
+                    target: encoded_target(STORAGE_TARGET),
+                    limits: FrameLimits {
+                        execution: worker_execution_gas,
+                        state: NEW_SLOT_STATE_GAS,
+                    },
+                    value: U256::ZERO,
+                    data: Bytes::new(),
+                },
+                Frame::new(
+                    FrameMode::Default,
+                    0x04,
+                    encoded_target(halting_target),
+                    primitives::eip8038::COLD_ACCOUNT_ACCESS - 1,
+                    U256::ZERO,
+                    Bytes::new(),
+                ),
+                Frame::new(
+                    FrameMode::Default,
+                    0,
+                    encoded_target(STORAGE_TARGET),
+                    worker_execution_gas,
+                    U256::ZERO,
+                    Bytes::new(),
+                ),
+            ],
+            signatures: vec![signed_entry(&sender, Bytes::new(), signature_hash)],
+            signature_hash,
+            ..Default::default()
+        };
+        let intrinsic_gas = payload.intrinsic_gas(sender.address()).unwrap();
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+            .with_db(db)
+            .build_mainnet();
+
+        let output = evm.transact(tx_env(sender.address(), payload)).unwrap();
+        let ExecutionResult::FrameTransaction {
+            gas,
+            frame_receipts,
+            ..
+        } = output.result
+        else {
+            panic!("expected frame transaction result")
+        };
+        assert_eq!(
+            frame_receipts
+                .iter()
+                .map(|receipt| receipt.status)
+                .collect::<Vec<_>>(),
+            vec![
+                FrameStatus::Success,
+                FrameStatus::Success,
+                FrameStatus::Failure,
+                FrameStatus::SkippedAtomicBatch,
+            ]
+        );
+        assert_eq!(
+            frame_receipts[0].gas_used.execution,
+            primitives::eip8038::WARM_ACCESS
+        );
+        assert_eq!(frame_receipts[1].gas_used.execution, worker_execution_gas);
+        assert_eq!(frame_receipts[1].gas_used.state, 0);
+        assert_eq!(
+            frame_receipts[2].gas_used.execution,
+            primitives::eip8038::COLD_ACCOUNT_ACCESS - 1
+        );
+        assert_eq!(frame_receipts[3].gas_used.execution, 0);
+        assert_eq!(gas.state_gas_spent_final(), 0);
+        assert_eq!(
+            gas.total_gas_spent(),
+            intrinsic_gas
+                + primitives::eip8038::WARM_ACCESS
+                + worker_execution_gas
+                + primitives::eip8038::COLD_ACCOUNT_ACCESS
+                - 1
+        );
+        let stored = output
+            .state
+            .get(&STORAGE_TARGET)
+            .and_then(|account| account.storage.get(&U256::from(1)))
+            .map(|slot| slot.present_value)
+            .unwrap_or_default();
+        assert_eq!(stored, U256::ZERO);
+        assert!(
+            !output.state.contains_key(&halting_target),
+            "a target whose entry charge fails must not be accessed"
+        );
     }
 
     #[test]
