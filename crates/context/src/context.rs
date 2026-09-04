@@ -492,7 +492,10 @@ impl<
 
     fn effective_gas_price(&self) -> U256 {
         let basefee = self.block().basefee();
-        U256::from(self.tx().effective_gas_price(basefee as u128))
+        self.tx()
+            .frame_transaction()
+            .map(|frame_tx| frame_tx.effective_gas_price(basefee as u128))
+            .unwrap_or_else(|| U256::from(self.tx().effective_gas_price(basefee as u128)))
     }
 
     fn caller(&self) -> Address {
@@ -531,9 +534,9 @@ impl<
             p if p == U256::from(0) => U256::from(0x06),
             p if p == U256::from(1) => U256::from(tx.nonce()),
             p if p == U256::from(2) => U256::from_be_slice(tx.caller().as_slice()),
-            p if p == U256::from(3) => U256::from(tx.max_priority_fee_per_gas()?),
+            p if p == U256::from(3) => frame_tx.max_priority_fee_per_gas,
             p if p == U256::from(4) => frame_tx.max_fee_per_gas,
-            p if p == U256::from(5) => U256::from(tx.max_fee_per_blob_gas()),
+            p if p == U256::from(5) => frame_tx.max_fee_per_blob_gas,
             p if p == U256::from(6) => frame_tx.max_cost_with_params(
                 tx.caller(),
                 self.cfg().gas_params(),

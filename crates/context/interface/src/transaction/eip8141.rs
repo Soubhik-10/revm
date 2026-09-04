@@ -20,12 +20,27 @@ pub struct FrameTransaction {
     pub signatures: Vec<FrameSignature>,
     /// Canonical EIP-8141 signature hash.
     pub signature_hash: B256,
+    /// EIP-8141 priority-fee cap.
+    pub max_priority_fee_per_gas: U256,
     /// EIP-8141 fee cap. Unlike ordinary transaction fee caps, this is a full
     /// 256-bit RLP quantity because approval bounds use the transaction gas cap.
     pub max_fee_per_gas: U256,
+    /// EIP-8141 blob-fee inclusion cap.
+    pub max_fee_per_blob_gas: U256,
 }
 
 impl FrameTransaction {
+    /// Calculates the EIP-1559 effective price without narrowing EIP-8141's
+    /// 256-bit fee fields.
+    #[inline]
+    pub fn effective_gas_price(&self, base_fee: u128) -> U256 {
+        self.max_fee_per_gas.min(
+            U256::from(base_fee)
+                .checked_add(self.max_priority_fee_per_gas)
+                .unwrap_or(U256::MAX),
+        )
+    }
+
     /// Returns the sum of all top-level frame gas allocations.
     pub fn total_frame_gas_limit(&self) -> Option<u64> {
         self.frames.iter().try_fold(0u64, |total, frame| {
@@ -270,5 +285,19 @@ mod tests {
         assert_eq!(transaction.intrinsic_gas(Address::ZERO), Some(12_615));
         assert_eq!(transaction.gas_limit(Address::ZERO), Some(12_831));
         assert_eq!(transaction.calldata_floor_gas(Address::ZERO), Some(12_831));
+    }
+
+    #[test]
+    fn effective_gas_price_preserves_full_width_fee_caps() {
+        let transaction = FrameTransaction {
+            max_priority_fee_per_gas: U256::from(u128::MAX) + U256::from(2),
+            max_fee_per_gas: U256::from(u128::MAX) + U256::from(3),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            transaction.effective_gas_price(1),
+            U256::from(u128::MAX) + U256::from(3)
+        );
     }
 }

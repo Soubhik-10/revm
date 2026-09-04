@@ -1,7 +1,7 @@
 //! EIP-8141 frame transaction instructions.
 
 use crate::{
-    interpreter_types::{InputsTr, InterpreterTypes as ITy, MemoryTr, StackTr},
+    interpreter_types::{InputsTr, InterpreterTypes as ITy, MemoryTr, RuntimeFlag, StackTr},
     InstructionContext as Ictx, InstructionExecResult as Result, InstructionResult,
 };
 use context_interface::{host::FrameHostError, Host};
@@ -21,6 +21,7 @@ const fn host_error(error: FrameHostError) -> InstructionResult {
 
 /// EIP-8141 `APPROVE` (0xaa).
 pub fn approve<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+    check!(context.interpreter, BOGOTA);
     popn!([offset, len, scope], context.interpreter);
     tracing::info!(
         target: "revm::eip8141::instruction",
@@ -58,6 +59,7 @@ pub fn approve<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 
 /// EIP-8141 `TXPARAM` (0xb0).
 pub fn txparam<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+    check!(context.interpreter, BOGOTA);
     popn_top!([], param, context.interpreter);
     tracing::info!(target: "revm::eip8141::instruction", ?param, "Executing TXPARAM");
     *param = context
@@ -69,6 +71,7 @@ pub fn txparam<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 
 /// EIP-8141 `FRAMEDATALOAD` (0xb1).
 pub fn framedataload<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+    check!(context.interpreter, BOGOTA);
     popn!([offset, frame_index], context.interpreter);
     tracing::info!(
         target: "revm::eip8141::instruction",
@@ -116,6 +119,7 @@ fn copy_data<IT: ITy, H: Host + ?Sized>(
 
 /// EIP-8141 `FRAMEDATACOPY` (0xb2).
 pub fn framedatacopy<IT: ITy, H: Host + ?Sized>(mut context: Ictx<'_, H, IT>) -> Result {
+    check!(context.interpreter, BOGOTA);
     popn!(
         [memory_offset, data_offset, len, frame_index],
         context.interpreter
@@ -137,6 +141,7 @@ pub fn framedatacopy<IT: ITy, H: Host + ?Sized>(mut context: Ictx<'_, H, IT>) ->
 
 /// EIP-8141 `FRAMEPARAM` (0xb3).
 pub fn frameparam<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+    check!(context.interpreter, BOGOTA);
     popn!([frame_index, param], context.interpreter);
     tracing::info!(
         target: "revm::eip8141::instruction",
@@ -154,6 +159,7 @@ pub fn frameparam<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result
 
 /// EIP-8141 `SIGPARAM` (0xb4).
 pub fn sigparam<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+    check!(context.interpreter, BOGOTA);
     popn!([signature_index, param], context.interpreter);
     tracing::info!(
         target: "revm::eip8141::instruction",
@@ -171,6 +177,7 @@ pub fn sigparam<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 
 /// EIP-8141 `SIGDATACOPY` (0xb5).
 pub fn sigdatacopy<IT: ITy, H: Host + ?Sized>(mut context: Ictx<'_, H, IT>) -> Result {
+    check!(context.interpreter, BOGOTA);
     popn!(
         [memory_offset, data_offset, len, signature_index],
         context.interpreter

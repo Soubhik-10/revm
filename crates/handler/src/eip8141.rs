@@ -869,19 +869,19 @@ fn settle_fees<H: Handler + ?Sized>(
             blob_gas,
             ctx.block().blob_gasprice().unwrap_or_default(),
         );
-        let effective_gas_price = tx.effective_gas_price(ctx.block().basefee() as u128);
+        let effective_gas_price = frame_tx.effective_gas_price(ctx.block().basefee() as u128);
         let actual_cost = U256::from(gas_used)
-            .saturating_mul(U256::from(effective_gas_price))
+            .saturating_mul(effective_gas_price)
             .saturating_add(
                 U256::from(blob_gas)
                     .saturating_mul(U256::from(ctx.block().blob_gasprice().unwrap_or_default())),
             );
-        let priority_price = effective_gas_price.saturating_sub(ctx.block().basefee() as u128);
+        let priority_price = effective_gas_price.saturating_sub(U256::from(ctx.block().basefee()));
         (
             max_cost,
             actual_cost,
             ctx.block().beneficiary(),
-            U256::from(gas_used).saturating_mul(U256::from(priority_price)),
+            U256::from(gas_used).saturating_mul(priority_price),
         )
     };
     evm.ctx()
@@ -1653,6 +1653,33 @@ mod tests {
             evm.transact(tx),
             Err(EVMError::Transaction(
                 InvalidTransaction::Eip8141InvalidFields
+            ))
+        ));
+    }
+
+    #[test]
+    fn full_width_priority_fee_is_validated_without_narrowing() {
+        let payload = FrameTransaction {
+            frames: vec![Frame {
+                limits: FrameLimits {
+                    execution: 1,
+                    state: 0,
+                },
+                ..Default::default()
+            }],
+            max_priority_fee_per_gas: U256::MAX,
+            max_fee_per_gas: U256::MAX - U256::from(1),
+            ..Default::default()
+        };
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+            .with_db(CacheDB::<EmptyDB>::default())
+            .build_mainnet();
+
+        assert!(matches!(
+            evm.transact(tx_env(SENDER, payload)),
+            Err(EVMError::Transaction(
+                InvalidTransaction::PriorityFeeGreaterThanMaxFee
             ))
         ));
     }
