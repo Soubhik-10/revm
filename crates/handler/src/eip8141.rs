@@ -92,7 +92,7 @@ fn execute_frames<H: Handler + ?Sized>(
     handler: &mut H,
     evm: &mut H::Evm,
     frame_count: usize,
-) -> Result<(Vec<FrameReceipt>, Vec<u64>), H::Error> {
+) -> Result<(Vec<FrameReceipt>, Vec<i64>), H::Error> {
     let mut receipts = Vec::with_capacity(frame_count);
     let mut frame_refunds = Vec::with_capacity(frame_count);
     let mut batch: Option<AtomicBatch> = None;
@@ -165,9 +165,6 @@ fn execute_frames<H: Handler + ?Sized>(
                 .frame_transaction_mut()
                 .unwrap()
                 .commit_root_approval();
-            if let Some(atomic) = batch.as_mut() {
-                atomic.warm_accesses = evm.ctx_ref().journal().warm_access_snapshot();
-            }
         } else {
             evm.ctx().journal_mut().checkpoint_revert(frame_checkpoint);
         }
@@ -266,7 +263,7 @@ fn execute_frame<H: Handler + ?Sized>(
     frame: &alloy_eip8141::Frame,
     target: Address,
     entry_gas: u64,
-) -> Result<(InstructionResult, u64, u64, u64), H::Error> {
+) -> Result<(InstructionResult, u64, u64, i64), H::Error> {
     // The frame target is only accessed after the entry charge succeeds. In
     // particular, an underfunded cold access must not load the target or add it
     // to the EIP-7928 block access list.
@@ -375,7 +372,7 @@ fn execute_frame<H: Handler + ?Sized>(
                 0
             };
             let refund = if result.is_ok() {
-                gas.refunded().max(0) as u64
+                gas.refunded()
             } else {
                 0
             };
@@ -390,7 +387,7 @@ fn finish_transaction<H: Handler + ?Sized>(
     intrinsic: u64,
     floor_gas: u64,
     mut receipts: Vec<FrameReceipt>,
-    frame_refunds: Vec<u64>,
+    frame_refunds: Vec<i64>,
 ) -> Result<ExecutionResult<H::HaltReason>, H::Error> {
     let payer = evm
         .ctx_ref()
@@ -422,7 +419,13 @@ fn finish_transaction<H: Handler + ?Sized>(
     let total_spent = intrinsic
         .saturating_add(total_frame_spent)
         .saturating_add(total_state_gas);
-    let refund_counter = frame_refunds.into_iter().fold(0u64, u64::saturating_add);
+    // SSTORE can produce negative refund deltas. EIP-8141 carries one transaction-scoped refund
+    // counter across frames, so clamp only after all successful frame deltas and atomic rollbacks
+    // have been applied.
+    let refund_counter = frame_refunds
+        .into_iter()
+        .fold(0i64, i64::saturating_add)
+        .max(0) as u64;
     let refund =
         refund_counter.min(total_spent / evm.ctx_ref().cfg().gas_params().max_refund_quotient());
     let result_gas = ResultGas::default()
@@ -1633,5 +1636,123 @@ mod tests {
                 InvalidTransaction::PriorityFeeGreaterThanMaxFee
             ))
         ));
+    }
+
+    #[test]
+    fn cross_frame_negative_refund_adjustment_is_preserved() {
+        let approve_code = [PUSH1, 0x03, PUSH0, PUSH0, APPROVE];
+        let store_calldata_code = [PUSH0, CALLDATALOAD, PUSH0, SSTORE, STOP];
+        let mut db = CacheDB::<EmptyDB>::default();
+        db.insert_account_info(SENDER, account_with_code(approve_code));
+        db.insert_account_info(STORAGE_TARGET, account_with_code(store_calldata_code));
+        db.insert_account_storage(STORAGE_TARGET, U256::ZERO, U256::from(1))
+            .unwrap();
+
+        let clear_data = vec![0; 32];
+        let mut replace_data = vec![0; 32];
+        replace_data[31] = 2;
+        let payload = FrameTransaction {
+            frames: vec![
+                Frame::new(
+                    FrameMode::Default,
+                    0x03,
+                    Bytes::new(),
+                    10_000,
+                    U256::ZERO,
+                    Bytes::new(),
+                ),
+                Frame::new(
+                    FrameMode::Default,
+                    0,
+                    encoded_target(STORAGE_TARGET),
+                    100_000,
+                    U256::ZERO,
+                    clear_data.into(),
+                ),
+                Frame::new(
+                    FrameMode::Default,
+                    0,
+                    encoded_target(STORAGE_TARGET),
+                    100_000,
+                    U256::ZERO,
+                    replace_data.into(),
+                ),
+            ],
+            ..Default::default()
+        };
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+            .with_db(db)
+            .build_mainnet();
+
+        let output = evm.transact(tx_env(SENDER, payload)).unwrap();
+        let ExecutionResult::FrameTransaction { gas, .. } = output.result else {
+            panic!("expected frame transaction result")
+        };
+
+        assert_eq!(gas.inner_refunded(), 0);
+    }
+
+    #[test]
+    fn failed_atomic_batch_restores_pre_batch_warm_accesses() {
+        let approve_code = [PUSH1, 0x03, PUSH0, PUSH0, APPROVE];
+        let revert_code = [PUSH0, PUSH0, REVERT];
+        let mut db = CacheDB::<EmptyDB>::default();
+        db.insert_account_info(SENDER, account_with_code(approve_code));
+        db.insert_account_info(STORAGE_TARGET, account_with_code([STOP]));
+        db.insert_account_info(REVERT_TARGET, account_with_code(revert_code));
+
+        let cold_access = primitives::eip8038::COLD_ACCOUNT_ACCESS;
+        let payload = FrameTransaction {
+            frames: vec![
+                Frame::new(
+                    FrameMode::Default,
+                    0x03,
+                    Bytes::new(),
+                    10_000,
+                    U256::ZERO,
+                    Bytes::new(),
+                ),
+                Frame::new(
+                    FrameMode::Default,
+                    0x04,
+                    encoded_target(STORAGE_TARGET),
+                    cold_access,
+                    U256::ZERO,
+                    Bytes::new(),
+                ),
+                Frame::new(
+                    FrameMode::Default,
+                    0,
+                    encoded_target(REVERT_TARGET),
+                    10_000,
+                    U256::ZERO,
+                    Bytes::new(),
+                ),
+                Frame::new(
+                    FrameMode::Default,
+                    0,
+                    encoded_target(STORAGE_TARGET),
+                    cold_access - 1,
+                    U256::ZERO,
+                    Bytes::new(),
+                ),
+            ],
+            ..Default::default()
+        };
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+            .with_db(db)
+            .build_mainnet();
+
+        let output = evm.transact(tx_env(SENDER, payload)).unwrap();
+        let ExecutionResult::FrameTransaction { frame_receipts, .. } = output.result else {
+            panic!("expected frame transaction result")
+        };
+
+        assert_eq!(frame_receipts[1].status, FrameStatus::Success);
+        assert_eq!(frame_receipts[2].status, FrameStatus::Failure);
+        assert_eq!(frame_receipts[3].status, FrameStatus::Failure);
+        assert_eq!(frame_receipts[3].gas_used.execution, cold_access - 1);
     }
 }
