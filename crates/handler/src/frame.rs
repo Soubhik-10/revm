@@ -309,9 +309,10 @@ impl EthFrame<EthInterpreter> {
                 return return_result(gas, i.into());
             }
 
-            if charged_new_account_state_gas
-                && !gas.record_state_cost(ctx.cfg().gas_params().new_account_state_gas())
-            {
+            // Ordinary calls already paid in the transaction runtime phase or
+            // CALL opcode. Their charged flag is only used for rollback refunds;
+            // EIP-8141 top-level frames carry an explicit, unpaid entry charge.
+            if inputs.entry_state_gas != 0 && !gas.record_state_cost(inputs.entry_state_gas) {
                 ctx.journal_mut().checkpoint_revert(checkpoint);
                 return return_result(gas, InstructionResult::OutOfGas);
             }
