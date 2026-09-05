@@ -34,6 +34,8 @@ fn invalid<ERROR: From<InvalidTransaction>>(message: &'static str) -> ERROR {
 }
 
 /// Executes an EIP-8141 transaction through the mainnet handler's frame loop.
+/// The outer orchestration handles approvals, frame-local budgets, and atomic
+/// batches; bytecode execution uses the same interpreter loop as ordinary calls.
 pub fn run<H: Handler + ?Sized>(
     handler: &mut H,
     evm: &mut H::Evm,
@@ -45,7 +47,8 @@ pub fn run<H: Handler + ?Sized>(
         ));
     }
     validate_structure::<H>(evm)?;
-    validate_sender_and_signatures::<H>(evm)?;
+    validate_signatures::<H>(evm)?;
+    validate_sender::<H>(evm)?;
     handler.load_accounts(evm)?;
 
     let sender = evm.ctx_ref().tx().caller();
@@ -55,9 +58,6 @@ pub fn run<H: Handler + ?Sized>(
         .journal_mut()
         .load_account(sender)
         .map_err(H::Error::from)?;
-    evm.ctx()
-        .local_mut()
-        .set_frame_transaction(Some(FrameTransactionRuntime::new(sender)));
 
     let (intrinsic, floor_gas, frame_count) = {
         let frame_tx = evm
@@ -77,15 +77,22 @@ pub fn run<H: Handler + ?Sized>(
             frame_tx.frames.len(),
         )
     };
-    tracing::info!(
-        target: "revm::eip8141",
-        sender = ?sender,
-        nonce = evm.ctx_ref().tx().nonce(),
-        frame_count,
-        intrinsic,
-        floor_gas,
-        "Starting EIP-8141 frame transaction"
-    );
+    evm.ctx()
+        .local_mut()
+        .set_frame_transaction(Some(FrameTransactionRuntime::with_capacity(
+            sender,
+            frame_count,
+        )));
+    let (receipts, frame_refunds) = execute_frames(handler, evm, frame_count)?;
+    finish_transaction::<H>(evm, intrinsic, floor_gas, receipts, frame_refunds)
+}
+
+/// Runs the ordered top-level frames and applies atomic batch boundaries.
+fn execute_frames<H: Handler + ?Sized>(
+    handler: &mut H,
+    evm: &mut H::Evm,
+    frame_count: usize,
+) -> Result<(Vec<FrameReceipt>, Vec<u64>), H::Error> {
     let mut receipts = Vec::with_capacity(frame_count);
     let mut frame_refunds = Vec::with_capacity(frame_count);
     let mut batch: Option<AtomicBatch> = None;
@@ -114,19 +121,6 @@ pub fn run<H: Handler + ?Sized>(
             ));
         }
 
-        tracing::info!(
-            target: "revm::eip8141",
-            frame_index,
-            mode = ?frame.mode,
-            target = ?target,
-            execution_gas_limit = frame.limits.execution,
-            state_gas_limit = frame.limits.state,
-            flags = frame.flags,
-            atomic = frame.is_atomic_batch(),
-            sender_approved,
-            "Starting EIP-8141 frame"
-        );
-
         if batch.is_none() && frame.is_atomic_batch() {
             let checkpoint = evm.ctx().journal_mut().checkpoint();
             let runtime = evm.ctx_ref().local().frame_transaction().unwrap();
@@ -137,11 +131,6 @@ pub fn run<H: Handler + ?Sized>(
                 state_gas_checkpoint: runtime.state_gas_checkpoint(),
                 receipt_start: receipts.len(),
             });
-            tracing::info!(
-                target: "revm::eip8141",
-                frame_index,
-                "Opened atomic frame batch checkpoint"
-            );
         }
         {
             let runtime = evm.ctx().local_mut().frame_transaction_mut().unwrap();
@@ -164,138 +153,11 @@ pub fn run<H: Handler + ?Sized>(
             )
         };
 
-        // The frame target is only accessed after the entry charge succeeds. In
-        // particular, an underfunded cold access must not load the target or add it
-        // to the EIP-7928 block access list.
-        let (result, spent, state_gas, refund) = if frame.limits.execution < entry_gas {
-            (InstructionResult::OutOfGas, frame.limits.execution, 0, 0)
-        } else {
-            let (target_code_hash, frame_input, loaded_entry_gas) =
-                frame_input::<H>(evm, &frame, target)?;
-            debug_assert_eq!(entry_gas, loaded_entry_gas);
-            let uses_default_code = frame.mode == FrameMode::Verify
-                && target_code_hash == KECCAK_EMPTY
-                && !evm
-                    .ctx_ref()
-                    .journal()
-                    .precompile_addresses()
-                    .contains(&target)
-                && target != EXPIRY_VERIFIER;
-
-            if uses_default_code {
-                let mut gas = interpreter::Gas::new_with_regular_gas_and_isolated_state_gas(
-                    frame.limits.execution,
-                    frame.limits.state,
-                );
-                let entry_gas_sufficient = gas.record_regular_cost(entry_gas);
-                if !entry_gas_sufficient {
-                    gas.spend_all();
-                }
-                let valid = entry_gas_sufficient
-                    && default_verification_is_valid::<H>(evm, target, frame.allowed_scope());
-                evm.ctx()
-                    .local_mut()
-                    .frame_transaction_mut()
-                    .unwrap()
-                    .enter_scope();
-                let approval_result = if valid {
-                    evm.ctx().approve_frame_with_state_gas(
-                        target,
-                        U256::from(frame.allowed_scope()),
-                        gas.reservoir(),
-                    )
-                } else if entry_gas_sufficient {
-                    Err(context_interface::host::FrameHostError::Revert)
-                } else {
-                    Err(context_interface::host::FrameHostError::OutOfGas)
-                };
-                let result = match approval_result {
-                    Ok(state_gas) if gas.record_state_cost(state_gas) => InstructionResult::Return,
-                    Ok(_) | Err(context_interface::host::FrameHostError::OutOfGas) => {
-                        gas.spend_all();
-                        InstructionResult::OutOfGas
-                    }
-                    Err(context_interface::host::FrameHostError::Revert) => {
-                        InstructionResult::Revert
-                    }
-                    Err(context_interface::host::FrameHostError::Invalid) => {
-                        InstructionResult::OpcodeNotFound
-                    }
-                    Err(context_interface::host::FrameHostError::Fatal) => {
-                        InstructionResult::FatalExternalError
-                    }
-                };
-                let success = result.is_ok();
-                evm.ctx()
-                    .local_mut()
-                    .frame_transaction_mut()
-                    .unwrap()
-                    .exit_scope(success);
-                (
-                    result,
-                    frame.limits.execution.saturating_sub(gas.remaining()),
-                    if success {
-                        frame.limits.state.saturating_sub(gas.reservoir())
-                    } else {
-                        0
-                    },
-                    0,
-                )
-            } else {
-                let memory = SharedMemory::new_with_buffer(
-                    evm.ctx_ref().local().shared_memory_buffer().clone(),
-                );
-                let mut frame_result = handler.run_exec_loop(
-                    evm,
-                    FrameInit {
-                        depth: 0,
-                        memory,
-                        frame_input,
-                    },
-                )?;
-                let result = frame_result.instruction_result();
-                let gas = frame_result.gas_mut();
-                // Each EIP-8141 frame is a top-level call. Apply the same EIP-8037
-                // finalization as the ordinary transaction top frame: reverted state-gas
-                // charges are unwound, refunds are discarded, and exceptional halts consume
-                // all regular gas.
-                if !result.is_ok() {
-                    gas.rollback_state_gas();
-                    gas.set_refunded(0);
-                }
-                if !result.is_ok_or_revert() {
-                    gas.spend_all();
-                }
-                // Frame execution and state gas are independent budgets. The
-                // state budget must not be subtracted from execution gas used.
-                let spent = frame.limits.execution.saturating_sub(gas.remaining());
-                let state_gas = if result.is_ok() {
-                    frame.limits.state.saturating_sub(gas.reservoir())
-                } else {
-                    0
-                };
-                let refund = if result.is_ok() {
-                    gas.refunded().max(0) as u64
-                } else {
-                    0
-                };
-                (result, spent, state_gas, refund)
-            }
-        };
+        let (result, spent, state_gas, refund) =
+            execute_frame(handler, evm, &frame, target, entry_gas)?;
 
         take_error::<H::Error, _>(evm.ctx().error())?;
         let success = result.is_ok();
-        tracing::info!(
-            target: "revm::eip8141",
-            frame_index,
-            mode = ?frame.mode,
-            result = ?result,
-            success,
-            gas_used = spent,
-            state_gas,
-            refund,
-            "Finished EIP-8141 frame"
-        );
         if success {
             evm.ctx().journal_mut().checkpoint_commit();
             evm.ctx()
@@ -343,11 +205,6 @@ pub fn run<H: Handler + ?Sized>(
 
         if !success {
             if let Some(atomic) = batch.take() {
-                tracing::info!(
-                    target: "revm::eip8141",
-                    frame_index,
-                    "Reverting failed atomic frame batch"
-                );
                 evm.ctx().journal_mut().checkpoint_revert(atomic.checkpoint);
                 evm.ctx()
                     .journal_mut()
@@ -390,12 +247,6 @@ pub fn run<H: Handler + ?Sized>(
                     runtime.execution_gas_used.push(0);
                     runtime.state_gas_used.push(0);
                 }
-                tracing::info!(
-                    target: "revm::eip8141",
-                    failed_frame = frame_index,
-                    skipped_through = end,
-                    "Marked remaining atomic frames as skipped"
-                );
                 frame_index = end + 1;
                 continue;
             }
@@ -405,6 +256,142 @@ pub fn run<H: Handler + ?Sized>(
         frame_index += 1;
     }
 
+    Ok((receipts, frame_refunds))
+}
+
+/// Executes one top-level frame through default verification or the shared interpreter loop.
+fn execute_frame<H: Handler + ?Sized>(
+    handler: &mut H,
+    evm: &mut H::Evm,
+    frame: &alloy_eip8141::Frame,
+    target: Address,
+    entry_gas: u64,
+) -> Result<(InstructionResult, u64, u64, u64), H::Error> {
+    // The frame target is only accessed after the entry charge succeeds. In
+    // particular, an underfunded cold access must not load the target or add it
+    // to the EIP-7928 block access list.
+    Ok(if frame.limits.execution < entry_gas {
+        (InstructionResult::OutOfGas, frame.limits.execution, 0, 0)
+    } else {
+        let (target_code_hash, frame_input, loaded_entry_gas) =
+            frame_input::<H>(evm, frame, target)?;
+        debug_assert_eq!(entry_gas, loaded_entry_gas);
+        let uses_default_code = frame.mode == FrameMode::Verify
+            && target_code_hash == KECCAK_EMPTY
+            && !evm
+                .ctx_ref()
+                .journal()
+                .precompile_addresses()
+                .contains(&target)
+            && target != EXPIRY_VERIFIER;
+
+        if uses_default_code {
+            let mut gas = interpreter::Gas::new_with_regular_gas_and_isolated_state_gas(
+                frame.limits.execution,
+                frame.limits.state,
+            );
+            let entry_gas_sufficient = gas.record_regular_cost(entry_gas);
+            if !entry_gas_sufficient {
+                gas.spend_all();
+            }
+            let valid = entry_gas_sufficient
+                && default_verification_is_valid::<H>(evm, target, frame.allowed_scope());
+            evm.ctx()
+                .local_mut()
+                .frame_transaction_mut()
+                .unwrap()
+                .enter_scope();
+            let approval_result = if valid {
+                evm.ctx().approve_frame_with_state_gas(
+                    target,
+                    U256::from(frame.allowed_scope()),
+                    gas.reservoir(),
+                )
+            } else if entry_gas_sufficient {
+                Err(context_interface::host::FrameHostError::Revert)
+            } else {
+                Err(context_interface::host::FrameHostError::OutOfGas)
+            };
+            let result = match approval_result {
+                Ok(state_gas) if gas.record_state_cost(state_gas) => InstructionResult::Return,
+                Ok(_) | Err(context_interface::host::FrameHostError::OutOfGas) => {
+                    gas.spend_all();
+                    InstructionResult::OutOfGas
+                }
+                Err(context_interface::host::FrameHostError::Revert) => InstructionResult::Revert,
+                Err(context_interface::host::FrameHostError::Invalid) => {
+                    InstructionResult::OpcodeNotFound
+                }
+                Err(context_interface::host::FrameHostError::Fatal) => {
+                    InstructionResult::FatalExternalError
+                }
+            };
+            let success = result.is_ok();
+            evm.ctx()
+                .local_mut()
+                .frame_transaction_mut()
+                .unwrap()
+                .exit_scope(success);
+            (
+                result,
+                frame.limits.execution.saturating_sub(gas.remaining()),
+                if success {
+                    frame.limits.state.saturating_sub(gas.reservoir())
+                } else {
+                    0
+                },
+                0,
+            )
+        } else {
+            let memory =
+                SharedMemory::new_with_buffer(evm.ctx_ref().local().shared_memory_buffer().clone());
+            let mut frame_result = handler.run_exec_loop(
+                evm,
+                FrameInit {
+                    depth: 0,
+                    memory,
+                    frame_input,
+                },
+            )?;
+            let result = frame_result.instruction_result();
+            let gas = frame_result.gas_mut();
+            // Each EIP-8141 frame is a top-level call. Apply the same EIP-8037
+            // finalization as the ordinary transaction top frame: reverted state-gas
+            // charges are unwound, refunds are discarded, and exceptional halts consume
+            // all regular gas.
+            if !result.is_ok() {
+                gas.rollback_state_gas();
+                gas.set_refunded(0);
+            }
+            if !result.is_ok_or_revert() {
+                gas.spend_all();
+            }
+            // Frame execution and state gas are independent budgets. The
+            // state budget must not be subtracted from execution gas used.
+            let spent = frame.limits.execution.saturating_sub(gas.remaining());
+            let state_gas = if result.is_ok() {
+                frame.limits.state.saturating_sub(gas.reservoir())
+            } else {
+                0
+            };
+            let refund = if result.is_ok() {
+                gas.refunded().max(0) as u64
+            } else {
+                0
+            };
+            (result, spent, state_gas, refund)
+        }
+    })
+}
+
+/// Settles the final per-frame gas accounting and transaction fees.
+fn finish_transaction<H: Handler + ?Sized>(
+    evm: &mut H::Evm,
+    intrinsic: u64,
+    floor_gas: u64,
+    mut receipts: Vec<FrameReceipt>,
+    frame_refunds: Vec<u64>,
+) -> Result<ExecutionResult<H::HaltReason>, H::Error> {
     let payer = evm
         .ctx_ref()
         .local()
@@ -416,14 +403,13 @@ pub fn run<H: Handler + ?Sized>(
     let total_frame_spent = receipts.iter().fold(0u64, |total, receipt| {
         total.saturating_add(receipt.gas_used.execution)
     });
-    let final_frame_state_gas = evm
+    let final_frame_state_gas = &evm
         .ctx_ref()
         .local()
         .frame_transaction()
         .unwrap()
-        .state_gas_used
-        .clone();
-    for (receipt, state_gas) in receipts.iter_mut().zip(&final_frame_state_gas) {
+        .state_gas_used;
+    for (receipt, state_gas) in receipts.iter_mut().zip(final_frame_state_gas) {
         receipt.gas_used.state = *state_gas;
     }
     let total_state_gas = final_frame_state_gas
@@ -444,18 +430,6 @@ pub fn run<H: Handler + ?Sized>(
         .with_refunded(refund)
         .with_floor_gas(floor_gas)
         .with_state_gas_spent(total_state_gas);
-    tracing::info!(
-        target: "revm::eip8141",
-        payer = ?payer,
-        frame_count,
-        intrinsic,
-        floor_gas,
-        total_frame_spent,
-        total_spent,
-        refund,
-        tx_gas_used = result_gas.frame_tx_gas_used(),
-        "Settling EIP-8141 frame transaction"
-    );
     settle_fees::<H>(evm, payer, result_gas.frame_tx_gas_used())?;
     take_error::<H::Error, _>(evm.ctx().error())?;
 
@@ -610,32 +584,15 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
             ));
         }
     }
-    tracing::info!(
-        target: "revm::eip8141",
-        sender = ?tx.caller(),
-        frame_count = frame_tx.frames.len(),
-        signature_count = frame_tx.signatures.len(),
-        gas_limit,
-        calldata_floor_gas = floor,
-        "Validated EIP-8141 transaction structure"
-    );
     Ok(())
 }
 
-fn validate_sender_and_signatures<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Error> {
-    let (sender, nonce, nonce_check_disabled, signatures, signature_hash) = {
-        let ctx = evm.ctx_ref();
-        let tx = ctx.tx();
-        let frame_tx = tx.frame_transaction().unwrap();
-        (
-            tx.caller(),
-            tx.nonce(),
-            ctx.cfg().is_nonce_check_disabled(),
-            frame_tx.signatures.clone(),
-            frame_tx.signature_hash,
-        )
-    };
-    for signature in &signatures {
+fn validate_signatures<H: Handler + ?Sized>(evm: &H::Evm) -> Result<(), H::Error> {
+    let tx = evm.ctx_ref().tx();
+    let sender = tx.caller();
+    let frame_tx = tx.frame_transaction().expect("validated frame tx");
+    let signature_hash = frame_tx.signature_hash;
+    for signature in &frame_tx.signatures {
         let message = if signature.msg.is_empty() {
             signature_hash.0
         } else {
@@ -699,14 +656,15 @@ fn validate_sender_and_signatures<H: Handler + ?Sized>(evm: &mut H::Evm) -> Resu
         if !valid {
             return Err(invalid("EIP-8141 signature validation failed"));
         }
-        tracing::info!(
-            target: "revm::eip8141",
-            scheme = ?signature.scheme,
-            signer = ?expected,
-            "Validated EIP-8141 signature"
-        );
     }
 
+    Ok(())
+}
+
+fn validate_sender<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Error> {
+    let sender = evm.ctx_ref().tx().caller();
+    let nonce = evm.ctx_ref().tx().nonce();
+    let nonce_check_disabled = evm.ctx_ref().cfg().is_nonce_check_disabled();
     // EIP-8141 static validation, including every signature, precedes the
     // sender-state lookup. Invalid transactions may legitimately omit the
     // sender from an attached block access list, so loading it first can
@@ -738,13 +696,6 @@ fn validate_sender_and_signatures<H: Handler + ?Sized>(evm: &mut H::Evm) -> Resu
         }
     }
 
-    tracing::info!(
-        target: "revm::eip8141",
-        sender = ?sender,
-        nonce,
-        signature_count = signatures.len(),
-        "Validated EIP-8141 sender and signatures"
-    );
     Ok(())
 }
 

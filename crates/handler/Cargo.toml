@@ -31,7 +31,6 @@ alloy-eip8141.workspace = true
 
 auto_impl.workspace = true
 derive-where.workspace = true
-tracing.workspace = true
 
 # Optional
 serde = { workspace = true, optional = true }
@@ -44,7 +43,6 @@ alloy-signer-local.workspace = true
 [features]
 default = ["std"]
 std = [
-	"tracing/std",
 	"serde?/std",
 	"bytecode/std",
 	"context/std",

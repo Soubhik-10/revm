@@ -23,13 +23,6 @@ const fn host_error(error: FrameHostError) -> InstructionResult {
 pub fn approve<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
     check!(context.interpreter, BOGOTA);
     popn!([offset, len, scope], context.interpreter);
-    tracing::info!(
-        target: "revm::eip8141::instruction",
-        ?offset,
-        ?len,
-        ?scope,
-        "Executing APPROVE"
-    );
     let len = as_usize_or_fail!(context.interpreter, len);
     let output = if len == 0 {
         Bytes::new()
@@ -61,7 +54,6 @@ pub fn approve<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 pub fn txparam<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
     check!(context.interpreter, BOGOTA);
     popn_top!([], param, context.interpreter);
-    tracing::info!(target: "revm::eip8141::instruction", ?param, "Executing TXPARAM");
     *param = context
         .host
         .frame_tx_param(*param, context.interpreter.gas.reservoir())
@@ -73,12 +65,6 @@ pub fn txparam<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
 pub fn framedataload<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
     check!(context.interpreter, BOGOTA);
     popn!([offset, frame_index], context.interpreter);
-    tracing::info!(
-        target: "revm::eip8141::instruction",
-        ?offset,
-        ?frame_index,
-        "Executing FRAMEDATALOAD"
-    );
     let data = context
         .host
         .frame_data(frame_index)
@@ -124,14 +110,6 @@ pub fn framedatacopy<IT: ITy, H: Host + ?Sized>(mut context: Ictx<'_, H, IT>) ->
         [memory_offset, data_offset, len, frame_index],
         context.interpreter
     );
-    tracing::info!(
-        target: "revm::eip8141::instruction",
-        ?memory_offset,
-        ?data_offset,
-        ?len,
-        ?frame_index,
-        "Executing FRAMEDATACOPY"
-    );
     let data = context
         .host
         .frame_data(frame_index)
@@ -143,12 +121,6 @@ pub fn framedatacopy<IT: ITy, H: Host + ?Sized>(mut context: Ictx<'_, H, IT>) ->
 pub fn frameparam<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
     check!(context.interpreter, BOGOTA);
     popn!([frame_index, param], context.interpreter);
-    tracing::info!(
-        target: "revm::eip8141::instruction",
-        ?frame_index,
-        ?param,
-        "Executing FRAMEPARAM"
-    );
     let value = context
         .host
         .frame_param(frame_index, param)
@@ -161,12 +133,6 @@ pub fn frameparam<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result
 pub fn sigparam<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
     check!(context.interpreter, BOGOTA);
     popn!([signature_index, param], context.interpreter);
-    tracing::info!(
-        target: "revm::eip8141::instruction",
-        ?signature_index,
-        ?param,
-        "Executing SIGPARAM"
-    );
     let value = context
         .host
         .frame_signature_param(signature_index, param)
@@ -181,14 +147,6 @@ pub fn sigdatacopy<IT: ITy, H: Host + ?Sized>(mut context: Ictx<'_, H, IT>) -> R
     popn!(
         [memory_offset, data_offset, len, signature_index],
         context.interpreter
-    );
-    tracing::info!(
-        target: "revm::eip8141::instruction",
-        ?signature_index,
-        ?memory_offset,
-        ?data_offset,
-        ?len,
-        "Executing SIGDATACOPY"
     );
     let data = context
         .host

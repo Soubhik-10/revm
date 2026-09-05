@@ -350,6 +350,7 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
     }
 
     fn supports_eip8141(&self) -> bool {
+        // Implementation capability; transaction validation checks fork activation.
         true
     }
 

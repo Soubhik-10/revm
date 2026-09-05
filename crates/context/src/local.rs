@@ -2,7 +2,7 @@
 use context_interface::local::FrameTransactionRuntime;
 use context_interface::LocalContextTr;
 use core::cell::RefCell;
-use std::{rc::Rc, string::String, vec::Vec};
+use std::{boxed::Box, rc::Rc, string::String, vec::Vec};
 
 /// Local context that is filled by execution.
 #[derive(Clone, Debug)]
@@ -11,8 +11,8 @@ pub struct LocalContext {
     pub shared_memory_buffer: Rc<RefCell<Vec<u8>>>,
     /// Optional precompile error message to bubble up.
     pub precompile_error_message: Option<String>,
-    /// Active EIP-8141 frame transaction runtime state.
-    pub frame_transaction: Option<FrameTransactionRuntime>,
+    /// Active EIP-8141 runtime, allocated only for frame transactions.
+    pub frame_transaction: Option<Box<FrameTransactionRuntime>>,
 }
 
 impl Default for LocalContext {
@@ -46,7 +46,7 @@ impl LocalContextTr for LocalContext {
     }
 
     fn frame_transaction(&self) -> Option<&FrameTransactionRuntime> {
-        self.frame_transaction.as_ref()
+        self.frame_transaction.as_deref()
     }
 
     fn supports_eip8141(&self) -> bool {
@@ -54,11 +54,11 @@ impl LocalContextTr for LocalContext {
     }
 
     fn frame_transaction_mut(&mut self) -> Option<&mut FrameTransactionRuntime> {
-        self.frame_transaction.as_mut()
+        self.frame_transaction.as_deref_mut()
     }
 
     fn set_frame_transaction(&mut self, runtime: Option<FrameTransactionRuntime>) {
-        self.frame_transaction = runtime;
+        self.frame_transaction = runtime.map(Box::new);
     }
 }
 

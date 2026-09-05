@@ -180,6 +180,58 @@ impl EthFrame<EthInterpreter> {
         *checkpoint_ref = checkpoint;
     }
 
+    /// Charges an EIP-8141 target and resolves delegation only after that charge.
+    /// Returns the precompile-dispatch flag, or None when entry runs out of gas.
+    fn charge_frame_entry<
+        CTX: ContextTr,
+        PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,
+        ERROR: From<ContextTrDbError<CTX>> + FromStringError,
+    >(
+        ctx: &mut CTX,
+        precompiles: &PRECOMPILES,
+        inputs: &mut CallInputs,
+        gas: &mut Gas,
+    ) -> Result<Option<bool>, ERROR> {
+        if !gas.record_regular_cost(inputs.entry_gas) {
+            return Ok(None);
+        }
+        let mut disable_precompiles = false;
+        if let Some(delegated_address) = inputs.known_bytecode.1.eip7702_address() {
+            let gas_params = ctx.cfg().gas_params();
+            let warm_access_cost = gas_params.warm_storage_read_cost();
+            let cold_account_additional_cost = gas_params.cold_account_additional_cost();
+            if !gas.record_regular_cost(warm_access_cost) {
+                return Ok(None);
+            }
+            let skip_cold_load = gas.remaining() < cold_account_additional_cost;
+            let delegated_account = match ctx.journal_mut().load_account_info_skip_cold_load(
+                delegated_address,
+                true,
+                skip_cold_load,
+            ) {
+                Ok(account) => account,
+                Err(JournalLoadError::ColdLoadSkipped) => {
+                    return Ok(None);
+                }
+                Err(JournalLoadError::DBError(error)) => return Err(error.into()),
+            };
+            if delegated_account.is_cold && !gas.record_regular_cost(cold_account_additional_cost) {
+                return Ok(None);
+            }
+            // EIP-7702 delegation suppresses precompile dispatch. If the
+            // delegate address is itself a precompile, the frame executes
+            // that account's empty code instead.
+            disable_precompiles = precompiles.contains(&delegated_address);
+            inputs.bytecode_address = delegated_address;
+            inputs.known_bytecode = (
+                delegated_account.code_hash(),
+                delegated_account.code.clone().unwrap_or_default(),
+            );
+        }
+
+        Ok(Some(disable_precompiles))
+    }
+
     /// Make call frame
     #[inline]
     pub fn make_call_frame<
@@ -207,101 +259,16 @@ impl EthFrame<EthInterpreter> {
             Gas::new_with_regular_gas_and_reservoir(inputs.gas_limit, reservoir_remaining_gas)
         };
 
-        // EIP-8141 frame targets are entered as top-level calls, so their
-        // warm/cold account access is charged against the frame's own gas
-        // allocation before dispatching its code.
-        let entry_gas_sufficient = gas.record_regular_cost(entry_gas);
-        if !entry_gas_sufficient {
-            gas.spend_all();
-        }
-
-        if !entry_gas_sufficient {
-            return Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
-                result: InterpreterResult {
-                    result: InstructionResult::OutOfGas,
-                    gas,
-                    output: Bytes::new(),
-                },
-                memory_offset: inputs.return_memory_offset.clone(),
-                was_precompile_called: false,
-                precompile_call_logs: Vec::new(),
-                charged_new_account_state_gas,
-            })));
-        }
-
-        // Resolve a designated target only after its own frame-entry charge
-        // succeeds. This makes an unaffordable delegated target observable as
-        // a bare access without touching its delegate in the block access list.
-        let mut disable_precompiles = false;
-        if inputs.entry_gas != 0 {
-            if let Some(delegated_address) = inputs.known_bytecode.1.eip7702_address() {
-                let gas_params = ctx.cfg().gas_params();
-                let warm_access_cost = gas_params.warm_storage_read_cost();
-                let cold_account_additional_cost = gas_params.cold_account_additional_cost();
-                if !gas.record_regular_cost(warm_access_cost) {
-                    gas.spend_all();
-                    return Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
-                        result: InterpreterResult {
-                            result: InstructionResult::OutOfGas,
-                            gas,
-                            output: Bytes::new(),
-                        },
-                        memory_offset: inputs.return_memory_offset.clone(),
-                        was_precompile_called: false,
-                        precompile_call_logs: Vec::new(),
-                        charged_new_account_state_gas,
-                    })));
-                }
-                let skip_cold_load = gas.remaining() < cold_account_additional_cost;
-                let delegated_account = match ctx.journal_mut().load_account_info_skip_cold_load(
-                    delegated_address,
-                    true,
-                    skip_cold_load,
-                ) {
-                    Ok(account) => account,
-                    Err(JournalLoadError::ColdLoadSkipped) => {
-                        gas.spend_all();
-                        return Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
-                            result: InterpreterResult {
-                                result: InstructionResult::OutOfGas,
-                                gas,
-                                output: Bytes::new(),
-                            },
-                            memory_offset: inputs.return_memory_offset.clone(),
-                            was_precompile_called: false,
-                            precompile_call_logs: Vec::new(),
-                            charged_new_account_state_gas,
-                        })));
-                    }
-                    Err(JournalLoadError::DBError(error)) => return Err(error.into()),
-                };
-                if delegated_account.is_cold
-                    && !gas.record_regular_cost(cold_account_additional_cost)
-                {
-                    gas.spend_all();
-                    return Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
-                        result: InterpreterResult {
-                            result: InstructionResult::OutOfGas,
-                            gas,
-                            output: Bytes::new(),
-                        },
-                        memory_offset: inputs.return_memory_offset.clone(),
-                        was_precompile_called: false,
-                        precompile_call_logs: Vec::new(),
-                        charged_new_account_state_gas,
-                    })));
-                }
-                // EIP-7702 delegation suppresses precompile dispatch. If the
-                // delegate address is itself a precompile, the frame executes
-                // that account's empty code instead.
-                disable_precompiles = precompiles.contains(&delegated_address);
-                inputs.bytecode_address = delegated_address;
-                inputs.known_bytecode = (
-                    delegated_account.code_hash(),
-                    delegated_account.code.clone().unwrap_or_default(),
-                );
-            }
-        }
+        let entry_result = if entry_gas != 0 {
+            Self::charge_frame_entry::<CTX, PRECOMPILES, ERROR>(
+                ctx,
+                precompiles,
+                &mut inputs,
+                &mut gas,
+            )?
+        } else {
+            Some(false)
+        };
 
         let return_result = |gas: Gas, instruction_result: InstructionResult| {
             Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
@@ -315,6 +282,11 @@ impl EthFrame<EthInterpreter> {
                 precompile_call_logs: Vec::new(),
                 charged_new_account_state_gas,
             })))
+        };
+
+        let Some(disable_precompiles) = entry_result else {
+            gas.spend_all();
+            return return_result(gas, InstructionResult::OutOfGas);
         };
 
         // Check depth

@@ -35,12 +35,19 @@ pub struct FrameTransactionRuntime {
     pub approval_stack: Vec<FrameApprovalState>,
     /// Approval produced by the completed top-level interpreter frame.
     pub root_approval: Option<FrameApprovalState>,
-    /// Top-level frame that owns the outstanding state-gas charge for each storage slot.
-    state_gas_owners: HashMap<(Address, StorageKey), usize>,
-    /// Journal of state-gas attribution changes retained across top-level frames.
-    state_gas_journal: Vec<FrameStateGasJournalEntry>,
-    /// State-gas journal checkpoints corresponding to active interpreter call frames.
-    state_gas_checkpoints: Vec<usize>,
+    /// Revertible state-gas attribution across top-level frames.
+    state_gas: FrameStateGas,
+}
+
+/// State-gas ownership and rollback bookkeeping, separate from approvals.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct FrameStateGas {
+    /// Top-level frame owning each outstanding storage charge.
+    owners: HashMap<(Address, StorageKey), usize>,
+    /// Attribution changes retained across top-level frames.
+    journal: Vec<FrameStateGasJournalEntry>,
+    /// Checkpoints for active interpreter call frames.
+    checkpoints: Vec<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -64,18 +71,29 @@ impl FrameTransactionRuntime {
         }
     }
 
+    /// Creates runtime state with capacity for all top-level frame results.
+    pub fn with_capacity(resolved_target: Address, frame_count: usize) -> Self {
+        Self {
+            statuses: Vec::with_capacity(frame_count),
+            execution_gas_used: Vec::with_capacity(frame_count),
+            state_gas_used: Vec::with_capacity(frame_count),
+            ..Self::new(resolved_target)
+        }
+    }
+
     /// Enters an interpreter call frame approval scope.
     pub fn enter_scope(&mut self) {
         let state = self.approval_stack.last().copied().unwrap_or(self.approval);
         self.approval_stack.push(state);
-        self.state_gas_checkpoints
-            .push(self.state_gas_journal.len());
+        self.state_gas
+            .checkpoints
+            .push(self.state_gas.journal.len());
     }
 
     /// Exits an interpreter call frame, committing approvals only on success.
     pub fn exit_scope(&mut self, success: bool) {
         let state = self.approval_stack.pop();
-        let state_gas_checkpoint = self.state_gas_checkpoints.pop();
+        let state_gas_checkpoint = self.state_gas.checkpoints.pop();
         if !success {
             if let Some(checkpoint) = state_gas_checkpoint {
                 self.revert_state_gas(checkpoint);
@@ -103,18 +121,18 @@ impl FrameTransactionRuntime {
 
     /// Returns a checkpoint for state-gas ownership and receipt attribution.
     pub const fn state_gas_checkpoint(&self) -> usize {
-        self.state_gas_journal.len()
+        self.state_gas.journal.len()
     }
 
     /// Reverts state-gas ownership and receipt attribution to `checkpoint`.
     pub fn revert_state_gas(&mut self, checkpoint: usize) {
-        while self.state_gas_journal.len() > checkpoint {
-            match self.state_gas_journal.pop().expect("length checked") {
+        while self.state_gas.journal.len() > checkpoint {
+            match self.state_gas.journal.pop().expect("length checked") {
                 FrameStateGasJournalEntry::Owner { slot, previous } => {
                     if let Some(owner) = previous {
-                        self.state_gas_owners.insert(slot, owner);
+                        self.state_gas.owners.insert(slot, owner);
                     } else {
-                        self.state_gas_owners.remove(&slot);
+                        self.state_gas.owners.remove(&slot);
                     }
                 }
                 FrameStateGasJournalEntry::GasUsed {
@@ -135,8 +153,9 @@ impl FrameTransactionRuntime {
             return;
         }
         let slot = (address, key);
-        let previous_owner = self.state_gas_owners.insert(slot, self.current_frame_index);
-        self.state_gas_journal
+        let previous_owner = self.state_gas.owners.insert(slot, self.current_frame_index);
+        self.state_gas
+            .journal
             .push(FrameStateGasJournalEntry::Owner {
                 slot,
                 previous: previous_owner,
@@ -146,7 +165,8 @@ impl FrameTransactionRuntime {
             .get_mut(self.current_frame_index)
             .expect("current frame receipt initialized");
         let previous = *gas_used;
-        self.state_gas_journal
+        self.state_gas
+            .journal
             .push(FrameStateGasJournalEntry::GasUsed {
                 frame_index: self.current_frame_index,
                 previous,
@@ -167,10 +187,11 @@ impl FrameTransactionRuntime {
             return 0;
         }
         let slot = (address, key);
-        let Some(owner) = self.state_gas_owners.remove(&slot) else {
+        let Some(owner) = self.state_gas.owners.remove(&slot) else {
             return 0;
         };
-        self.state_gas_journal
+        self.state_gas
+            .journal
             .push(FrameStateGasJournalEntry::Owner {
                 slot,
                 previous: Some(owner),
@@ -180,7 +201,8 @@ impl FrameTransactionRuntime {
             .get_mut(owner)
             .expect("outstanding charge owner has a receipt");
         let previous = *gas_used;
-        self.state_gas_journal
+        self.state_gas
+            .journal
             .push(FrameStateGasJournalEntry::GasUsed {
                 frame_index: owner,
                 previous,

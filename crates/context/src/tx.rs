@@ -10,7 +10,7 @@ use context_interface::{
 use core::fmt::Debug;
 use database_interface::{BENCH_CALLER, BENCH_TARGET};
 use primitives::{eip7825, Address, Bytes, TxKind, B256, U256};
-use std::{vec, vec::Vec};
+use std::{boxed::Box, vec, vec::Vec};
 
 /// The Transaction Environment is a struct that contains all fields that can be found in all Ethereum transaction,
 /// including EIP-4844, EIP-7702, EIP-7873, etc.  It implements the [`Transaction`] trait, which is used inside the EVM to execute a transaction.
@@ -87,8 +87,8 @@ pub struct TxEnv {
     /// [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
     pub authorization_list: Vec<Either<SignedAuthorization, RecoveredAuthorization>>,
 
-    /// EIP-8141 frame transaction execution payload.
-    pub frame_transaction: Option<FrameTransaction>,
+    /// EIP-8141 execution payload, allocated only for frame transactions.
+    pub frame_transaction: Option<Box<FrameTransaction>>,
 }
 
 impl Default for TxEnv {
@@ -191,7 +191,7 @@ impl Transaction for TxEnv {
     }
 
     fn frame_transaction(&self) -> Option<&FrameTransaction> {
-        self.frame_transaction.as_ref()
+        self.frame_transaction.as_deref()
     }
 
     fn kind(&self) -> TxKind {
@@ -519,7 +519,7 @@ impl TxEnvBuilder {
             blob_hashes: self.blob_hashes,
             max_fee_per_blob_gas: self.max_fee_per_blob_gas,
             authorization_list: self.authorization_list,
-            frame_transaction: self.frame_transaction,
+            frame_transaction: self.frame_transaction.map(Box::new),
         };
 
         // if tx_type is not set, derive it from fields and fix errors.
@@ -620,7 +620,7 @@ impl TxEnvBuilder {
             blob_hashes: self.blob_hashes,
             max_fee_per_blob_gas: self.max_fee_per_blob_gas,
             authorization_list: self.authorization_list,
-            frame_transaction: self.frame_transaction,
+            frame_transaction: self.frame_transaction.map(Box::new),
         };
 
         // Derive tx type from fields, if some fields are wrongly set it will return an error.
@@ -732,7 +732,7 @@ impl TxEnv {
             .authorization_list(authorization_list);
 
         if let Some(frame_transaction) = frame_transaction {
-            builder.frame_transaction(frame_transaction)
+            builder.frame_transaction(*frame_transaction)
         } else {
             builder
         }

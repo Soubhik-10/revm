@@ -669,23 +669,14 @@ impl<
             return Err(FrameHostError::Revert);
         }
 
-        let (sender, allowed_scope, max_cost) = {
+        let (sender, allowed_scope) = {
             let tx = self.tx();
             let frame_tx = tx.frame_transaction().ok_or(FrameHostError::Invalid)?;
             let frame = frame_tx
                 .frames
                 .get(current_frame_index)
                 .ok_or(FrameHostError::Invalid)?;
-            (
-                tx.caller(),
-                frame.allowed_scope(),
-                frame_tx.max_cost_with_params(
-                    tx.caller(),
-                    self.cfg().gas_params(),
-                    tx.total_blob_gas(),
-                    self.block().blob_gasprice().unwrap_or_default(),
-                ),
-            )
+            (tx.caller(), frame.allowed_scope())
         };
         let scope = u8::try_from(scope).map_err(|_| FrameHostError::Revert)?;
         if scope == 0 || scope & !allowed_scope != 0 {
@@ -702,77 +693,11 @@ impl<
             return Err(FrameHostError::Revert);
         }
 
-        let mut charged_state_gas = 0;
-        if approves_payment {
-            let balance_check_disabled = self.cfg().is_balance_check_disabled();
-            let fee_charge_disabled = self.cfg().is_fee_charge_disabled();
-            let new_account_state_gas = self.cfg().gas_params().new_account_state_gas();
-            let sender_is_empty_result = self
-                .journal_mut()
-                .load_account_info_skip_cold_load(sender, false, false)
-                .map(|account| account.is_empty);
-            let sender_is_empty = match sender_is_empty_result {
-                Ok(is_empty) => is_empty,
-                Err(error) => {
-                    *self.error() = Err(error.unwrap_db_error().into());
-                    return Err(FrameHostError::Fatal);
-                }
-            };
-            let payer_balance_result = self
-                .journal_mut()
-                .load_account_mut(resolved_target)
-                .map(|account| *account.balance());
-            let payer_balance = match payer_balance_result {
-                Ok(balance) => balance,
-                Err(error) => {
-                    *self.error() = Err(error.into());
-                    return Err(FrameHostError::Fatal);
-                }
-            };
-            if !balance_check_disabled && payer_balance < max_cost {
-                return Err(FrameHostError::Revert);
-            }
-            if balance_check_disabled && payer_balance < max_cost {
-                let result = self
-                    .journal_mut()
-                    .load_account_mut(resolved_target)
-                    .map(|mut account| account.incr_balance(max_cost - payer_balance));
-                if let Err(error) = result {
-                    *self.error() = Err(error.into());
-                    return Err(FrameHostError::Fatal);
-                }
-            }
-            if sender_is_empty {
-                if state_gas_left < new_account_state_gas {
-                    return Err(FrameHostError::OutOfGas);
-                }
-                charged_state_gas = new_account_state_gas;
-            }
-            let bump_result = self
-                .journal_mut()
-                .load_account_mut(sender)
-                .map(|mut account| account.bump_nonce());
-            let bumped = match bump_result {
-                Ok(bumped) => bumped,
-                Err(error) => {
-                    *self.error() = Err(error.into());
-                    return Err(FrameHostError::Fatal);
-                }
-            };
-            if !bumped {
-                return Err(FrameHostError::Revert);
-            }
-            if !fee_charge_disabled {
-                let result = self
-                    .journal_mut()
-                    .load_account_mut(resolved_target)
-                    .map(|mut account| account.decr_balance(max_cost));
-                if let Err(error) = result {
-                    *self.error() = Err(error.into());
-                    return Err(FrameHostError::Fatal);
-                }
-            }
-        }
+        let charged_state_gas = if approves_payment {
+            charge_frame_payer(self, sender, resolved_target, state_gas_left)?
+        } else {
+            0
+        };
 
         let runtime = self
             .local_mut()
@@ -782,16 +707,6 @@ impl<
             .approval_stack
             .last_mut()
             .ok_or(FrameHostError::Invalid)?;
-        tracing::info!(
-            target: "revm::eip8141",
-            frame_index = current_frame_index,
-            target = ?resolved_target,
-            scope,
-            approves_payment,
-            approves_execution,
-            max_cost = ?max_cost,
-            "Applying EIP-8141 frame approval"
-        );
         *approval = context_interface::local::FrameApprovalState {
             payer: if approves_payment {
                 Some(resolved_target)
@@ -934,4 +849,94 @@ impl<
             }
         }
     }
+}
+
+/// Applies the payment approval after its scope has been validated.
+fn charge_frame_payer<CTX: ContextTr>(
+    ctx: &mut CTX,
+    sender: Address,
+    payer: Address,
+    state_gas_left: u64,
+) -> Result<u64, FrameHostError> {
+    let tx = ctx.tx();
+    let max_cost = tx
+        .frame_transaction()
+        .ok_or(FrameHostError::Invalid)?
+        .max_cost_with_params(
+            sender,
+            ctx.cfg().gas_params(),
+            tx.total_blob_gas(),
+            ctx.block().blob_gasprice().unwrap_or_default(),
+        );
+    let mut charged_state_gas = 0;
+    let balance_check_disabled = ctx.cfg().is_balance_check_disabled();
+    let fee_charge_disabled = ctx.cfg().is_fee_charge_disabled();
+    let new_account_state_gas = ctx.cfg().gas_params().new_account_state_gas();
+    let sender_is_empty_result = ctx
+        .journal_mut()
+        .load_account_info_skip_cold_load(sender, false, false)
+        .map(|account| account.is_empty);
+    let sender_is_empty = match sender_is_empty_result {
+        Ok(is_empty) => is_empty,
+        Err(error) => {
+            *ctx.error() = Err(error.unwrap_db_error().into());
+            return Err(FrameHostError::Fatal);
+        }
+    };
+    let payer_balance_result = ctx
+        .journal_mut()
+        .load_account_mut(payer)
+        .map(|account| *account.balance());
+    let payer_balance = match payer_balance_result {
+        Ok(balance) => balance,
+        Err(error) => {
+            *ctx.error() = Err(error.into());
+            return Err(FrameHostError::Fatal);
+        }
+    };
+    if !balance_check_disabled && payer_balance < max_cost {
+        return Err(FrameHostError::Revert);
+    }
+    if balance_check_disabled && payer_balance < max_cost {
+        let result = ctx
+            .journal_mut()
+            .load_account_mut(payer)
+            .map(|mut account| account.incr_balance(max_cost - payer_balance));
+        if let Err(error) = result {
+            *ctx.error() = Err(error.into());
+            return Err(FrameHostError::Fatal);
+        }
+    }
+    if sender_is_empty {
+        if state_gas_left < new_account_state_gas {
+            return Err(FrameHostError::OutOfGas);
+        }
+        charged_state_gas = new_account_state_gas;
+    }
+    let bump_result = ctx
+        .journal_mut()
+        .load_account_mut(sender)
+        .map(|mut account| account.bump_nonce());
+    let bumped = match bump_result {
+        Ok(bumped) => bumped,
+        Err(error) => {
+            *ctx.error() = Err(error.into());
+            return Err(FrameHostError::Fatal);
+        }
+    };
+    if !bumped {
+        return Err(FrameHostError::Revert);
+    }
+    if !fee_charge_disabled {
+        let result = ctx
+            .journal_mut()
+            .load_account_mut(payer)
+            .map(|mut account| account.decr_balance(max_cost));
+        if let Err(error) = result {
+            *ctx.error() = Err(error.into());
+            return Err(FrameHostError::Fatal);
+        }
+    }
+
+    Ok(charged_state_gas)
 }

@@ -23,7 +23,6 @@ bytecode.workspace = true
 primitives.workspace = true
 context-interface.workspace = true
 state.workspace = true
-tracing.workspace = true
 
 # optional
 serde = { workspace = true, features = ["derive", "rc"], optional = true }
@@ -34,7 +33,6 @@ serde_json = { workspace = true, features = ["alloc"] }
 [features]
 default = ["std"]
 std = [
-	"tracing/std",
 	"serde?/std",
 	"primitives/std",
 	"context-interface/std",
