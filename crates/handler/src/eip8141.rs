@@ -1584,6 +1584,7 @@ mod tests {
     #[test]
     fn max_blob_fee_without_blobs_has_frame_transaction_error() {
         let payload = FrameTransaction {
+            max_fee_per_blob_gas: U256::from(1),
             frames: vec![Frame {
                 limits: FrameLimits {
                     execution: 1,
@@ -1593,8 +1594,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        let mut tx = tx_env(SENDER, payload);
-        tx.max_fee_per_blob_gas = 1;
+        let tx = tx_env(SENDER, payload);
         let mut evm = Context::mainnet()
             .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
             .with_db(CacheDB::<EmptyDB>::default())
