@@ -38,6 +38,9 @@ serde_json = { workspace = true, features = [
 
 [dev-dependencies]
 database = { workspace = true, features = ["serde"] }
+alloy-eip8141.workspace = true
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
 
 [features]
 default = ["std"]

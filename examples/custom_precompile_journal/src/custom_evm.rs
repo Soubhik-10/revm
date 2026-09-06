@@ -330,6 +330,9 @@ mod tests {
             revm::context::result::ExecutionResult::Halt { reason, .. } => {
                 panic!("Transaction halted unexpectedly: {reason:?}");
             }
+            revm::context::result::ExecutionResult::FrameTransaction { .. } => {
+                panic!("Unexpected frame transaction result");
+            }
         }
     }
 
@@ -401,6 +404,9 @@ mod tests {
             }
             revm::context::result::ExecutionResult::Halt { reason, .. } => {
                 panic!("Transaction halted unexpectedly: {reason:?}");
+            }
+            revm::context::result::ExecutionResult::FrameTransaction { .. } => {
+                panic!("Unexpected frame transaction result");
             }
         }
     }

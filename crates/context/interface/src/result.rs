@@ -62,9 +62,9 @@ impl<R, S> ExecResultAndState<R, S> {
 ///
 /// ## Derived values
 ///
-/// - [`tx_gas_used()`](ResultGas::tx_gas_used) = `max(total_gas_spent − refunded, floor_gas)` (the value that goes into receipts)
-/// - [`block_regular_gas_used()`](ResultGas::block_regular_gas_used) = `max(total_gas_spent − state_gas_spent, floor_gas)`
-///   (EIP-8037 + EIP-7778: pre-refund; the EIP-7623 calldata floor binds against the regular component)
+/// - [`tx_gas_used()`](ResultGas::tx_gas_used) = `max(total_gas_spent − refunded, floor_gas)` for standard transactions
+/// - [`frame_tx_gas_used()`](ResultGas::frame_tx_gas_used) = `max(total_gas_spent - refunded - state_gas_spent, floor_gas) + state_gas_spent` for EIP-8141
+/// - [`block_regular_gas_used()`](ResultGas::block_regular_gas_used) = `max(total_gas_spent − state_gas_spent, floor_gas)` for standard transactions
 /// - [`block_state_gas_used()`](ResultGas::block_state_gas_used) = `state_gas_spent`
 /// - [`spent_sub_refunded()`](ResultGas::spent_sub_refunded) = `total_gas_spent − refunded` (before floor gas check)
 /// - [`final_refunded()`](ResultGas::final_refunded) = `refunded` when floor gas is inactive, `0` when floor gas kicks in
@@ -268,6 +268,32 @@ impl ResultGas {
         max(tx_gas_refunded, self.floor_gas())
     }
 
+    /// Returns the gas used by an EIP-8141 frame transaction.
+    ///
+    /// Frame settlement applies refunds to the execution dimension and then
+    /// applies the calldata floor to that dimension. State gas is added after
+    /// the floor, so it must not be absorbed by the floor calculation.
+    #[inline]
+    pub const fn frame_tx_gas_used(&self) -> u64 {
+        max(
+            self.spent_sub_refunded()
+                .saturating_sub(self.state_gas_spent_final()),
+            self.floor_gas(),
+        )
+        .saturating_add(self.state_gas_spent_final())
+    }
+
+    /// Returns the execution gas charged to the block by an EIP-8141 frame
+    /// transaction.
+    #[inline]
+    pub const fn frame_block_regular_gas_used(&self) -> u64 {
+        max(
+            self.total_gas_spent()
+                .saturating_sub(self.state_gas_spent_final()),
+            self.floor_gas(),
+        )
+    }
+
     /// Returns the regular gas used by the block per EIP-8037 + EIP-7778.
     ///
     /// `max(total_gas_spent - state_gas_spent, floor_gas)` (pre-refund). The
@@ -411,6 +437,18 @@ pub enum ExecutionResult<HaltReasonTy = HaltReason> {
         /// Logs emitted before the halt.
         logs: Vec<Log>,
     },
+    /// Successful EIP-8141 frame transaction.
+    FrameTransaction {
+        /// Aggregate transaction gas accounting.
+        gas: ResultGas,
+        /// Account that approved and paid the transaction fee.
+        payer: Address,
+        /// Logs from all successful frames, in execution order.
+        logs: Vec<Log>,
+        /// Per-frame status, gas, and logs, required to construct the consensus receipt.
+        /// The aggregate `logs` field preserves the common execution-result log API.
+        frame_receipts: Vec<alloy_eip8141::FrameReceipt<Log>>,
+    },
 }
 
 impl<HaltReasonTy> ExecutionResult<HaltReasonTy> {
@@ -420,7 +458,7 @@ impl<HaltReasonTy> ExecutionResult<HaltReasonTy> {
     ///
     /// <https://eips.ethereum.org/EIPS/eip-658>
     pub const fn is_success(&self) -> bool {
-        matches!(self, Self::Success { .. })
+        matches!(self, Self::Success { .. } | Self::FrameTransaction { .. })
     }
 
     /// Maps a `DBError` to a new error type using the provided closure, leaving other variants unchanged.
@@ -445,6 +483,17 @@ impl<HaltReasonTy> ExecutionResult<HaltReasonTy> {
                 reason: op(reason),
                 gas,
                 logs,
+            },
+            Self::FrameTransaction {
+                gas,
+                payer,
+                logs,
+                frame_receipts,
+            } => ExecutionResult::FrameTransaction {
+                gas,
+                payer,
+                logs,
+                frame_receipts,
             },
         }
     }
@@ -488,31 +537,47 @@ impl<HaltReasonTy> ExecutionResult<HaltReasonTy> {
     /// Returns the logs emitted during execution.
     pub const fn logs(&self) -> &[Log] {
         match self {
-            Self::Success { logs, .. } | Self::Revert { logs, .. } | Self::Halt { logs, .. } => {
-                logs.as_slice()
-            }
+            Self::Success { logs, .. }
+            | Self::Revert { logs, .. }
+            | Self::Halt { logs, .. }
+            | Self::FrameTransaction { logs, .. } => logs.as_slice(),
         }
     }
 
     /// Consumes [`self`] and returns the logs emitted during execution.
     pub fn into_logs(self) -> Vec<Log> {
         match self {
-            Self::Success { logs, .. } | Self::Revert { logs, .. } | Self::Halt { logs, .. } => {
-                logs
-            }
+            Self::Success { logs, .. }
+            | Self::Revert { logs, .. }
+            | Self::Halt { logs, .. }
+            | Self::FrameTransaction { logs, .. } => logs,
         }
     }
 
     /// Returns the gas accounting information.
     pub const fn gas(&self) -> &ResultGas {
         match self {
-            Self::Success { gas, .. } | Self::Revert { gas, .. } | Self::Halt { gas, .. } => gas,
+            Self::Success { gas, .. }
+            | Self::Revert { gas, .. }
+            | Self::Halt { gas, .. }
+            | Self::FrameTransaction { gas, .. } => gas,
         }
     }
 
     /// Returns the gas used needed for the transaction receipt.
     pub const fn tx_gas_used(&self) -> u64 {
-        self.gas().tx_gas_used()
+        match self {
+            Self::FrameTransaction { gas, .. } => gas.frame_tx_gas_used(),
+            _ => self.gas().tx_gas_used(),
+        }
+    }
+
+    /// Returns the gas charged to the regular block-gas dimension.
+    pub const fn block_regular_gas_used(&self) -> u64 {
+        match self {
+            Self::FrameTransaction { gas, .. } => gas.frame_block_regular_gas_used(),
+            _ => self.gas().block_regular_gas_used(),
+        }
     }
 
     /// Returns the gas used.
@@ -573,6 +638,17 @@ impl<HaltReasonTy: fmt::Display> fmt::Display for ExecutionResult<HaltReasonTy> 
                 }
                 Ok(())
             }
+            Self::FrameTransaction {
+                gas,
+                payer,
+                frame_receipts,
+                ..
+            } => write!(
+                f,
+                "Frame transaction: {gas}, payer {payer}, {} frame{}",
+                frame_receipts.len(),
+                if frame_receipts.len() == 1 { "" } else { "s" }
+            ),
         }
     }
 }
@@ -940,6 +1016,10 @@ pub enum InvalidTransaction {
     Eip4844NotSupported,
     /// EIP-7702 is not supported.
     Eip7702NotSupported,
+    /// EIP-8141 is not supported.
+    Eip8141NotSupported,
+    /// EIP-8141 transaction has invalid outer fields.
+    Eip8141InvalidFields,
     /// EIP-7873 is not supported.
     Eip7873NotSupported,
     /// EIP-7873 initcode transaction should have `to` address.
@@ -1042,6 +1122,10 @@ impl fmt::Display for InvalidTransaction {
             Self::Eip1559NotSupported => write!(f, "Eip1559 is not supported"),
             Self::Eip4844NotSupported => write!(f, "Eip4844 is not supported"),
             Self::Eip7702NotSupported => write!(f, "Eip7702 is not supported"),
+            Self::Eip8141NotSupported => write!(f, "Eip8141 is not supported"),
+            Self::Eip8141InvalidFields => {
+                write!(f, "Eip8141 transaction has invalid fields")
+            }
             Self::Eip7873NotSupported => write!(f, "Eip7873 is not supported"),
             Self::Eip7873MissingTarget => {
                 write!(f, "Eip7873 initcode transaction should have `to` address")
@@ -1431,5 +1515,17 @@ mod tests {
             .with_total_gas_spent(20_000)
             .with_state_gas_spent(30_000);
         assert_eq!(gas.block_regular_gas_used(), 0);
+    }
+
+    #[test]
+    fn test_frame_gas_settlement_applies_refund_and_adds_state_after_floor() {
+        let gas = ResultGas::default()
+            .with_total_gas_spent(100_000)
+            .with_refunded(10_000)
+            .with_floor_gas(50_000)
+            .with_state_gas_spent(30_000);
+
+        assert_eq!(gas.frame_block_regular_gas_used(), 70_000);
+        assert_eq!(gas.frame_tx_gas_used(), 90_000);
     }
 }

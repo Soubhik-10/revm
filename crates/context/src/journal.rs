@@ -13,7 +13,7 @@ use context_interface::{
     context::{SStoreResult, SelfDestructResult, StateLoad},
     journaled_state::{
         account::JournaledAccount, AccountInfoLoad, AccountLoad, JournalCheckpoint,
-        JournalLoadError, JournalTr, TransferError,
+        JournalLoadError, JournalTr, TransferError, WarmAccessSnapshot,
     },
 };
 use core::ops::{Deref, DerefMut};
@@ -191,6 +191,11 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         self.inner.warm_addresses.precompiles()
     }
 
+    #[inline]
+    fn is_account_cold(&self, address: Address) -> bool {
+        self.inner.is_account_cold(address)
+    }
+
     /// Returns call depth.
     #[inline]
     fn depth(&self) -> usize {
@@ -319,6 +324,52 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
     #[inline]
     fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) {
         self.inner.checkpoint_revert(checkpoint)
+    }
+
+    fn warm_access_snapshot(&self) -> WarmAccessSnapshot {
+        let transaction_id = self.inner.transaction_id;
+        let accesses = self
+            .inner
+            .state
+            .iter()
+            .filter_map(|(address, account)| {
+                if account.is_cold_transaction_id(transaction_id) {
+                    return None;
+                }
+                let slots = account
+                    .storage
+                    .iter()
+                    .filter_map(|(key, slot)| {
+                        (!slot.is_cold_transaction_id(transaction_id)).then_some(*key)
+                    })
+                    .collect();
+                Some((*address, slots))
+            })
+            .collect();
+        WarmAccessSnapshot { accesses }
+    }
+
+    fn supports_eip8141(&self) -> bool {
+        // Implementation capability; transaction validation checks fork activation.
+        true
+    }
+
+    fn restore_warm_access_snapshot(&mut self, snapshot: &WarmAccessSnapshot) {
+        let transaction_id = self.inner.transaction_id;
+        for (address, slots) in &snapshot.accesses {
+            if let Some(account) = self.inner.state.get_mut(address) {
+                account.mark_warm_with_transaction_id(transaction_id);
+                for key in slots {
+                    if let Some(slot) = account.storage.get_mut(key) {
+                        slot.mark_warm_with_transaction_id(transaction_id);
+                    }
+                }
+            }
+        }
+    }
+
+    fn clear_transient_storage(&mut self) {
+        self.inner.transient_storage.clear();
     }
 
     #[inline]

@@ -166,6 +166,9 @@ pub trait Handler {
         &mut self,
         evm: &mut Self::Evm,
     ) -> Result<ExecutionResult<Self::HaltReason>, Self::Error> {
+        if evm.ctx_ref().tx().tx_type() == context_interface::TransactionType::Eip8141 {
+            return crate::eip8141::run(self, evm);
+        }
         let init_and_floor_gas = self.validate(evm)?;
         // Create the transaction-level gas tracker from the validated
         // intrinsic gas, mirroring how frames create their gas at frame init.
@@ -176,7 +179,6 @@ pub trait Handler {
         // means the runtime gas phase ran out of gas: the transaction is
         // included as an out-of-gas halt without entering execution.
         let pre_execution = self.pre_execution(evm, &mut gas)?;
-
         let refund = pre_execution.map(|pe| pe.eip7702_refund).unwrap_or(0) as i64;
 
         let mut exec_result = None;

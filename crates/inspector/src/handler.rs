@@ -2,8 +2,11 @@ use crate::{Inspector, InspectorEvmTr, JournalExt};
 use context::journaled_state::JournalCheckpoint;
 use context::{result::ExecutionResult, ContextTr, JournalEntry, JournalTr};
 use handler::{
-    evm::FrameTr, execution::runtime_oog_unwind, post_execution::build_result_gas, EvmTr,
-    FrameResult, Handler, ItemOrResult,
+    eip8141::{self, DefaultFrameStage, FrameValidationResult},
+    evm::FrameTr,
+    execution::runtime_oog_unwind,
+    post_execution::build_result_gas,
+    EvmTr, FrameResult, Handler, ItemOrResult,
 };
 use interpreter::{
     instructions::{GasTable, InstructionTable},
@@ -38,6 +41,34 @@ where
 {
     /// The interpreter types used by this handler.
     type IT: InterpreterTypes;
+
+    /// Validates and discards a policy-selected EIP-8141 prefix with full
+    /// inspector coverage, including synthetic default-code VERIFY frames.
+    fn inspect_validate_prefix(
+        &mut self,
+        evm: &mut Self::Evm,
+        prefix_end: usize,
+    ) -> Result<FrameValidationResult, Self::Error> {
+        eip8141::validate_prefix_with_callbacks(
+            self,
+            evm,
+            prefix_end,
+            |handler, evm, frame| handler.inspect_run_exec_loop(evm, frame),
+            |_, evm, stage, frame_input, result| {
+                let (context, inspector) = evm.ctx_inspector();
+                match stage {
+                    DefaultFrameStage::Start => {
+                        *result = frame_start(context, inspector, frame_input);
+                    }
+                    DefaultFrameStage::End => {
+                        if let Some(result) = result {
+                            frame_end(context, inspector, frame_input, result);
+                        }
+                    }
+                }
+            },
+        )
+    }
 
     /// Entry point for inspection.
     ///
@@ -300,6 +331,153 @@ where
     }
 
     next_action
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::CountInspector;
+    use alloy_eip8141::{Frame, FrameLimits, FrameMode, FrameSignature, SignatureScheme};
+    use alloy_signer::{Signature, SignerSync};
+    use alloy_signer_local::PrivateKeySigner;
+    use context::{transaction::FrameTransaction, Context, ContextSetters, LocalContextTr, TxEnv};
+    use database::{CacheDB, EmptyDB};
+    use handler::{MainBuilder, MainContext, MainnetHandler};
+    use primitives::{eip8037, hardfork::SpecId, keccak256, Bytes, TxKind, U256};
+    use state::{AccountInfo, Bytecode};
+
+    fn signature_bytes(signature: &Signature) -> Bytes {
+        let mut bytes = Vec::with_capacity(65);
+        bytes.push(u8::from(signature.v()));
+        bytes.extend_from_slice(&signature.r().to_be_bytes::<32>());
+        bytes.extend_from_slice(&signature.s().to_be_bytes::<32>());
+        bytes.into()
+    }
+
+    fn signature(
+        signer: &PrivateKeySigner,
+        signer_field: Bytes,
+        message: primitives::B256,
+    ) -> FrameSignature {
+        FrameSignature {
+            scheme: SignatureScheme::Secp256k1,
+            signer: signer_field,
+            msg: Bytes::new(),
+            signature: signature_bytes(&signer.sign_hash_sync(&message).unwrap()),
+        }
+    }
+
+    #[test]
+    fn inspected_prefix_stops_at_payment_verification() {
+        let sender = PrivateKeySigner::random();
+        let sponsor = PrivateKeySigner::random();
+        let suffix_target = primitives::address!("3000000000000000000000000000000000000003");
+        let signature_hash = keccak256("inspected EIP-8141 prefix");
+        let encoded_sponsor = Bytes::copy_from_slice(sponsor.address().as_slice());
+        let transaction = FrameTransaction {
+            frames: vec![
+                Frame::new(
+                    FrameMode::Verify,
+                    0x02,
+                    Bytes::new(),
+                    FrameLimits {
+                        execution: 2_000,
+                        state: 0,
+                    },
+                    U256::ZERO,
+                    Bytes::new(),
+                ),
+                Frame::new(
+                    FrameMode::Verify,
+                    0x01,
+                    encoded_sponsor,
+                    FrameLimits {
+                        execution: 3_000,
+                        state: eip8037::NEW_ACCOUNT_BYTES * eip8037::CPSB_GLAMSTERDAM,
+                    },
+                    U256::ZERO,
+                    Bytes::new(),
+                ),
+                Frame::new(
+                    FrameMode::Sender,
+                    0,
+                    Bytes::copy_from_slice(suffix_target.as_slice()),
+                    FrameLimits {
+                        execution: 3_000,
+                        state: 0,
+                    },
+                    U256::ZERO,
+                    Bytes::new(),
+                ),
+                Frame::new(
+                    FrameMode::Sender,
+                    0,
+                    Bytes::copy_from_slice(suffix_target.as_slice()),
+                    FrameLimits {
+                        execution: 3_000,
+                        state: 0,
+                    },
+                    U256::ZERO,
+                    Bytes::new(),
+                ),
+            ],
+            signatures: vec![
+                signature(&sender, Bytes::new(), signature_hash),
+                signature(
+                    &sponsor,
+                    Bytes::copy_from_slice(sponsor.address().as_slice()),
+                    signature_hash,
+                ),
+            ],
+            signature_hash,
+            ..Default::default()
+        };
+        let gas_limit = transaction.gas_limit(sender.address()).unwrap();
+        let tx = TxEnv::builder()
+            .tx_type(Some(0x06))
+            .caller(sender.address())
+            .kind(TxKind::Call(sender.address()))
+            .gas_limit(gas_limit)
+            .gas_priority_fee(Some(0))
+            .frame_transaction(transaction)
+            .build()
+            .unwrap();
+
+        let mut db = CacheDB::<EmptyDB>::default();
+        db.insert_account_info(
+            sender.address(),
+            AccountInfo::default().with_code(Bytecode::new_legacy(Bytes::from_static(&[
+                0x60, 0x02, 0x5f, 0x5f, 0xaa, 0x00,
+            ]))),
+        );
+        db.insert_account_info(
+            suffix_target,
+            AccountInfo::default().with_code(Bytecode::new_legacy(Bytes::from_static(&[0xfe]))),
+        );
+        let mut inspector = CountInspector::new();
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+            .with_db(db)
+            .build_mainnet_with_inspector(&mut inspector);
+        evm.ctx.set_tx(tx);
+
+        let mut handler: MainnetHandler<
+            _,
+            context::result::EVMError<core::convert::Infallible>,
+            _,
+        > = MainnetHandler::default();
+        let result = handler.inspect_validate_prefix(&mut evm, 2).unwrap();
+        assert_eq!(result.payer, sponsor.address());
+        assert_eq!(result.prefix_end, 2);
+        assert!(evm.ctx_ref().local().frame_transaction().is_none());
+        assert!(handler.inspect_validate_prefix(&mut evm, 3).is_err());
+        assert!(evm.ctx_ref().local().frame_transaction().is_none());
+        drop(evm);
+        assert_eq!(inspector.call_count(), 4);
+        assert_eq!(inspector.call_end_count(), 4);
+        assert_eq!(inspector.get_count(0xaa), 2);
+        assert_eq!(inspector.get_count(0xfe), 0);
+    }
 }
 
 /// Forwards the logs journaled since `logs_i` to the inspector.

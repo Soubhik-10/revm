@@ -5,9 +5,11 @@ use crate::{
 use context::result::FromStringError;
 use context_interface::{
     context::{take_error, ContextError},
-    journaled_state::{account::JournaledAccountTr, JournalCheckpoint, JournalTr},
+    journaled_state::{
+        account::JournaledAccountTr, JournalCheckpoint, JournalLoadError, JournalTr,
+    },
     local::{FrameToken, OutFrame},
-    Cfg, ContextTr, Database,
+    Cfg, ContextTr, Database, LocalContextTr,
 };
 use core::cmp::min;
 use derive_where::derive_where;
@@ -115,6 +117,39 @@ impl EthFrame<EthInterpreter> {
         reservoir_remaining_gas: u64,
         checkpoint: JournalCheckpoint,
     ) {
+        self.clear_with_state_gas(
+            data,
+            input,
+            depth,
+            memory,
+            bytecode,
+            inputs,
+            is_static,
+            spec_id,
+            gas_limit,
+            reservoir_remaining_gas,
+            false,
+            checkpoint,
+        );
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    #[inline(always)]
+    fn clear_with_state_gas(
+        &mut self,
+        data: FrameData,
+        input: FrameInput,
+        depth: usize,
+        memory: SharedMemory,
+        bytecode: ExtBytecode,
+        inputs: InputsImpl,
+        is_static: bool,
+        spec_id: SpecId,
+        gas_limit: u64,
+        reservoir_remaining_gas: u64,
+        state_gas_isolated: bool,
+        checkpoint: JournalCheckpoint,
+    ) {
         let Self {
             data: data_ref,
             input: input_ref,
@@ -136,7 +171,65 @@ impl EthFrame<EthInterpreter> {
             gas_limit,
             reservoir_remaining_gas,
         );
+        if state_gas_isolated {
+            interpreter.gas = Gas::new_with_regular_gas_and_isolated_state_gas(
+                gas_limit,
+                reservoir_remaining_gas,
+            );
+        }
         *checkpoint_ref = checkpoint;
+    }
+
+    /// Charges an EIP-8141 target and resolves delegation only after that charge.
+    /// Returns the precompile-dispatch flag, or None when entry runs out of gas.
+    fn charge_frame_entry<
+        CTX: ContextTr,
+        PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,
+        ERROR: From<ContextTrDbError<CTX>> + FromStringError,
+    >(
+        ctx: &mut CTX,
+        precompiles: &PRECOMPILES,
+        inputs: &mut CallInputs,
+        gas: &mut Gas,
+    ) -> Result<Option<bool>, ERROR> {
+        if !gas.record_regular_cost(inputs.entry_gas) {
+            return Ok(None);
+        }
+        let mut disable_precompiles = false;
+        if let Some(delegated_address) = inputs.known_bytecode.1.eip7702_address() {
+            let gas_params = ctx.cfg().gas_params();
+            let warm_access_cost = gas_params.warm_storage_read_cost();
+            let cold_account_additional_cost = gas_params.cold_account_additional_cost();
+            if !gas.record_regular_cost(warm_access_cost) {
+                return Ok(None);
+            }
+            let skip_cold_load = gas.remaining() < cold_account_additional_cost;
+            let delegated_account = match ctx.journal_mut().load_account_info_skip_cold_load(
+                delegated_address,
+                true,
+                skip_cold_load,
+            ) {
+                Ok(account) => account,
+                Err(JournalLoadError::ColdLoadSkipped) => {
+                    return Ok(None);
+                }
+                Err(JournalLoadError::DBError(error)) => return Err(error.into()),
+            };
+            if delegated_account.is_cold && !gas.record_regular_cost(cold_account_additional_cost) {
+                return Ok(None);
+            }
+            // EIP-7702 delegation suppresses precompile dispatch. If the
+            // delegate address is itself a precompile, the frame executes
+            // that account's empty code instead.
+            disable_precompiles = precompiles.contains(&delegated_address);
+            inputs.bytecode_address = delegated_address;
+            inputs.known_bytecode = (
+                delegated_account.code_hash(),
+                delegated_account.code.clone().unwrap_or_default(),
+            );
+        }
+
+        Ok(Some(disable_precompiles))
     }
 
     /// Make call frame
@@ -151,14 +244,33 @@ impl EthFrame<EthInterpreter> {
         precompiles: &mut PRECOMPILES,
         depth: usize,
         memory: SharedMemory,
-        inputs: Box<CallInputs>,
+        mut inputs: Box<CallInputs>,
     ) -> Result<ItemOrResult<FrameToken, FrameResult>, ERROR> {
         let reservoir_remaining_gas = inputs.reservoir;
+        let state_gas_isolated = inputs.state_gas_isolated;
+        let entry_gas = inputs.entry_gas;
         let charged_new_account_state_gas = inputs.charged_new_account_state_gas;
-        let gas =
-            Gas::new_with_regular_gas_and_reservoir(inputs.gas_limit, reservoir_remaining_gas);
+        let mut gas = if inputs.state_gas_isolated {
+            Gas::new_with_regular_gas_and_isolated_state_gas(
+                inputs.gas_limit,
+                reservoir_remaining_gas,
+            )
+        } else {
+            Gas::new_with_regular_gas_and_reservoir(inputs.gas_limit, reservoir_remaining_gas)
+        };
 
-        let return_result = |instruction_result: InstructionResult| {
+        let entry_result = if entry_gas != 0 {
+            Self::charge_frame_entry::<CTX, PRECOMPILES, ERROR>(
+                ctx,
+                precompiles,
+                &mut inputs,
+                &mut gas,
+            )?
+        } else {
+            Some(false)
+        };
+
+        let return_result = |gas: Gas, instruction_result: InstructionResult| {
             Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
                 result: InterpreterResult {
                     result: instruction_result,
@@ -172,9 +284,14 @@ impl EthFrame<EthInterpreter> {
             })))
         };
 
+        let Some(disable_precompiles) = entry_result else {
+            gas.spend_all();
+            return return_result(gas, InstructionResult::OutOfGas);
+        };
+
         // Check depth
         if depth > CALL_STACK_LIMIT as usize {
-            return return_result(InstructionResult::CallTooDeep);
+            return return_result(gas, InstructionResult::CallTooDeep);
         }
 
         // Create subroutine checkpoint
@@ -189,9 +306,23 @@ impl EthFrame<EthInterpreter> {
                     .transfer_loaded(inputs.caller, inputs.target_address, value)
             {
                 ctx.journal_mut().checkpoint_revert(checkpoint);
-                return return_result(i.into());
+                return return_result(gas, i.into());
+            }
+
+            // Ordinary calls already paid in the transaction runtime phase or
+            // CALL opcode. Their charged flag is only used for rollback refunds;
+            // EIP-8141 top-level frames carry an explicit, unpaid entry charge.
+            if inputs.entry_state_gas != 0 && !gas.record_state_cost(inputs.entry_state_gas) {
+                ctx.journal_mut().checkpoint_revert(checkpoint);
+                return return_result(gas, InstructionResult::OutOfGas);
             }
         }
+
+        // Forward both pools after all frame-entry charges. Reusing the original
+        // limits would discard the target-access and new-account charges when
+        // the interpreter or precompile result is initialized.
+        inputs.gas_limit = gas.remaining();
+        inputs.reservoir = gas.reservoir();
 
         let interpreter_input = InputsImpl {
             target_address: inputs.target_address,
@@ -202,27 +333,33 @@ impl EthFrame<EthInterpreter> {
             depth,
         };
         let is_static = inputs.is_static;
-        let gas_limit = inputs.gas_limit;
+        // Forward the gas after the frame-entry charge. Reusing the original
+        // limit here would discard `entry_gas` when the interpreter is built,
+        // even though it was already deducted from `gas` above.
+        let gas_limit = gas.remaining();
+        let reservoir_remaining_gas = gas.reservoir();
 
-        if let Some(result) = precompiles.run(ctx, &inputs).map_err(ERROR::from_string)? {
-            let mut logs = Vec::new();
-            if result.result.is_ok() {
-                // Preserve the reservoir on the result gas so it can be reimbursed.
-                // Precompiles don't use reservoir gas, but the first frame carries it.
-                ctx.journal_mut().checkpoint_commit();
-            } else {
-                // clone logs that precompile created, only possible with custom precompiles.
-                // checkpoint.log_i will be always correct.
-                logs = ctx.journal_mut().logs()[checkpoint.log_i..].to_vec();
-                ctx.journal_mut().checkpoint_revert(checkpoint);
+        if !disable_precompiles {
+            if let Some(result) = precompiles.run(ctx, &inputs).map_err(ERROR::from_string)? {
+                let mut logs = Vec::new();
+                if result.result.is_ok() {
+                    // Preserve the reservoir on the result gas so it can be reimbursed.
+                    // Precompiles don't use reservoir gas, but the first frame carries it.
+                    ctx.journal_mut().checkpoint_commit();
+                } else {
+                    // clone logs that precompile created, only possible with custom precompiles.
+                    // checkpoint.log_i will be always correct.
+                    logs = ctx.journal_mut().logs()[checkpoint.log_i..].to_vec();
+                    ctx.journal_mut().checkpoint_revert(checkpoint);
+                }
+                return Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
+                    result,
+                    memory_offset: inputs.return_memory_offset.clone(),
+                    was_precompile_called: true,
+                    precompile_call_logs: logs,
+                    charged_new_account_state_gas,
+                })));
             }
-            return Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
-                result,
-                memory_offset: inputs.return_memory_offset.clone(),
-                was_precompile_called: true,
-                precompile_call_logs: logs,
-                charged_new_account_state_gas,
-            })));
         }
 
         // Get bytecode and hash - either from known_bytecode or load from account
@@ -231,11 +368,11 @@ impl EthFrame<EthInterpreter> {
         // Returns success if bytecode is empty.
         if bytecode.is_empty() {
             ctx.journal_mut().checkpoint_commit();
-            return return_result(InstructionResult::Stop);
+            return return_result(gas, InstructionResult::Stop);
         }
 
         // Create interpreter and executes call and push new CallStackFrame.
-        this.get(EthFrame::invalid).clear(
+        this.get(EthFrame::invalid).clear_with_state_gas(
             FrameData::Call(CallFrame {
                 return_memory_range: inputs.return_memory_offset.clone(),
             }),
@@ -248,6 +385,7 @@ impl EthFrame<EthInterpreter> {
             ctx.cfg().spec().into(),
             gas_limit,
             reservoir_remaining_gas,
+            state_gas_isolated,
             checkpoint,
         );
 
@@ -267,6 +405,7 @@ impl EthFrame<EthInterpreter> {
         inputs: Box<CreateInputs>,
     ) -> Result<ItemOrResult<FrameToken, FrameResult>, ERROR> {
         let reservoir_remaining_gas = inputs.reservoir();
+        let state_gas_isolated = context.local().frame_transaction().is_some();
         let spec = context.cfg().spec().into();
         // EIP-8037 refund for the CREATE opcode's upfront `create_state_gas` is
         // applied uniformly in `return_result` when the create fails (revert,
@@ -346,7 +485,7 @@ impl EthFrame<EthInterpreter> {
         };
         let gas_limit = inputs.gas_limit();
 
-        this.get(EthFrame::invalid).clear(
+        this.get(EthFrame::invalid).clear_with_state_gas(
             FrameData::Create(CreateFrame { created_address }),
             FrameInput::Create(inputs),
             depth,
@@ -357,6 +496,7 @@ impl EthFrame<EthInterpreter> {
             spec,
             gas_limit,
             reservoir_remaining_gas,
+            state_gas_isolated,
             checkpoint,
         );
 

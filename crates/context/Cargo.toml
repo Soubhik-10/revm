@@ -24,6 +24,7 @@ primitives.workspace = true
 database-interface.workspace = true
 state.workspace = true
 bytecode.workspace = true
+alloy-eip8141.workspace = true
 
 # misc
 derive-where.workspace = true
@@ -47,6 +48,7 @@ std = [
 	"primitives/std",
 	"state/std",
 	"bitvec/std",
+	"alloy-eip8141/std",
 ]
 serde = [
 	"dep:serde",
@@ -58,6 +60,7 @@ serde = [
 	"database-interface/serde",
 	"derive-where/serde",
 	"bitvec/serde",
+	"alloy-eip8141/serde",
 ]
 dev = [
 	"memory_limit",

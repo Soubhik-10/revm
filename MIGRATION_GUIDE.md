@@ -1,6 +1,16 @@
 
 # Unreleased
 
+## EIP-8141 runtime allocation (`revm-context`)
+
+`TxEnv::frame_transaction` and `LocalContext::frame_transaction` now store
+`Option<Box<...>>`, keeping frame-only data out of ordinary transaction contexts.
+Direct assignments use `Some(Box::new(payload))`. `TxEnvBuilder::frame_transaction`,
+`Transaction::frame_transaction`, and the `LocalContextTr` runtime accessors retain
+their existing signatures. Serialized transaction data is unchanged.
+
+The workspace MSRV is now Rust 1.94.1, matching its Alloy dependencies.
+
 # v116 tag (all crates v43.0.0)
 
 ## Custom interpreter inputs (`revm-interpreter`)
