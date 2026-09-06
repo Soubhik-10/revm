@@ -1,6 +1,6 @@
 //! EIP-8141 frame transaction validation and execution.
 
-use crate::{EvmTr, Handler};
+use crate::{EvmTr, FrameResult, Handler};
 use alloy_eip8141::{
     FrameGasUsed, FrameMode, FrameReceipt, FrameStatus, SignatureScheme, ENTRY_POINT,
     EXPIRY_VERIFIER, EXPIRY_VERIFIER_RUNTIME, FRAME_FLAGS_MASK, MAX_FRAMES, SECP256K1N, SECP256R1N,
@@ -14,8 +14,8 @@ use context_interface::{
     Block, Cfg, Host, JournalTr, Transaction,
 };
 use interpreter::{
-    interpreter_action::FrameInit, CallInput, CallInputs, CallScheme, CallValue, FrameInput,
-    InstructionResult, SharedMemory,
+    interpreter_action::FrameInit, CallInput, CallInputs, CallOutcome, CallScheme, CallValue,
+    FrameInput, InstructionResult, InterpreterResult, SharedMemory,
 };
 use primitives::{keccak256, Address, Bytes, KECCAK_EMPTY, U256};
 use state::Bytecode as StateBytecode;
@@ -40,6 +40,193 @@ pub fn run<H: Handler + ?Sized>(
     handler: &mut H,
     evm: &mut H::Evm,
 ) -> Result<ExecutionResult<H::HaltReason>, H::Error> {
+    let (intrinsic, floor_gas, frame_count) = prepare(handler, evm)?;
+    let (receipts, frame_refunds) = execute_frames(
+        handler,
+        evm,
+        frame_count,
+        None,
+        &mut run_frame::<H>,
+        &mut no_default_frame::<H>,
+    )?;
+    finish_transaction::<H>(evm, intrinsic, floor_gas, receipts, frame_refunds)
+}
+
+/// Result of validating the executable prefix of an EIP-8141 transaction.
+///
+/// The prefix is discarded after successful validation. This deliberately does
+/// not perform transaction fee settlement or execute frames after the payment
+/// approval.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FrameValidationResult {
+    /// Account that approved the transaction's maximum payment.
+    pub payer: Address,
+    /// Maximum fee exposure approved by the payer.
+    pub max_cost: U256,
+    /// Exclusive frame index immediately after the successful payment VERIFY.
+    pub prefix_end: usize,
+    /// Whether the prefix approved execution as the sender.
+    pub sender_approved: bool,
+    /// Gas charged for validating all protocol signatures.
+    pub signature_gas: u64,
+    /// Regular gas consumed by the executed prefix frames.
+    pub execution_gas: u64,
+    /// State gas consumed by the executed prefix frames.
+    pub state_gas: u64,
+}
+
+/// Stage of a synthetic default-code VERIFY frame callback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DefaultFrameStage {
+    /// Before protocol default verification and approval execution.
+    Start,
+    /// After protocol default verification and approval execution.
+    End,
+}
+
+/// Validates the complete transaction and executes only its payable prefix.
+///
+/// This is intended for mempool admission. State changes made while validating
+/// the prefix are always reverted, including on validation errors.
+pub fn validate_prefix<H: Handler + ?Sized>(
+    handler: &mut H,
+    evm: &mut H::Evm,
+    prefix_end: usize,
+) -> Result<FrameValidationResult, H::Error> {
+    validate_prefix_with_callbacks(
+        handler,
+        evm,
+        prefix_end,
+        run_frame::<H>,
+        no_default_frame::<H>,
+    )
+}
+
+/// Validates a prefix with caller-provided frame execution and default-code hooks.
+///
+/// This lets inspection layers use the same canonical orchestration without
+/// making the handler depend on the inspector crate.
+pub fn validate_prefix_with_callbacks<H, RUN, DEFAULT>(
+    handler: &mut H,
+    evm: &mut H::Evm,
+    prefix_end: usize,
+    mut run_frame: RUN,
+    mut default_frame: DEFAULT,
+) -> Result<FrameValidationResult, H::Error>
+where
+    H: Handler + ?Sized,
+    RUN: FnMut(&mut H, &mut H::Evm, FrameInit) -> Result<FrameResult, H::Error>,
+    DEFAULT:
+        FnMut(&mut H, &mut H::Evm, DefaultFrameStage, &mut FrameInput, &mut Option<FrameResult>),
+{
+    let frame_count = evm
+        .ctx_ref()
+        .tx()
+        .frame_transaction()
+        .map(|transaction| transaction.frames.len())
+        .ok_or_else(|| invalid::<H::Error>("missing EIP-8141 frame transaction payload"))?;
+    if prefix_end == 0 || prefix_end > frame_count {
+        return Err(invalid(
+            "EIP-8141 validation prefix is outside frame bounds",
+        ));
+    }
+
+    let checkpoint = evm.ctx().journal_mut().checkpoint();
+    let result =
+        (|| {
+            let _ = prepare(handler, evm)?;
+            let (receipts, _) = execute_frames(
+                handler,
+                evm,
+                frame_count,
+                Some(prefix_end),
+                &mut run_frame,
+                &mut default_frame,
+            )?;
+            if receipts.len() != prefix_end
+                || receipts
+                    .iter()
+                    .any(|receipt| !matches!(receipt.status, FrameStatus::Success))
+            {
+                return Err(invalid(
+                    "EIP-8141 validation prefix contains an unsuccessful frame",
+                ));
+            }
+            let runtime = evm
+                .ctx_ref()
+                .local()
+                .frame_transaction()
+                .ok_or_else(|| invalid::<H::Error>("missing EIP-8141 runtime state"))?;
+            let payer = runtime.approval.payer.ok_or_else(|| {
+                invalid::<H::Error>("EIP-8141 transaction did not approve a payer")
+            })?;
+            let frame_tx =
+                evm.ctx_ref().tx().frame_transaction().ok_or_else(|| {
+                    invalid::<H::Error>("missing EIP-8141 frame transaction payload")
+                })?;
+            let signature_gas = frame_tx
+                .signature_verification_gas()
+                .ok_or_else(|| invalid::<H::Error>("EIP-8141 signature gas overflow"))?;
+            let max_cost = frame_tx
+                .checked_max_cost_with_params(
+                    evm.ctx_ref().tx().caller(),
+                    evm.ctx_ref().cfg().gas_params(),
+                    evm.ctx_ref().tx().total_blob_gas(),
+                    evm.ctx_ref().block().blob_gasprice().unwrap_or_default(),
+                )
+                .ok_or(InvalidTransaction::OverflowPaymentInTransaction)?;
+            Ok(FrameValidationResult {
+                payer,
+                max_cost,
+                prefix_end: receipts.len(),
+                sender_approved: runtime.approval.sender_approved,
+                signature_gas,
+                execution_gas: receipts
+                    .iter()
+                    .try_fold(0u64, |total, receipt| {
+                        total.checked_add(receipt.gas_used.execution)
+                    })
+                    .ok_or_else(|| invalid::<H::Error>("EIP-8141 prefix execution gas overflow"))?,
+                state_gas: receipts
+                    .iter()
+                    .try_fold(0u64, |total, receipt| {
+                        total.checked_add(receipt.gas_used.state)
+                    })
+                    .ok_or_else(|| invalid::<H::Error>("EIP-8141 prefix state gas overflow"))?,
+            })
+        })();
+    evm.ctx().journal_mut().checkpoint_revert(checkpoint);
+    evm.ctx().local_mut().clear();
+    evm.frame_stack().clear();
+    result
+}
+
+fn run_frame<H: Handler + ?Sized>(
+    handler: &mut H,
+    evm: &mut H::Evm,
+    frame: FrameInit,
+) -> Result<FrameResult, H::Error> {
+    handler.run_exec_loop(evm, frame)
+}
+
+fn no_default_frame<H: Handler + ?Sized>(
+    _: &mut H,
+    _: &mut H::Evm,
+    _: DefaultFrameStage,
+    _: &mut FrameInput,
+    _: &mut Option<FrameResult>,
+) {
+}
+
+fn prepare<H: Handler + ?Sized>(
+    handler: &mut H,
+    evm: &mut H::Evm,
+) -> Result<(u64, u64, usize), H::Error> {
+    if evm.ctx_ref().tx().tx_type() != context_interface::TransactionType::Eip8141 {
+        return Err(invalid(
+            "validation prefix requires an EIP-8141 transaction",
+        ));
+    }
     handler.validate_env(evm)?;
     if !evm.ctx_ref().local().supports_eip8141() || !evm.ctx_ref().journal().supports_eip8141() {
         return Err(invalid(
@@ -83,22 +270,34 @@ pub fn run<H: Handler + ?Sized>(
             sender,
             frame_count,
         )));
-    let (receipts, frame_refunds) = execute_frames(handler, evm, frame_count)?;
-    finish_transaction::<H>(evm, intrinsic, floor_gas, receipts, frame_refunds)
+    Ok((intrinsic, floor_gas, frame_count))
 }
 
 /// Runs the ordered top-level frames and applies atomic batch boundaries.
-fn execute_frames<H: Handler + ?Sized>(
+fn execute_frames<H, RUN, DEFAULT>(
     handler: &mut H,
     evm: &mut H::Evm,
     frame_count: usize,
-) -> Result<(Vec<FrameReceipt>, Vec<i64>), H::Error> {
-    let mut receipts = Vec::with_capacity(frame_count);
-    let mut frame_refunds = Vec::with_capacity(frame_count);
+    prefix_end: Option<usize>,
+    run_frame: &mut RUN,
+    default_frame: &mut DEFAULT,
+) -> Result<(Vec<FrameReceipt>, Vec<i64>), H::Error>
+where
+    H: Handler + ?Sized,
+    RUN: FnMut(&mut H, &mut H::Evm, FrameInit) -> Result<FrameResult, H::Error>,
+    DEFAULT:
+        FnMut(&mut H, &mut H::Evm, DefaultFrameStage, &mut FrameInput, &mut Option<FrameResult>),
+{
+    let capacity = prefix_end.unwrap_or(frame_count);
+    let mut receipts = Vec::with_capacity(capacity);
+    let mut frame_refunds = Vec::with_capacity(capacity);
     let mut batch: Option<AtomicBatch> = None;
     let mut frame_index = 0usize;
 
     while frame_index < frame_count {
+        if prefix_end.is_some_and(|end| frame_index == end) {
+            return Ok((receipts, frame_refunds));
+        }
         let (frame, target) = {
             let tx = evm.ctx_ref().tx();
             let frame = tx.frame_transaction().unwrap().frames[frame_index].clone();
@@ -153,8 +352,15 @@ fn execute_frames<H: Handler + ?Sized>(
             )
         };
 
-        let (result, spent, state_gas, refund) =
-            execute_frame(handler, evm, &frame, target, entry_gas)?;
+        let (result, spent, state_gas, refund) = execute_frame(
+            handler,
+            evm,
+            &frame,
+            target,
+            entry_gas,
+            run_frame,
+            default_frame,
+        )?;
 
         take_error::<H::Error, _>(evm.ctx().error())?;
         let success = result.is_ok();
@@ -250,6 +456,21 @@ fn execute_frames<H: Handler + ?Sized>(
         } else if !frame.is_atomic_batch() && batch.take().is_some() {
             evm.ctx().journal_mut().checkpoint_commit();
         }
+
+        // Prefix validation stops at the successful payment VERIFY. A caller
+        // that requested a longer prefix is rejected by `validate_prefix`,
+        // without executing any frame after payment approval.
+        if prefix_end.is_some()
+            && frame.mode == FrameMode::Verify
+            && success
+            && evm
+                .ctx_ref()
+                .local()
+                .frame_transaction()
+                .is_some_and(|runtime| runtime.approval.payer.is_some())
+        {
+            return Ok((receipts, frame_refunds));
+        }
         frame_index += 1;
     }
 
@@ -257,20 +478,28 @@ fn execute_frames<H: Handler + ?Sized>(
 }
 
 /// Executes one top-level frame through default verification or the shared interpreter loop.
-fn execute_frame<H: Handler + ?Sized>(
+fn execute_frame<H, RUN, DEFAULT>(
     handler: &mut H,
     evm: &mut H::Evm,
     frame: &alloy_eip8141::Frame,
     target: Address,
     entry_gas: u64,
-) -> Result<(InstructionResult, u64, u64, i64), H::Error> {
+    run_frame: &mut RUN,
+    default_frame: &mut DEFAULT,
+) -> Result<(InstructionResult, u64, u64, i64), H::Error>
+where
+    H: Handler + ?Sized,
+    RUN: FnMut(&mut H, &mut H::Evm, FrameInit) -> Result<FrameResult, H::Error>,
+    DEFAULT:
+        FnMut(&mut H, &mut H::Evm, DefaultFrameStage, &mut FrameInput, &mut Option<FrameResult>),
+{
     // The frame target is only accessed after the entry charge succeeds. In
     // particular, an underfunded cold access must not load the target or add it
     // to the EIP-7928 block access list.
     Ok(if frame.limits.execution < entry_gas {
         (InstructionResult::OutOfGas, frame.limits.execution, 0, 0)
     } else {
-        let (target_code_hash, frame_input, loaded_entry_gas) =
+        let (target_code_hash, mut frame_input, loaded_entry_gas) =
             frame_input::<H>(evm, frame, target)?;
         debug_assert_eq!(entry_gas, loaded_entry_gas);
         let uses_default_code = frame.mode == FrameMode::Verify
@@ -283,6 +512,14 @@ fn execute_frame<H: Handler + ?Sized>(
             && target != EXPIRY_VERIFIER;
 
         if uses_default_code {
+            let mut override_result = None;
+            default_frame(
+                handler,
+                evm,
+                DefaultFrameStage::Start,
+                &mut frame_input,
+                &mut override_result,
+            );
             let mut gas = interpreter::Gas::new_with_regular_gas_and_isolated_state_gas(
                 frame.limits.execution,
                 frame.limits.state,
@@ -291,49 +528,80 @@ fn execute_frame<H: Handler + ?Sized>(
             if !entry_gas_sufficient {
                 gas.spend_all();
             }
-            let valid = entry_gas_sufficient
-                && default_verification_is_valid::<H>(evm, target, frame.allowed_scope());
-            evm.ctx()
-                .local_mut()
-                .frame_transaction_mut()
-                .unwrap()
-                .enter_scope();
-            let approval_result = if valid {
-                evm.ctx().approve_frame_with_state_gas(
-                    target,
-                    U256::from(frame.allowed_scope()),
-                    gas.reservoir(),
-                )
-            } else if entry_gas_sufficient {
-                Err(context_interface::host::FrameHostError::Revert)
+            let ran_default = override_result.is_none();
+            let frame_result = if let Some(result) = override_result {
+                result
             } else {
-                Err(context_interface::host::FrameHostError::OutOfGas)
+                let valid = entry_gas_sufficient
+                    && default_verification_is_valid::<H>(evm, target, frame.allowed_scope());
+                evm.ctx()
+                    .local_mut()
+                    .frame_transaction_mut()
+                    .unwrap()
+                    .enter_scope();
+                let approval_result = if valid {
+                    evm.ctx().approve_frame_with_state_gas(
+                        target,
+                        U256::from(frame.allowed_scope()),
+                        gas.reservoir(),
+                    )
+                } else if entry_gas_sufficient {
+                    Err(context_interface::host::FrameHostError::Revert)
+                } else {
+                    Err(context_interface::host::FrameHostError::OutOfGas)
+                };
+                let result = match approval_result {
+                    Ok(state_gas) if gas.record_state_cost(state_gas) => InstructionResult::Return,
+                    Ok(_) | Err(context_interface::host::FrameHostError::OutOfGas) => {
+                        gas.spend_all();
+                        InstructionResult::OutOfGas
+                    }
+                    Err(context_interface::host::FrameHostError::Revert) => {
+                        InstructionResult::Revert
+                    }
+                    Err(context_interface::host::FrameHostError::Invalid) => {
+                        InstructionResult::OpcodeNotFound
+                    }
+                    Err(context_interface::host::FrameHostError::Fatal) => {
+                        InstructionResult::FatalExternalError
+                    }
+                };
+                FrameResult::Call(CallOutcome::new(
+                    InterpreterResult::new(result, Bytes::new(), gas),
+                    0..0,
+                ))
             };
-            let result = match approval_result {
-                Ok(state_gas) if gas.record_state_cost(state_gas) => InstructionResult::Return,
-                Ok(_) | Err(context_interface::host::FrameHostError::OutOfGas) => {
-                    gas.spend_all();
-                    InstructionResult::OutOfGas
-                }
-                Err(context_interface::host::FrameHostError::Revert) => InstructionResult::Revert,
-                Err(context_interface::host::FrameHostError::Invalid) => {
-                    InstructionResult::OpcodeNotFound
-                }
-                Err(context_interface::host::FrameHostError::Fatal) => {
-                    InstructionResult::FatalExternalError
-                }
-            };
+            let mut result_slot = Some(frame_result);
+            default_frame(
+                handler,
+                evm,
+                DefaultFrameStage::End,
+                &mut frame_input,
+                &mut result_slot,
+            );
+            let frame_result = result_slot.ok_or_else(|| {
+                invalid::<H::Error>("EIP-8141 default frame hook removed its result")
+            })?;
+            let result = frame_result.instruction_result();
             let success = result.is_ok();
-            evm.ctx()
-                .local_mut()
-                .frame_transaction_mut()
-                .unwrap()
-                .exit_scope(success);
+            if ran_default {
+                evm.ctx()
+                    .local_mut()
+                    .frame_transaction_mut()
+                    .unwrap()
+                    .exit_scope(result.is_ok());
+            }
             (
                 result,
-                frame.limits.execution.saturating_sub(gas.remaining()),
+                frame
+                    .limits
+                    .execution
+                    .saturating_sub(frame_result.gas().remaining()),
                 if success {
-                    frame.limits.state.saturating_sub(gas.reservoir())
+                    frame
+                        .limits
+                        .state
+                        .saturating_sub(frame_result.gas().reservoir())
                 } else {
                     0
                 },
@@ -342,7 +610,8 @@ fn execute_frame<H: Handler + ?Sized>(
         } else {
             let memory =
                 SharedMemory::new_with_buffer(evm.ctx_ref().local().shared_memory_buffer().clone());
-            let mut frame_result = handler.run_exec_loop(
+            let mut frame_result = run_frame(
+                handler,
                 evm,
                 FrameInit {
                     depth: 0,
@@ -371,11 +640,7 @@ fn execute_frame<H: Handler + ?Sized>(
             } else {
                 0
             };
-            let refund = if result.is_ok() {
-                gas.refunded()
-            } else {
-                0
-            };
+            let refund = if result.is_ok() { gas.refunded() } else { 0 };
             (result, spent, state_gas, refund)
         }
     })
@@ -861,7 +1126,9 @@ mod tests {
     use bytecode::opcode::{
         APPROVE, CALLDATALOAD, FRAMEDATACOPY, PUSH0, PUSH1, REVERT, SIGDATACOPY, SSTORE, STOP,
     };
-    use context::{result::EVMError, transaction::FrameTransaction, Context, TxEnv};
+    use context::{
+        result::EVMError, transaction::FrameTransaction, Context, ContextSetters, TxEnv,
+    };
     use database::{CacheDB, EmptyDB};
     use primitives::{address, eip7825, eip8037, hardfork::SpecId, TxKind, B256};
     use state::{AccountInfo, Bytecode};
@@ -1022,6 +1289,76 @@ mod tests {
     }
 
     #[test]
+    fn prefix_validation_rejects_invalid_signature_outside_the_prefix() {
+        let sender = PrivateKeySigner::random();
+        let sponsor = PrivateKeySigner::random();
+        let signature_hash = keccak256("complete signature validation");
+        let payload = FrameTransaction {
+            frames: vec![
+                Frame {
+                    mode: FrameMode::Verify,
+                    flags: 0x02,
+                    target: Bytes::new(),
+                    limits: FrameLimits {
+                        execution: 2_000,
+                        state: 0,
+                    },
+                    value: U256::ZERO,
+                    data: Bytes::new(),
+                },
+                Frame {
+                    mode: FrameMode::Verify,
+                    flags: 0x01,
+                    target: encoded_target(sponsor.address()),
+                    limits: FrameLimits {
+                        execution: 3_000,
+                        state: NEW_ACCOUNT_STATE_GAS,
+                    },
+                    value: U256::ZERO,
+                    data: Bytes::new(),
+                },
+                Frame {
+                    mode: FrameMode::Sender,
+                    flags: 0,
+                    target: Bytes::new(),
+                    limits: FrameLimits {
+                        execution: 3_000,
+                        state: 0,
+                    },
+                    value: U256::ZERO,
+                    data: Bytes::new(),
+                },
+            ],
+            signatures: vec![
+                signed_entry(&sender, Bytes::new(), signature_hash),
+                signed_entry(&sponsor, encoded_target(sponsor.address()), signature_hash),
+                FrameSignature {
+                    scheme: SignatureScheme::Secp256k1,
+                    signer: Bytes::new(),
+                    msg: Bytes::new(),
+                    signature: Bytes::new(),
+                },
+            ],
+            signature_hash,
+            ..Default::default()
+        };
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+            .with_db(CacheDB::<EmptyDB>::default())
+            .build_mainnet();
+        evm.ctx.set_tx(tx_env(sender.address(), payload));
+        let mut handler: crate::MainnetHandler<_, EVMError<core::convert::Infallible>, _> =
+            crate::MainnetHandler::default();
+
+        assert!(matches!(
+            validate_prefix(&mut handler, &mut evm, 2),
+            Err(EVMError::Transaction(InvalidTransaction::Str(_)))
+        ));
+        assert!(evm.ctx_ref().local().frame_transaction().is_none());
+        assert_eq!(evm.frame_stack().index(), None);
+    }
+
+    #[test]
     fn default_code_halts_when_target_access_exceeds_execution_limit() {
         let sender = PrivateKeySigner::random();
         let signature_hash = keccak256("frame transaction default entry gas");
@@ -1143,7 +1480,10 @@ mod tests {
                     FrameMode::Default,
                     0x03,
                     Bytes::new(),
-                    10_000,
+                    FrameLimits {
+                        execution: 10_000,
+                        state: 0,
+                    },
                     U256::ZERO,
                     Bytes::new(),
                 ),
@@ -1151,7 +1491,10 @@ mod tests {
                     FrameMode::Verify,
                     0,
                     encoded_target(ECRECOVER),
-                    4_000,
+                    FrameLimits {
+                        execution: 4_000,
+                        state: 0,
+                    },
                     U256::ZERO,
                     Bytes::new(),
                 ),
@@ -1186,7 +1529,10 @@ mod tests {
                     FrameMode::Default,
                     0x03,
                     Bytes::new(),
-                    10_000,
+                    FrameLimits {
+                        execution: 10_000,
+                        state: 0,
+                    },
                     U256::ZERO,
                     Bytes::new(),
                 ),
@@ -1255,7 +1601,10 @@ mod tests {
                     FrameMode::Default,
                     0x03,
                     Bytes::new(),
-                    10_000,
+                    FrameLimits {
+                        execution: 10_000,
+                        state: 0,
+                    },
                     U256::ZERO,
                     Bytes::new(),
                 ),
@@ -1322,7 +1671,10 @@ mod tests {
                 FrameMode::Default,
                 0x03,
                 Bytes::new(),
-                1_000,
+                FrameLimits {
+                    execution: 1_000,
+                    state: 0,
+                },
                 U256::ZERO,
                 Bytes::new(),
             )],
@@ -1394,7 +1746,10 @@ mod tests {
                     FrameMode::Default,
                     0x03,
                     Bytes::new(),
-                    10_000,
+                    FrameLimits {
+                        execution: 10_000,
+                        state: 0,
+                    },
                     U256::ZERO,
                     Bytes::new(),
                 ),
@@ -1402,7 +1757,10 @@ mod tests {
                     FrameMode::Default,
                     0x04,
                     encoded_target(STORAGE_TARGET),
-                    100_000,
+                    FrameLimits {
+                        execution: 100_000,
+                        state: 0,
+                    },
                     U256::ZERO,
                     Bytes::new(),
                 ),
@@ -1410,7 +1768,10 @@ mod tests {
                     FrameMode::Default,
                     0x04,
                     encoded_target(REVERT_TARGET),
-                    10_000,
+                    FrameLimits {
+                        execution: 10_000,
+                        state: 0,
+                    },
                     U256::ZERO,
                     Bytes::new(),
                 ),
@@ -1418,7 +1779,10 @@ mod tests {
                     FrameMode::Default,
                     0,
                     encoded_target(STORAGE_TARGET),
-                    100_000,
+                    FrameLimits {
+                        execution: 100_000,
+                        state: 0,
+                    },
                     U256::ZERO,
                     Bytes::new(),
                 ),
@@ -1507,7 +1871,10 @@ mod tests {
                     FrameMode::Default,
                     0x04,
                     encoded_target(halting_target),
-                    primitives::eip8038::COLD_ACCOUNT_ACCESS - 1,
+                    FrameLimits {
+                        execution: primitives::eip8038::COLD_ACCOUNT_ACCESS - 1,
+                        state: 0,
+                    },
                     U256::ZERO,
                     Bytes::new(),
                 ),
@@ -1515,7 +1882,10 @@ mod tests {
                     FrameMode::Default,
                     0,
                     encoded_target(STORAGE_TARGET),
-                    worker_execution_gas,
+                    FrameLimits {
+                        execution: worker_execution_gas,
+                        state: 0,
+                    },
                     U256::ZERO,
                     Bytes::new(),
                 ),
@@ -1657,7 +2027,10 @@ mod tests {
                     FrameMode::Default,
                     0x03,
                     Bytes::new(),
-                    10_000,
+                    FrameLimits {
+                        execution: 10_000,
+                        state: 0,
+                    },
                     U256::ZERO,
                     Bytes::new(),
                 ),
@@ -1665,7 +2038,10 @@ mod tests {
                     FrameMode::Default,
                     0,
                     encoded_target(STORAGE_TARGET),
-                    100_000,
+                    FrameLimits {
+                        execution: 100_000,
+                        state: 0,
+                    },
                     U256::ZERO,
                     clear_data.into(),
                 ),
@@ -1673,7 +2049,10 @@ mod tests {
                     FrameMode::Default,
                     0,
                     encoded_target(STORAGE_TARGET),
-                    100_000,
+                    FrameLimits {
+                        execution: 100_000,
+                        state: 0,
+                    },
                     U256::ZERO,
                     replace_data.into(),
                 ),
@@ -1709,7 +2088,10 @@ mod tests {
                     FrameMode::Default,
                     0x03,
                     Bytes::new(),
-                    10_000,
+                    FrameLimits {
+                        execution: 10_000,
+                        state: 0,
+                    },
                     U256::ZERO,
                     Bytes::new(),
                 ),
@@ -1717,7 +2099,10 @@ mod tests {
                     FrameMode::Default,
                     0x04,
                     encoded_target(STORAGE_TARGET),
-                    cold_access,
+                    FrameLimits {
+                        execution: cold_access,
+                        state: 0,
+                    },
                     U256::ZERO,
                     Bytes::new(),
                 ),
@@ -1725,7 +2110,10 @@ mod tests {
                     FrameMode::Default,
                     0,
                     encoded_target(REVERT_TARGET),
-                    10_000,
+                    FrameLimits {
+                        execution: 10_000,
+                        state: 0,
+                    },
                     U256::ZERO,
                     Bytes::new(),
                 ),
@@ -1733,7 +2121,10 @@ mod tests {
                     FrameMode::Default,
                     0,
                     encoded_target(STORAGE_TARGET),
-                    cold_access - 1,
+                    FrameLimits {
+                        execution: cold_access - 1,
+                        state: 0,
+                    },
                     U256::ZERO,
                     Bytes::new(),
                 ),
