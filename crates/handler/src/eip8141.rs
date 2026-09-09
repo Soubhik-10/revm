@@ -493,6 +493,17 @@ where
     DEFAULT:
         FnMut(&mut H, &mut H::Evm, DefaultFrameStage, &mut FrameInput, &mut Option<FrameResult>),
 {
+    // Each top-level frame starts with empty EVM memory. The previous root
+    // interpreter leaves its bytes in this shared buffer, including on revert
+    // or halt. Retain the allocation, but reset its length so expansion zeroes
+    // memory instead of exposing bytes from an earlier frame. Do not clear the
+    // entire local context: approvals and receipts live across frames.
+    evm.ctx_ref()
+        .local()
+        .shared_memory_buffer()
+        .borrow_mut()
+        .clear();
+
     // The frame target is only accessed after the entry charge succeeds. In
     // particular, an underfunded cold access must not load the target or add it
     // to the EIP-7928 block access list.
@@ -1146,6 +1157,7 @@ mod tests {
     use database::{CacheDB, EmptyDB};
     use primitives::{address, eip7825, eip8037, hardfork::SpecId, TxKind, B256};
     use state::{AccountInfo, Bytecode};
+    use std::vec;
 
     const SENDER: Address = address!("1000000000000000000000000000000000000001");
     const STORAGE_TARGET: Address = address!("2000000000000000000000000000000000000002");
@@ -1197,6 +1209,145 @@ mod tests {
             msg: Bytes::new(),
             signature: signature_bytes(&signature),
         }
+    }
+
+    #[test]
+    fn top_level_frames_do_not_share_memory() {
+        use bytecode::opcode::{INVALID, LOG0, MSTORE, PUSH2, RETURN};
+
+        for (ending, expected_status) in [
+            (vec![STOP], FrameStatus::Success),
+            (vec![PUSH1, 32, PUSH0, RETURN], FrameStatus::Success),
+            (vec![PUSH1, 32, PUSH0, REVERT], FrameStatus::Failure),
+            (vec![INVALID], FrameStatus::Failure),
+        ] {
+            // Exercise expansion below, at, and above the previous frame's size.
+            // The large log also covers the 2,496-byte devnet receipt mismatch.
+            for log_size in [32u16, 96, 2_496] {
+                let mut db = CacheDB::<EmptyDB>::default();
+                db.insert_account_info(
+                    SENDER,
+                    account_with_code([PUSH1, 3, PUSH0, PUSH0, APPROVE]),
+                );
+                let mut writer = vec![PUSH1, 0xab, PUSH0, MSTORE, PUSH1, 0xcd, PUSH1, 64, MSTORE];
+                writer.extend_from_slice(&ending);
+                db.insert_account_info(STORAGE_TARGET, account_with_code(writer));
+                let [hi, lo] = log_size.to_be_bytes();
+                db.insert_account_info(
+                    VALUE_TARGET,
+                    account_with_code([PUSH2, hi, lo, PUSH0, LOG0, STOP]),
+                );
+                let payload = FrameTransaction {
+                    frames: vec![
+                        Frame {
+                            flags: 3,
+                            limits: FrameLimits {
+                                execution: 10_000,
+                                state: 0,
+                            },
+                            ..Default::default()
+                        },
+                        Frame {
+                            mode: FrameMode::Sender,
+                            target: encoded_target(STORAGE_TARGET),
+                            limits: FrameLimits {
+                                execution: 50_000,
+                                state: 0,
+                            },
+                            ..Default::default()
+                        },
+                        Frame {
+                            mode: FrameMode::Sender,
+                            target: encoded_target(VALUE_TARGET),
+                            limits: FrameLimits {
+                                execution: 50_000,
+                                state: 0,
+                            },
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                };
+                let mut evm = Context::mainnet()
+                    .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+                    .with_db(db)
+                    .build_mainnet();
+                let output = evm.transact(tx_env(SENDER, payload)).unwrap();
+                let ExecutionResult::FrameTransaction { frame_receipts, .. } = output.result else {
+                    panic!("expected frame transaction result")
+                };
+                assert_eq!(frame_receipts.len(), 3);
+                assert_eq!(frame_receipts[0].status, FrameStatus::Success);
+                assert_eq!(frame_receipts[1].status, expected_status);
+                assert_eq!(frame_receipts[2].status, FrameStatus::Success);
+                assert_eq!(frame_receipts[2].logs.len(), 1);
+                assert_eq!(
+                    frame_receipts[2].logs[0].data.data.as_ref(),
+                    vec![0; usize::from(log_size)],
+                    "stale memory after {ending:?}, log size {log_size}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn validation_prefix_starts_each_frame_with_empty_memory() {
+        use bytecode::opcode::{ISZERO, JUMPDEST, JUMPI, MLOAD, MSIZE, MSTORE};
+
+        let mut db = CacheDB::<EmptyDB>::default();
+        db.insert_account_info(
+            STORAGE_TARGET,
+            account_with_code([PUSH1, 0xab, PUSH0, MSTORE, STOP]),
+        );
+        // Require both initial MSIZE == 0 and MLOAD(0) == 0 before approving.
+        db.insert_account_info(
+            SENDER,
+            account_with_code([
+                MSIZE, ISZERO, PUSH1, 8, JUMPI, PUSH0, PUSH0, REVERT, JUMPDEST, PUSH0, MLOAD,
+                ISZERO, PUSH1, 18, JUMPI, PUSH0, PUSH0, REVERT, JUMPDEST, PUSH1, 3, PUSH0, PUSH0,
+                APPROVE,
+            ]),
+        );
+        let payload = FrameTransaction {
+            frames: vec![
+                Frame {
+                    target: encoded_target(STORAGE_TARGET),
+                    limits: FrameLimits {
+                        execution: 10_000,
+                        state: 0,
+                    },
+                    ..Default::default()
+                },
+                Frame {
+                    mode: FrameMode::Verify,
+                    flags: 3,
+                    limits: FrameLimits {
+                        execution: 10_000,
+                        state: 0,
+                    },
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+            .with_db(db)
+            .build_mainnet();
+        evm.ctx.set_tx(tx_env(SENDER, payload));
+        let mut handler: crate::MainnetHandler<_, EVMError<core::convert::Infallible>, _> =
+            crate::MainnetHandler::default();
+        let result = validate_prefix(&mut handler, &mut evm, 2).unwrap();
+        assert_eq!(result.payer, SENDER);
+        assert!(result.sender_approved);
+        assert_eq!(result.prefix_end, 2);
+        assert!(evm.ctx_ref().local().frame_transaction().is_none());
+        assert!(evm
+            .ctx_ref()
+            .local()
+            .shared_memory_buffer()
+            .borrow()
+            .is_empty());
     }
 
     #[test]
