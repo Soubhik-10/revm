@@ -502,6 +502,20 @@ where
         let (target_code_hash, mut frame_input, loaded_entry_gas) =
             frame_input::<H>(evm, frame, target)?;
         debug_assert_eq!(entry_gas, loaded_entry_gas);
+        if !frame.value.is_zero() {
+            let sender = evm.ctx_ref().tx().caller();
+            let balance = *evm
+                .ctx()
+                .journal_mut()
+                .load_account_mut(sender)
+                .map_err(H::Error::from)?
+                .balance();
+            // An unaffordable transfer pays only the target access, without resolving
+            // delegated code or charging any further frame-entry costs.
+            if balance < frame.value {
+                return Ok((InstructionResult::OutOfFunds, entry_gas, 0, 0));
+            }
+        }
         let uses_default_code = frame.mode == FrameMode::Verify
             && target_code_hash == KECCAK_EMPTY
             && !evm
@@ -1182,6 +1196,56 @@ mod tests {
             signer: signer_field,
             msg: Bytes::new(),
             signature: signature_bytes(&signature),
+        }
+    }
+
+    #[test]
+    fn insufficient_value_does_not_charge_delegation() {
+        for execution_limit in [3_000, 4_000, 10_000] {
+            let mut db = CacheDB::<EmptyDB>::default();
+            db.insert_account_info(SENDER, account_with_code([0x60, 3, 0x5f, 0x5f, 0xaa]));
+            let mut delegation = vec![0xef, 0x01, 0x00];
+            delegation.extend_from_slice(REVERT_TARGET.as_slice());
+            db.insert_account_info(
+                VALUE_TARGET,
+                AccountInfo::default().with_code(Bytecode::new_raw(delegation.into())),
+            );
+            let payload = FrameTransaction {
+                frames: vec![
+                    Frame {
+                        flags: 3,
+                        limits: FrameLimits {
+                            execution: 10_000,
+                            state: 0,
+                        },
+                        ..Default::default()
+                    },
+                    Frame {
+                        mode: FrameMode::Sender,
+                        target: encoded_target(VALUE_TARGET),
+                        value: U256::from(1),
+                        limits: FrameLimits {
+                            execution: execution_limit,
+                            state: 0,
+                        },
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            };
+            let mut evm = Context::mainnet()
+                .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+                .with_db(db)
+                .build_mainnet();
+            let output = evm.transact(tx_env(SENDER, payload)).unwrap();
+            let ExecutionResult::FrameTransaction { frame_receipts, .. } = output.result else {
+                panic!("expected frame transaction result")
+            };
+            assert_eq!(frame_receipts[1].status, FrameStatus::Failure);
+            assert_eq!(frame_receipts[1].gas_used.execution, 3_000);
+            assert_eq!(frame_receipts[1].gas_used.state, 0);
+            assert!(frame_receipts[1].logs.is_empty());
+            assert!(!output.state.contains_key(&REVERT_TARGET));
         }
     }
 
