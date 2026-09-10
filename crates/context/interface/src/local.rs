@@ -1,9 +1,222 @@
 //! Local context trait [`LocalContextTr`] and related types.
+use alloy_eip8141::FrameStatus;
 use core::{
     cell::{Ref, RefCell},
     ops::Range,
 };
+use primitives::{Address, HashMap, StorageKey};
 use std::{rc::Rc, string::String, vec::Vec};
+
+/// EIP-8141 approvals accumulated by successful top-level frames.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct FrameApprovalState {
+    /// Account that approved payment.
+    pub payer: Option<Address>,
+    /// Whether execution as the transaction sender has been approved.
+    pub sender_approved: bool,
+}
+
+/// Per-transaction EIP-8141 interpreter runtime state.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FrameTransactionRuntime {
+    /// Index of the currently executing top-level frame.
+    pub current_frame_index: usize,
+    /// Resolved target of the current top-level frame.
+    pub resolved_target: Address,
+    /// Statuses of completed top-level frames.
+    pub statuses: Vec<FrameStatus>,
+    /// Execution-gas usage reported by completed top-level frames.
+    pub execution_gas_used: Vec<u64>,
+    /// State-gas usage reported by completed top-level frames.
+    pub state_gas_used: Vec<u64>,
+    /// Committed approval state.
+    pub approval: FrameApprovalState,
+    /// Approval scopes corresponding to active interpreter call frames.
+    pub approval_stack: Vec<FrameApprovalState>,
+    /// Approval produced by the completed top-level interpreter frame.
+    pub root_approval: Option<FrameApprovalState>,
+    /// Revertible state-gas attribution across top-level frames.
+    state_gas: FrameStateGas,
+}
+
+/// State-gas ownership and rollback bookkeeping, separate from approvals.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct FrameStateGas {
+    /// Top-level frame owning each outstanding storage charge.
+    owners: HashMap<(Address, StorageKey), usize>,
+    /// Attribution changes retained across top-level frames.
+    journal: Vec<FrameStateGasJournalEntry>,
+    /// Checkpoints for active interpreter call frames.
+    checkpoints: Vec<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum FrameStateGasJournalEntry {
+    Owner {
+        slot: (Address, StorageKey),
+        previous: Option<usize>,
+    },
+    GasUsed {
+        frame_index: usize,
+        previous: u64,
+    },
+}
+
+impl FrameTransactionRuntime {
+    /// Creates runtime state for a frame transaction.
+    pub fn new(resolved_target: Address) -> Self {
+        Self {
+            resolved_target,
+            ..Self::default()
+        }
+    }
+
+    /// Creates runtime state with capacity for all top-level frame results.
+    pub fn with_capacity(resolved_target: Address, frame_count: usize) -> Self {
+        Self {
+            statuses: Vec::with_capacity(frame_count),
+            execution_gas_used: Vec::with_capacity(frame_count),
+            state_gas_used: Vec::with_capacity(frame_count),
+            ..Self::new(resolved_target)
+        }
+    }
+
+    /// Enters an interpreter call frame approval scope.
+    pub fn enter_scope(&mut self) {
+        let state = self.approval_stack.last().copied().unwrap_or(self.approval);
+        self.approval_stack.push(state);
+        self.state_gas
+            .checkpoints
+            .push(self.state_gas.journal.len());
+    }
+
+    /// Exits an interpreter call frame, committing approvals only on success.
+    pub fn exit_scope(&mut self, success: bool) {
+        let state = self.approval_stack.pop();
+        let state_gas_checkpoint = self.state_gas.checkpoints.pop();
+        if !success {
+            if let Some(checkpoint) = state_gas_checkpoint {
+                self.revert_state_gas(checkpoint);
+            }
+        }
+        let Some(state) = state else {
+            return;
+        };
+        if !success {
+            return;
+        }
+        if let Some(parent) = self.approval_stack.last_mut() {
+            *parent = state;
+        } else {
+            self.root_approval = Some(state);
+        }
+    }
+
+    /// Commits approvals emitted by a successful top-level frame.
+    pub const fn commit_root_approval(&mut self) {
+        if let Some(state) = self.root_approval.take() {
+            self.approval = state;
+        }
+    }
+
+    /// Returns a checkpoint for state-gas ownership and receipt attribution.
+    pub const fn state_gas_checkpoint(&self) -> usize {
+        self.state_gas.journal.len()
+    }
+
+    /// Reverts state-gas ownership and receipt attribution to `checkpoint`.
+    pub fn revert_state_gas(&mut self, checkpoint: usize) {
+        while self.state_gas.journal.len() > checkpoint {
+            match self.state_gas.journal.pop().expect("length checked") {
+                FrameStateGasJournalEntry::Owner { slot, previous } => {
+                    if let Some(owner) = previous {
+                        self.state_gas.owners.insert(slot, owner);
+                    } else {
+                        self.state_gas.owners.remove(&slot);
+                    }
+                }
+                FrameStateGasJournalEntry::GasUsed {
+                    frame_index,
+                    previous,
+                } => {
+                    if let Some(gas_used) = self.state_gas_used.get_mut(frame_index) {
+                        *gas_used = previous;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Attributes a successful storage-creation state-gas charge to the current frame.
+    pub fn record_sstore_state_gas(&mut self, address: Address, key: StorageKey, amount: u64) {
+        if amount == 0 {
+            return;
+        }
+        let slot = (address, key);
+        let previous_owner = self.state_gas.owners.insert(slot, self.current_frame_index);
+        self.state_gas
+            .journal
+            .push(FrameStateGasJournalEntry::Owner {
+                slot,
+                previous: previous_owner,
+            });
+        let gas_used = self
+            .state_gas_used
+            .get_mut(self.current_frame_index)
+            .expect("current frame receipt initialized");
+        let previous = *gas_used;
+        self.state_gas
+            .journal
+            .push(FrameStateGasJournalEntry::GasUsed {
+                frame_index: self.current_frame_index,
+                previous,
+            });
+        *gas_used = gas_used
+            .checked_add(amount)
+            .expect("frame state gas is bounded by its u64 limit");
+    }
+
+    /// Applies a storage-restoration refill and returns the amount spendable by this frame.
+    pub fn refill_sstore_state_gas(
+        &mut self,
+        address: Address,
+        key: StorageKey,
+        amount: u64,
+    ) -> u64 {
+        if amount == 0 {
+            return 0;
+        }
+        let slot = (address, key);
+        let Some(owner) = self.state_gas.owners.remove(&slot) else {
+            return 0;
+        };
+        self.state_gas
+            .journal
+            .push(FrameStateGasJournalEntry::Owner {
+                slot,
+                previous: Some(owner),
+            });
+        let gas_used = self
+            .state_gas_used
+            .get_mut(owner)
+            .expect("outstanding charge owner has a receipt");
+        let previous = *gas_used;
+        self.state_gas
+            .journal
+            .push(FrameStateGasJournalEntry::GasUsed {
+                frame_index: owner,
+                previous,
+            });
+        *gas_used = gas_used
+            .checked_sub(amount)
+            .expect("refill cannot exceed its outstanding state-gas charge");
+        if owner == self.current_frame_index {
+            amount
+        } else {
+            0
+        }
+    }
+}
 
 /// Non-empty, item-pooling Vec.
 #[derive(Debug, Clone)]
@@ -234,6 +447,24 @@ pub trait LocalContextTr {
     ///
     /// Returns `Some(String)` if a precompile error message was recorded.
     fn take_precompile_error_context(&mut self) -> Option<String>;
+
+    /// Returns the active EIP-8141 runtime state.
+    fn frame_transaction(&self) -> Option<&FrameTransactionRuntime> {
+        None
+    }
+
+    /// Returns whether this local context can store EIP-8141 runtime state.
+    fn supports_eip8141(&self) -> bool {
+        false
+    }
+
+    /// Returns the active EIP-8141 runtime state mutably.
+    fn frame_transaction_mut(&mut self) -> Option<&mut FrameTransactionRuntime> {
+        None
+    }
+
+    /// Replaces the active EIP-8141 runtime state.
+    fn set_frame_transaction(&mut self, _runtime: Option<FrameTransactionRuntime>) {}
 }
 
 #[cfg(test)]

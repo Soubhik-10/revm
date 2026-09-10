@@ -15,6 +15,8 @@ pub enum TransactionType {
     Eip4844 = 3,
     /// EIP-7702 Set EOA account code transaction type
     Eip7702 = 4,
+    /// EIP-8141 frame transaction.
+    Eip8141 = 6,
     /// Custom type means that the transaction trait was extended and has custom types
     Custom = 0xFF,
 }
@@ -57,6 +59,7 @@ impl From<u8> for TransactionType {
             2 => Self::Eip1559,
             3 => Self::Eip4844,
             4 => Self::Eip7702,
+            6 => Self::Eip8141,
             _ => Self::Custom,
         }
     }

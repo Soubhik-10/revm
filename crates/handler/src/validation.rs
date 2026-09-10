@@ -1,12 +1,12 @@
 use context_interface::{
     cfg::GasParams,
     result::{InvalidHeader, InvalidTransaction},
-    transaction::{Transaction, TransactionType},
+    transaction::{FrameTransaction, Transaction, TransactionType},
     Block, Cfg, ContextTr,
 };
 use core::cmp;
 use interpreter::InitialAndFloorGas;
-use primitives::{eip4844, hardfork::SpecId, B256};
+use primitives::{eip4844, hardfork::SpecId, B256, U256};
 
 /// Validates the execution environment including block and transaction parameters.
 pub fn validate_env<CTX: ContextTr, ERROR: From<InvalidHeader> + From<InvalidTransaction>>(
@@ -75,6 +75,45 @@ fn validate_priority_fee_for_tx<TX: Transaction>(
         base_fee,
         disable_priority_fee_check,
     )
+}
+
+/// Validate EIP-8141's full-width fee fields without routing them through the
+/// legacy `u128` transaction interface.
+#[inline]
+fn validate_eip8141_priority_fee(
+    frame_tx: &FrameTransaction,
+    base_fee: Option<u128>,
+    disable_priority_fee_check: bool,
+) -> Result<(), InvalidTransaction> {
+    if !disable_priority_fee_check && frame_tx.max_priority_fee_per_gas > frame_tx.max_fee_per_gas {
+        return Err(InvalidTransaction::PriorityFeeGreaterThanMaxFee);
+    }
+
+    if let Some(base_fee) = base_fee {
+        if frame_tx.effective_gas_price(base_fee) < U256::from(base_fee) {
+            return Err(InvalidTransaction::GasPriceLessThanBasefee);
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate EIP-8141 blob inclusion fields without narrowing their U256 cap.
+#[inline]
+fn validate_eip8141_blob_tx(
+    blobs: &[B256],
+    max_blob_fee: U256,
+    block_blob_gas_price: u128,
+    max_blobs: Option<u64>,
+) -> Result<(), InvalidTransaction> {
+    if U256::from(block_blob_gas_price) > max_blob_fee {
+        // A cap below the block's u128 price necessarily fits in u128 too.
+        return Err(InvalidTransaction::BlobGasPriceGreaterThanMax {
+            block_blob_gas_price,
+            tx_max_fee_per_blob_gas: max_blob_fee.to(),
+        });
+    }
+    validate_eip4844_tx(blobs, u128::MAX, 0, max_blobs)
 }
 
 /// Validate EIP-4844 transaction.
@@ -206,6 +245,27 @@ pub fn validate_tx_env<CTX: ContextTr>(
                 return Err(InvalidTransaction::EmptyAuthorizationList);
             }
         }
+        TransactionType::Eip8141 => {
+            if !spec_id.is_enabled_in(SpecId::BOGOTA) {
+                return Err(InvalidTransaction::Eip8141NotSupported);
+            }
+            let frame_tx = tx
+                .frame_transaction()
+                .ok_or(InvalidTransaction::Eip8141InvalidFields)?;
+            validate_eip8141_priority_fee(frame_tx, base_fee, disable_priority_fee_check)?;
+            if tx.blob_versioned_hashes().is_empty() {
+                if !frame_tx.max_fee_per_blob_gas.is_zero() {
+                    return Err(InvalidTransaction::Eip8141InvalidFields);
+                }
+            } else {
+                validate_eip8141_blob_tx(
+                    tx.blob_versioned_hashes(),
+                    frame_tx.max_fee_per_blob_gas,
+                    context.block().blob_gasprice().unwrap_or_default(),
+                    context.cfg().max_blobs_per_tx(),
+                )?;
+            }
+        }
         TransactionType::Custom => {
             // Custom transaction type check is not done here.
         }
@@ -214,7 +274,9 @@ pub fn validate_tx_env<CTX: ContextTr>(
     // Check if gas_limit is more than block_gas_limit
     // TODO(eip8037) should we enforce to `min(tx.gas_limit(), 16M) < block.gas_limit`?
     // This would enforce that regular gas is constrained.
-    if !context.cfg().is_block_gas_limit_disabled() && tx.gas_limit() > context.block().gas_limit()
+    if !context.cfg().is_block_gas_limit_disabled()
+        && tx.frame_transaction().is_none()
+        && tx.gas_limit() > context.block().gas_limit()
     {
         return Err(InvalidTransaction::CallerGasLimitMoreThanBlock);
     }

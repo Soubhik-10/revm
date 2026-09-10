@@ -3,6 +3,7 @@ use crate::{
     ItemOrResult, PrecompileProvider,
 };
 use auto_impl::auto_impl;
+use context::LocalContextTr;
 use context::{ContextTr, Database, Evm, FrameStack};
 use context_interface::context::ContextError;
 use interpreter::{interpreter::EthInterpreter, interpreter_action::FrameInit, InterpreterResult};
@@ -174,6 +175,9 @@ where
         &mut self,
         frame_input: <Self::Frame as FrameTr>::FrameInit,
     ) -> Result<FrameInitResult<'_, Self::Frame>, ContextDbError<CTX>> {
+        if let Some(runtime) = self.ctx.local_mut().frame_transaction_mut() {
+            runtime.enter_scope();
+        }
         let is_first_init = self.frame_stack.index().is_none();
         let new_frame = if is_first_init {
             self.frame_stack.start_init()
@@ -184,6 +188,12 @@ where
         let ctx = &mut self.ctx;
         let precompiles = &mut self.precompiles;
         let res = Self::Frame::init_with_context(new_frame, ctx, precompiles, frame_input)?;
+
+        if let ItemOrResult::Result(result) = &res {
+            if let Some(runtime) = ctx.local_mut().frame_transaction_mut() {
+                runtime.exit_scope(result.instruction_result().is_ok());
+            }
+        }
 
         Ok(res.map_item(|token| {
             if is_first_init {
@@ -222,6 +232,9 @@ where
         result: <Self::Frame as FrameTr>::FrameResult,
     ) -> Result<Option<<Self::Frame as FrameTr>::FrameResult>, ContextDbError<Self::Context>> {
         if self.frame_stack.get().is_finished() {
+            if let Some(runtime) = self.ctx.local_mut().frame_transaction_mut() {
+                runtime.exit_scope(result.instruction_result().is_ok());
+            }
             self.frame_stack.pop();
         }
         if self.frame_stack.index().is_none() {

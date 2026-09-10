@@ -3,14 +3,15 @@ use crate::{block::BlockEnv, cfg::CfgEnv, journal::Journal, tx::TxEnv, LocalCont
 use context_interface::{
     cfg::GasParams,
     context::{ContextError, ContextSetters, SStoreResult, SelfDestructResult, StateLoad},
-    host::LoadError,
-    journaled_state::AccountInfoLoad,
+    host::{FrameHostError, LoadError},
+    journaled_state::{account::JournaledAccountTr, AccountInfoLoad},
     Block, Cfg, ContextTr, Host, JournalTr, LocalContextTr, Transaction, TransactionType,
 };
 use database_interface::{Database, DatabaseRef, EmptyDB, WrapDatabaseRef};
 use derive_where::derive_where;
 use primitives::{
-    hardfork::SpecId, hints_util::cold_path, Address, Log, StorageKey, StorageValue, B256, U256,
+    hardfork::SpecId, hints_util::cold_path, Address, Bytes, Log, StorageKey, StorageValue, B256,
+    U256,
 };
 
 /// EVM context contains data that EVM needs for execution.
@@ -491,21 +492,244 @@ impl<
 
     fn effective_gas_price(&self) -> U256 {
         let basefee = self.block().basefee();
-        U256::from(self.tx().effective_gas_price(basefee as u128))
+        self.tx()
+            .frame_transaction()
+            .map(|frame_tx| frame_tx.effective_gas_price(basefee as u128))
+            .unwrap_or_else(|| U256::from(self.tx().effective_gas_price(basefee as u128)))
     }
 
     fn caller(&self) -> Address {
+        if let (Some(frame_tx), Some(runtime)) = (
+            self.tx().frame_transaction(),
+            self.local().frame_transaction(),
+        ) {
+            return match frame_tx
+                .frames
+                .get(runtime.current_frame_index)
+                .map(|frame| frame.mode)
+            {
+                Some(alloy_eip8141::FrameMode::Sender) => self.tx().caller(),
+                Some(_) => alloy_eip8141::ENTRY_POINT,
+                None => self.tx().caller(),
+            };
+        }
         self.tx().caller()
     }
 
     fn blob_hash(&self, number: usize) -> Option<U256> {
         let tx = &self.tx();
-        if tx.tx_type() != TransactionType::Eip4844 {
+        if tx.tx_type() != TransactionType::Eip4844 && tx.tx_type() != TransactionType::Eip8141 {
             return None;
         }
         tx.blob_versioned_hashes()
             .get(number)
             .map(|t| U256::from_be_bytes(t.0))
+    }
+
+    fn frame_tx_param(&self, param: U256, state_gas_left: u64) -> Option<U256> {
+        let tx = self.tx();
+        let frame_tx = tx.frame_transaction()?;
+        let runtime = self.local().frame_transaction()?;
+        Some(match param {
+            p if p == U256::from(0) => U256::from(0x06),
+            p if p == U256::from(1) => U256::from(tx.nonce()),
+            p if p == U256::from(2) => U256::from_be_slice(tx.caller().as_slice()),
+            p if p == U256::from(3) => frame_tx.max_priority_fee_per_gas,
+            p if p == U256::from(4) => frame_tx.max_fee_per_gas,
+            p if p == U256::from(5) => frame_tx.max_fee_per_blob_gas,
+            p if p == U256::from(6) => frame_tx.max_cost_with_params(
+                tx.caller(),
+                self.cfg().gas_params(),
+                tx.total_blob_gas(),
+                self.block().blob_gasprice().unwrap_or_default(),
+            ),
+            p if p == U256::from(7) => U256::from(tx.blob_versioned_hashes().len()),
+            p if p == U256::from(8) => U256::from_be_bytes(frame_tx.signature_hash.0),
+            p if p == U256::from(9) => U256::from(frame_tx.frames.len()),
+            p if p == U256::from(10) => U256::from(runtime.current_frame_index),
+            p if p == U256::from(11) => U256::from(frame_tx.signatures.len()),
+            p if p == U256::from(12) => U256::from(state_gas_left),
+            _ => return None,
+        })
+    }
+
+    fn frame_data(&self, frame_index: U256) -> Option<Bytes> {
+        let index = usize::try_from(frame_index).ok()?;
+        self.tx()
+            .frame_transaction()?
+            .frames
+            .get(index)
+            .map(|frame| frame.data.clone())
+    }
+
+    fn frame_param(&self, frame_index: U256, param: U256) -> Option<U256> {
+        let index = usize::try_from(frame_index).ok()?;
+        let tx = self.tx();
+        let frame_tx = tx.frame_transaction()?;
+        let runtime = self.local().frame_transaction()?;
+        let frame = frame_tx.frames.get(index)?;
+        let target = frame
+            .target_address()
+            .or_else(|| frame.target.is_empty().then_some(tx.caller()))?;
+        Some(match param {
+            p if p == U256::from(0) => U256::from_be_slice(target.as_slice()),
+            p if p == U256::from(1) => U256::from(frame.limits.execution),
+            p if p == U256::from(2) => U256::from(u8::from(frame.mode)),
+            p if p == U256::from(3) => U256::from(frame.flags),
+            p if p == U256::from(4) => U256::from(frame.data.len()),
+            p if p == U256::from(5) => {
+                if index >= runtime.current_frame_index {
+                    return None;
+                }
+                U256::from(u8::from(*runtime.statuses.get(index)?))
+            }
+            p if p == U256::from(6) => U256::from(frame.allowed_scope()),
+            p if p == U256::from(7) => U256::from(frame.is_atomic_batch() as u8),
+            p if p == U256::from(8) => frame.value,
+            p if p == U256::from(9) => U256::from(frame.limits.state),
+            p if p == U256::from(10) => {
+                if index >= runtime.current_frame_index {
+                    return None;
+                }
+                U256::from(*runtime.execution_gas_used.get(index)?)
+            }
+            p if p == U256::from(11) => {
+                if index >= runtime.current_frame_index {
+                    return None;
+                }
+                U256::from(*runtime.state_gas_used.get(index)?)
+            }
+            _ => return None,
+        })
+    }
+
+    fn frame_signature_param(&self, signature_index: U256, param: U256) -> Option<U256> {
+        let index = usize::try_from(signature_index).ok()?;
+        let tx = self.tx();
+        let signature = tx.frame_transaction()?.signatures.get(index)?;
+        Some(match param {
+            p if p == U256::from(0) => {
+                if signature.scheme == alloy_eip8141::SignatureScheme::Arbitrary {
+                    return None;
+                }
+                let signer = if signature.signer.is_empty() {
+                    tx.caller()
+                } else {
+                    signature.signer_address()?
+                };
+                U256::from_be_slice(signer.as_slice())
+            }
+            p if p == U256::from(1) => U256::from(u8::from(signature.scheme)),
+            p if p == U256::from(2) => {
+                if signature.msg.is_empty() {
+                    U256::ZERO
+                } else {
+                    U256::from_be_slice(&signature.msg)
+                }
+            }
+            p if p == U256::from(3) => {
+                if signature.scheme != alloy_eip8141::SignatureScheme::Arbitrary {
+                    return None;
+                }
+                U256::from(signature.signature.len())
+            }
+            _ => return None,
+        })
+    }
+
+    fn frame_signature_bytes(&self, signature_index: U256) -> Option<Bytes> {
+        let index = usize::try_from(signature_index).ok()?;
+        let signature = self.tx().frame_transaction()?.signatures.get(index)?;
+        (signature.scheme == alloy_eip8141::SignatureScheme::Arbitrary)
+            .then(|| signature.signature.clone())
+    }
+
+    fn approve_frame_with_state_gas(
+        &mut self,
+        current_target: Address,
+        scope: U256,
+        state_gas_left: u64,
+    ) -> Result<u64, FrameHostError> {
+        let (resolved_target, current_frame_index, current) = {
+            let runtime = self
+                .local()
+                .frame_transaction()
+                .ok_or(FrameHostError::Invalid)?;
+            (
+                runtime.resolved_target,
+                runtime.current_frame_index,
+                runtime
+                    .approval_stack
+                    .last()
+                    .copied()
+                    .ok_or(FrameHostError::Invalid)?,
+            )
+        };
+        if current_target != resolved_target || scope > U256::from(u8::MAX) {
+            return Err(FrameHostError::Revert);
+        }
+
+        let (sender, allowed_scope) = {
+            let tx = self.tx();
+            let frame_tx = tx.frame_transaction().ok_or(FrameHostError::Invalid)?;
+            let frame = frame_tx
+                .frames
+                .get(current_frame_index)
+                .ok_or(FrameHostError::Invalid)?;
+            (tx.caller(), frame.allowed_scope())
+        };
+        let scope = u8::try_from(scope).map_err(|_| FrameHostError::Revert)?;
+        if scope == 0 || scope & !allowed_scope != 0 {
+            return Err(FrameHostError::Revert);
+        }
+        let approves_payment = scope & 0x01 != 0;
+        let approves_execution = scope & 0x02 != 0;
+        if approves_execution && (current.sender_approved || resolved_target != sender) {
+            return Err(FrameHostError::Revert);
+        }
+        if approves_payment
+            && (current.payer.is_some() || (!current.sender_approved && !approves_execution))
+        {
+            return Err(FrameHostError::Revert);
+        }
+
+        let charged_state_gas = if approves_payment {
+            charge_frame_payer(self, sender, resolved_target, state_gas_left)?
+        } else {
+            0
+        };
+
+        let runtime = self
+            .local_mut()
+            .frame_transaction_mut()
+            .ok_or(FrameHostError::Invalid)?;
+        let approval = runtime
+            .approval_stack
+            .last_mut()
+            .ok_or(FrameHostError::Invalid)?;
+        *approval = context_interface::local::FrameApprovalState {
+            payer: if approves_payment {
+                Some(resolved_target)
+            } else {
+                current.payer
+            },
+            sender_approved: current.sender_approved || approves_execution,
+        };
+        Ok(charged_state_gas)
+    }
+
+    fn frame_sstore_state_gas(
+        &mut self,
+        address: Address,
+        key: StorageKey,
+        charge: u64,
+        refill: u64,
+    ) -> u64 {
+        let Some(runtime) = self.local_mut().frame_transaction_mut() else {
+            return refill;
+        };
+        runtime.record_sstore_state_gas(address, key, charge);
+        runtime.refill_sstore_state_gas(address, key, refill)
     }
 
     /* Config */
@@ -625,4 +849,94 @@ impl<
             }
         }
     }
+}
+
+/// Applies the payment approval after its scope has been validated.
+fn charge_frame_payer<CTX: ContextTr>(
+    ctx: &mut CTX,
+    sender: Address,
+    payer: Address,
+    state_gas_left: u64,
+) -> Result<u64, FrameHostError> {
+    let tx = ctx.tx();
+    let max_cost = tx
+        .frame_transaction()
+        .ok_or(FrameHostError::Invalid)?
+        .max_cost_with_params(
+            sender,
+            ctx.cfg().gas_params(),
+            tx.total_blob_gas(),
+            ctx.block().blob_gasprice().unwrap_or_default(),
+        );
+    let mut charged_state_gas = 0;
+    let balance_check_disabled = ctx.cfg().is_balance_check_disabled();
+    let fee_charge_disabled = ctx.cfg().is_fee_charge_disabled();
+    let new_account_state_gas = ctx.cfg().gas_params().new_account_state_gas();
+    let sender_is_empty_result = ctx
+        .journal_mut()
+        .load_account_info_skip_cold_load(sender, false, false)
+        .map(|account| account.is_empty);
+    let sender_is_empty = match sender_is_empty_result {
+        Ok(is_empty) => is_empty,
+        Err(error) => {
+            *ctx.error() = Err(error.unwrap_db_error().into());
+            return Err(FrameHostError::Fatal);
+        }
+    };
+    let payer_balance_result = ctx
+        .journal_mut()
+        .load_account_mut(payer)
+        .map(|account| *account.balance());
+    let payer_balance = match payer_balance_result {
+        Ok(balance) => balance,
+        Err(error) => {
+            *ctx.error() = Err(error.into());
+            return Err(FrameHostError::Fatal);
+        }
+    };
+    if !balance_check_disabled && payer_balance < max_cost {
+        return Err(FrameHostError::Revert);
+    }
+    if balance_check_disabled && payer_balance < max_cost {
+        let result = ctx
+            .journal_mut()
+            .load_account_mut(payer)
+            .map(|mut account| account.incr_balance(max_cost - payer_balance));
+        if let Err(error) = result {
+            *ctx.error() = Err(error.into());
+            return Err(FrameHostError::Fatal);
+        }
+    }
+    if sender_is_empty {
+        if state_gas_left < new_account_state_gas {
+            return Err(FrameHostError::OutOfGas);
+        }
+        charged_state_gas = new_account_state_gas;
+    }
+    let bump_result = ctx
+        .journal_mut()
+        .load_account_mut(sender)
+        .map(|mut account| account.bump_nonce());
+    let bumped = match bump_result {
+        Ok(bumped) => bumped,
+        Err(error) => {
+            *ctx.error() = Err(error.into());
+            return Err(FrameHostError::Fatal);
+        }
+    };
+    if !bumped {
+        return Err(FrameHostError::Revert);
+    }
+    if !fee_charge_disabled {
+        let result = ctx
+            .journal_mut()
+            .load_account_mut(payer)
+            .map(|mut account| account.decr_balance(max_cost));
+        if let Err(error) = result {
+            *ctx.error() = Err(error.into());
+            return Err(FrameHostError::Fatal);
+        }
+    }
+
+    Ok(charged_state_gas)
 }
