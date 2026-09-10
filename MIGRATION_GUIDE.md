@@ -11,6 +11,14 @@ their existing signatures. Serialized transaction data is unchanged.
 
 The workspace MSRV is now Rust 1.94.1, matching its Alloy dependencies.
 
+# v119 tag (revm v43.0.2)
+
+This release reverts the EIP-8037 system-call gas change from [#3892](https://github.com/bluealloy/revm/pull/3892) in [#3903](https://github.com/bluealloy/revm/pull/3903).
+
+# v118 tag (revm v43.0.1)
+
+No API migration is required for this patch release. Consumers that assert exact Glamsterdam gas results may need to update their expectations for corrected EIP-8037 system-call and sibling-frame state-gas accounting. The `revme evmrunner` default gas limit is now `2^24`; pass `--gas-limit` explicitly to retain a different limit.
+
 # v116 tag (all crates v43.0.0)
 
 ## Custom interpreter inputs (`revm-interpreter`)
