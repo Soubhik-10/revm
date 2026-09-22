@@ -583,7 +583,7 @@ impl<
                 }
                 U256::from(u8::from(*runtime.statuses.get(index)?))
             }
-            p if p == U256::from(6) => U256::from(frame.allowed_scope()),
+            p if p == U256::from(6) => U256::from(u8::from(frame.allowed_scope())),
             p if p == U256::from(7) => U256::from(frame.is_atomic_batch() as u8),
             p if p == U256::from(8) => frame.value,
             p if p == U256::from(9) => U256::from(frame.limits.state),
@@ -621,10 +621,10 @@ impl<
             }
             p if p == U256::from(1) => U256::from(u8::from(signature.scheme)),
             p if p == U256::from(2) => {
-                if signature.msg.is_empty() {
+                if signature.msg.is_transaction_hash() {
                     U256::ZERO
                 } else {
-                    U256::from_be_slice(&signature.msg)
+                    U256::from_be_slice(signature.msg.digest()?.as_slice())
                 }
             }
             p if p == U256::from(3) => {
@@ -676,7 +676,7 @@ impl<
                 .frames
                 .get(current_frame_index)
                 .ok_or(FrameHostError::Invalid)?;
-            (tx.caller(), frame.allowed_scope())
+            (tx.caller(), u8::from(frame.allowed_scope()))
         };
         let scope = u8::try_from(scope).map_err(|_| FrameHostError::Revert)?;
         if scope == 0 || scope & !allowed_scope != 0 {

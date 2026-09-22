@@ -558,7 +558,11 @@ where
                 result
             } else {
                 let valid = entry_gas_sufficient
-                    && default_verification_is_valid::<H>(evm, target, frame.allowed_scope());
+                    && default_verification_is_valid::<H>(
+                        evm,
+                        target,
+                        u8::from(frame.allowed_scope()),
+                    );
                 evm.ctx()
                     .local_mut()
                     .frame_transaction_mut()
@@ -567,7 +571,7 @@ where
                 let approval_result = if valid {
                     evm.ctx().approve_frame_with_state_gas(
                         target,
-                        U256::from(frame.allowed_scope()),
+                        U256::from(u8::from(frame.allowed_scope())),
                         gas.reservoir(),
                     )
                 } else if entry_gas_sufficient {
@@ -810,16 +814,13 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
     }
     let mut expiry_frames = 0usize;
     for (index, frame) in frame_tx.frames.iter().enumerate() {
-        if !frame.has_valid_target_encoding() {
-            return Err(invalid("EIP-8141 frame target must be empty or 20 bytes"));
-        }
         if frame.mode != FrameMode::Sender && !frame.value.is_zero() {
             return Err(invalid("only EIP-8141 SENDER frames may transfer value"));
         }
         let target = frame
             .target_address()
             .or_else(|| frame.target.is_empty().then_some(tx.caller()));
-        if frame.allowed_scope() & 0x02 != 0 && target != Some(tx.caller()) {
+        if u8::from(frame.allowed_scope()) & 0x02 != 0 && target != Some(tx.caller()) {
             return Err(invalid(
                 "EIP-8141 execution approval target must be the sender",
             ));
@@ -836,7 +837,7 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
             ));
         }
         if (frame.is_atomic_batch() || (index > 0 && frame_tx.frames[index - 1].is_atomic_batch()))
-            && frame.allowed_scope() != 0
+            && u8::from(frame.allowed_scope()) != 0
         {
             return Err(invalid(
                 "EIP-8141 atomic batch frames cannot carry approval scope",
@@ -857,21 +858,13 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
             SignatureScheme::Arbitrary if !signature.signer.is_empty() => {
                 return Err(invalid("EIP-8141 arbitrary signature signer must be empty"));
             }
-            SignatureScheme::Secp256k1 | SignatureScheme::P256
-                if !signature.signer.is_empty() && signature.signer.len() != 20 =>
-            {
-                return Err(invalid(
-                    "EIP-8141 protocol signature signer must be empty or 20 bytes",
-                ));
-            }
             _ => {}
         }
-        if !signature.msg.is_empty() && signature.msg.len() != 32 {
-            return Err(invalid(
-                "EIP-8141 signature message must be empty or 32 bytes",
-            ));
-        }
-        if signature.msg.len() == 32 && signature.msg.iter().all(|byte| *byte == 0) {
+        if signature
+            .msg
+            .digest()
+            .is_some_and(|digest| digest.is_zero())
+        {
             return Err(invalid(
                 "EIP-8141 explicit signature message cannot be zero",
             ));
@@ -886,11 +879,11 @@ fn validate_signatures<H: Handler + ?Sized>(evm: &H::Evm) -> Result<(), H::Error
     let frame_tx = tx.frame_transaction().expect("validated frame tx");
     let signature_hash = frame_tx.signature_hash;
     for signature in &frame_tx.signatures {
-        let message = if signature.msg.is_empty() {
+        let message = if signature.msg.is_transaction_hash() {
             signature_hash.0
         } else {
             let mut message = [0u8; 32];
-            message.copy_from_slice(&signature.msg);
+            message.copy_from_slice(signature.msg.digest().expect("explicit message").as_slice());
             message
         };
         let expected = if signature.signer.is_empty() {
@@ -1088,7 +1081,7 @@ fn default_verification_is_valid<H: Handler + ?Sized>(
         return false;
     };
     signature.scheme == SignatureScheme::Secp256k1
-        && signature.msg.is_empty()
+        && signature.msg.is_transaction_hash()
         && scope != 0
         && (signature.signer.is_empty() && tx.caller() == target
             || signature.signer_address() == Some(target))
@@ -1145,7 +1138,7 @@ fn settle_fees<H: Handler + ?Sized>(
 mod tests {
     use super::*;
     use crate::{ExecuteEvm, MainBuilder, MainContext};
-    use alloy_eip8141::{Frame, FrameLimits, FrameSignature};
+    use alloy_eip8141::{Frame, FrameAddress, FrameLimits, FrameSignature, SignatureMessage};
     use alloy_signer::{Signature, SignerSync};
     use alloy_signer_local::PrivateKeySigner;
     use bytecode::opcode::{
@@ -1168,8 +1161,8 @@ mod tests {
     const NEW_ACCOUNT_STATE_GAS: u64 = eip8037::NEW_ACCOUNT_BYTES * eip8037::CPSB_GLAMSTERDAM;
     const NEW_SLOT_STATE_GAS: u64 = eip8037::SSTORE_SET_BYTES * eip8037::CPSB_GLAMSTERDAM;
 
-    fn encoded_target(target: Address) -> Bytes {
-        Bytes::copy_from_slice(target.as_slice())
+    fn encoded_target(target: Address) -> FrameAddress {
+        target.into()
     }
 
     fn account_with_code(code: impl Into<Bytes>) -> AccountInfo {
@@ -1199,14 +1192,14 @@ mod tests {
 
     fn signed_entry(
         signer: &PrivateKeySigner,
-        signer_field: Bytes,
+        signer_field: FrameAddress,
         message: B256,
     ) -> FrameSignature {
         let signature = signer.sign_hash_sync(&message).unwrap();
         FrameSignature {
             scheme: SignatureScheme::Secp256k1,
             signer: signer_field,
-            msg: Bytes::new(),
+            msg: SignatureMessage::TransactionHash,
             signature: signature_bytes(&signature),
         }
     }
@@ -1411,7 +1404,7 @@ mod tests {
             frames: vec![Frame {
                 mode: FrameMode::Default,
                 flags: 0x03,
-                target: Bytes::new(),
+                target: FrameAddress::default(),
                 limits: FrameLimits {
                     execution: 10_000,
                     state: 0,
@@ -1449,14 +1442,14 @@ mod tests {
         let sponsor = PrivateKeySigner::random();
         let signature_hash = keccak256("frame transaction default verification");
         let signatures = vec![
-            signed_entry(&sender, Bytes::new(), signature_hash),
+            signed_entry(&sender, FrameAddress::default(), signature_hash),
             signed_entry(&sponsor, encoded_target(sponsor.address()), signature_hash),
         ];
         let frames = vec![
             Frame {
                 mode: FrameMode::Verify,
                 flags: 0x02,
-                target: Bytes::new(),
+                target: FrameAddress::default(),
                 limits: FrameLimits {
                     execution: 2_000,
                     state: 0,
@@ -1513,7 +1506,7 @@ mod tests {
                 Frame {
                     mode: FrameMode::Verify,
                     flags: 0x02,
-                    target: Bytes::new(),
+                    target: FrameAddress::default(),
                     limits: FrameLimits {
                         execution: 2_000,
                         state: 0,
@@ -1535,7 +1528,7 @@ mod tests {
                 Frame {
                     mode: FrameMode::Sender,
                     flags: 0,
-                    target: Bytes::new(),
+                    target: FrameAddress::default(),
                     limits: FrameLimits {
                         execution: 3_000,
                         state: 0,
@@ -1545,12 +1538,12 @@ mod tests {
                 },
             ],
             signatures: vec![
-                signed_entry(&sender, Bytes::new(), signature_hash),
+                signed_entry(&sender, FrameAddress::default(), signature_hash),
                 signed_entry(&sponsor, encoded_target(sponsor.address()), signature_hash),
                 FrameSignature {
                     scheme: SignatureScheme::Secp256k1,
-                    signer: Bytes::new(),
-                    msg: Bytes::new(),
+                    signer: FrameAddress::default(),
+                    msg: SignatureMessage::TransactionHash,
                     signature: Bytes::new(),
                 },
             ],
@@ -1581,7 +1574,7 @@ mod tests {
             frames: vec![Frame {
                 mode: FrameMode::Verify,
                 flags: 0x03,
-                target: Bytes::new(),
+                target: FrameAddress::default(),
                 limits: FrameLimits {
                     execution: 99,
                     state: NEW_ACCOUNT_STATE_GAS,
@@ -1589,7 +1582,11 @@ mod tests {
                 value: U256::ZERO,
                 data: Bytes::new(),
             }],
-            signatures: vec![signed_entry(&sender, Bytes::new(), signature_hash)],
+            signatures: vec![signed_entry(
+                &sender,
+                FrameAddress::default(),
+                signature_hash,
+            )],
             signature_hash,
             ..Default::default()
         };
@@ -1612,7 +1609,7 @@ mod tests {
             frames: vec![Frame {
                 mode: FrameMode::Verify,
                 flags: 0x03,
-                target: Bytes::new(),
+                target: FrameAddress::default(),
                 limits: FrameLimits {
                     execution: 100,
                     state: NEW_ACCOUNT_STATE_GAS - 1,
@@ -1620,7 +1617,11 @@ mod tests {
                 value: U256::ZERO,
                 data: Bytes::new(),
             }],
-            signatures: vec![signed_entry(&sender, Bytes::new(), signature_hash)],
+            signatures: vec![signed_entry(
+                &sender,
+                FrameAddress::default(),
+                signature_hash,
+            )],
             signature_hash,
             ..Default::default()
         };
@@ -1648,7 +1649,7 @@ mod tests {
                 Frame {
                     mode: FrameMode::Default,
                     flags: 0x03,
-                    target: Bytes::new(),
+                    target: FrameAddress::default(),
                     limits: FrameLimits {
                         execution: 10_000,
                         state: 0,
@@ -1694,7 +1695,7 @@ mod tests {
                 Frame::new(
                     FrameMode::Default,
                     0x03,
-                    Bytes::new(),
+                    FrameAddress::default(),
                     FrameLimits {
                         execution: 10_000,
                         state: 0,
@@ -1743,7 +1744,7 @@ mod tests {
                 Frame::new(
                     FrameMode::Default,
                     0x03,
-                    Bytes::new(),
+                    FrameAddress::default(),
                     FrameLimits {
                         execution: 10_000,
                         state: 0,
@@ -1815,7 +1816,7 @@ mod tests {
                 Frame::new(
                     FrameMode::Default,
                     0x03,
-                    Bytes::new(),
+                    FrameAddress::default(),
                     FrameLimits {
                         execution: 10_000,
                         state: 0,
@@ -1885,7 +1886,7 @@ mod tests {
             frames: vec![Frame::new(
                 FrameMode::Default,
                 0x03,
-                Bytes::new(),
+                FrameAddress::default(),
                 FrameLimits {
                     execution: 1_000,
                     state: 0,
@@ -1960,7 +1961,7 @@ mod tests {
                 Frame::new(
                     FrameMode::Default,
                     0x03,
-                    Bytes::new(),
+                    FrameAddress::default(),
                     FrameLimits {
                         execution: 10_000,
                         state: 0,
@@ -2105,7 +2106,11 @@ mod tests {
                     Bytes::new(),
                 ),
             ],
-            signatures: vec![signed_entry(&sender, Bytes::new(), signature_hash)],
+            signatures: vec![signed_entry(
+                &sender,
+                FrameAddress::default(),
+                signature_hash,
+            )],
             signature_hash,
             ..Default::default()
         };
@@ -2241,7 +2246,7 @@ mod tests {
                 Frame::new(
                     FrameMode::Default,
                     0x03,
-                    Bytes::new(),
+                    FrameAddress::default(),
                     FrameLimits {
                         execution: 10_000,
                         state: 0,
@@ -2302,7 +2307,7 @@ mod tests {
                 Frame::new(
                     FrameMode::Default,
                     0x03,
-                    Bytes::new(),
+                    FrameAddress::default(),
                     FrameLimits {
                         execution: 10_000,
                         state: 0,
