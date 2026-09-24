@@ -67,12 +67,12 @@ alloy-primitives = { version = "1.6", default-features = false }
 alloy-rlp = { version = "0.3.12", default-features = false }
 alloy-trie = { version = "0.9", default-features = false }
 alloy-sol-types = { version = "1.5.2", default-features = false }
-alloy-consensus = { git = "https://github.com/Rimeeeeee/alloy", rev = "e2ac522f76175f18cbfe557a0770b0758a024432", default-features = false }
-alloy-eips = { git = "https://github.com/Rimeeeeee/alloy", rev = "e2ac522f76175f18cbfe557a0770b0758a024432", default-features = false }
-alloy-provider = { git = "https://github.com/Rimeeeeee/alloy", rev = "e2ac522f76175f18cbfe557a0770b0758a024432", default-features = false }
-alloy-signer = { git = "https://github.com/Rimeeeeee/alloy", rev = "e2ac522f76175f18cbfe557a0770b0758a024432", default-features = false }
-alloy-signer-local = { git = "https://github.com/Rimeeeeee/alloy", rev = "e2ac522f76175f18cbfe557a0770b0758a024432", default-features = false }
-alloy-transport = { git = "https://github.com/Rimeeeeee/alloy", rev = "e2ac522f76175f18cbfe557a0770b0758a024432", default-features = false }
+alloy-consensus = { git = "https://github.com/Rimeeeeee/alloy", rev = "a3ed59a939dfeef39521648a55c81f4762af8f9c", default-features = false }
+alloy-eips = { git = "https://github.com/Rimeeeeee/alloy", rev = "a3ed59a939dfeef39521648a55c81f4762af8f9c", default-features = false }
+alloy-provider = { git = "https://github.com/Rimeeeeee/alloy", rev = "a3ed59a939dfeef39521648a55c81f4762af8f9c", default-features = false }
+alloy-signer = { git = "https://github.com/Rimeeeeee/alloy", rev = "a3ed59a939dfeef39521648a55c81f4762af8f9c", default-features = false }
+alloy-signer-local = { git = "https://github.com/Rimeeeeee/alloy", rev = "a3ed59a939dfeef39521648a55c81f4762af8f9c", default-features = false }
+alloy-transport = { git = "https://github.com/Rimeeeeee/alloy", rev = "a3ed59a939dfeef39521648a55c81f4762af8f9c", default-features = false }
 
 # precompiles
 ark-bls12-381 = { version = "0.6", default-features = false }
