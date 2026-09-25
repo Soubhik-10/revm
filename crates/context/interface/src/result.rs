@@ -448,6 +448,8 @@ pub enum ExecutionResult<HaltReasonTy = HaltReason> {
         /// Per-frame status, gas, and logs, required to construct the consensus receipt.
         /// The aggregate `logs` field preserves the common execution-result log API.
         frame_receipts: Vec<alloy_eip8141::FrameReceipt<Log>>,
+        /// Output or revert bytes for each frame, empty for skipped frames.
+        frame_outputs: Vec<Bytes>,
     },
 }
 
@@ -489,11 +491,13 @@ impl<HaltReasonTy> ExecutionResult<HaltReasonTy> {
                 payer,
                 logs,
                 frame_receipts,
+                frame_outputs,
             } => ExecutionResult::FrameTransaction {
                 gas,
                 payer,
                 logs,
                 frame_receipts,
+                frame_outputs,
             },
         }
     }
