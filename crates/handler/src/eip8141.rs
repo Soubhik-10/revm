@@ -21,6 +21,12 @@ use primitives::{keccak256, Address, Bytes, KECCAK_EMPTY, U256};
 use state::Bytecode as StateBytecode;
 use std::{boxed::Box, vec::Vec};
 
+struct ExecutedFrames {
+    receipts: Vec<FrameReceipt>,
+    refunds: Vec<i64>,
+    outputs: Vec<Bytes>,
+}
+
 struct AtomicBatch {
     checkpoint: context_interface::journaled_state::JournalCheckpoint,
     approval: FrameApprovalState,
@@ -41,7 +47,11 @@ pub fn run<H: Handler + ?Sized>(
     evm: &mut H::Evm,
 ) -> Result<ExecutionResult<H::HaltReason>, H::Error> {
     let (intrinsic, floor_gas, frame_count) = prepare(handler, evm)?;
-    let (receipts, frame_refunds, frame_outputs) = execute_frames(
+    let ExecutedFrames {
+        receipts,
+        refunds: frame_refunds,
+        outputs: frame_outputs,
+    } = execute_frames(
         handler,
         evm,
         frame_count,
@@ -142,7 +152,7 @@ where
     let result =
         (|| {
             let _ = prepare(handler, evm)?;
-            let (receipts, _, _) = execute_frames(
+            let ExecutedFrames { receipts, .. } = execute_frames(
                 handler,
                 evm,
                 frame_count,
@@ -288,7 +298,7 @@ fn execute_frames<H, RUN, DEFAULT>(
     prefix_end: Option<usize>,
     run_frame: &mut RUN,
     default_frame: &mut DEFAULT,
-) -> Result<(Vec<FrameReceipt>, Vec<i64>, Vec<Bytes>), H::Error>
+) -> Result<ExecutedFrames, H::Error>
 where
     H: Handler + ?Sized,
     RUN: FnMut(&mut H, &mut H::Evm, FrameInit) -> Result<FrameResult, H::Error>,
@@ -304,7 +314,11 @@ where
 
     while frame_index < frame_count {
         if prefix_end.is_some_and(|end| frame_index == end) {
-            return Ok((receipts, frame_refunds, frame_outputs));
+            return Ok(ExecutedFrames {
+                receipts,
+                refunds: frame_refunds,
+                outputs: frame_outputs,
+            });
         }
         let (frame, target) = {
             let tx = evm.ctx_ref().tx();
@@ -479,12 +493,20 @@ where
                 .frame_transaction()
                 .is_some_and(|runtime| runtime.approval.payer.is_some())
         {
-            return Ok((receipts, frame_refunds, frame_outputs));
+            return Ok(ExecutedFrames {
+                receipts,
+                refunds: frame_refunds,
+                outputs: frame_outputs,
+            });
         }
         frame_index += 1;
     }
 
-    Ok((receipts, frame_refunds, frame_outputs))
+    Ok(ExecutedFrames {
+        receipts,
+        refunds: frame_refunds,
+        outputs: frame_outputs,
+    })
 }
 
 /// Executes one top-level frame through default verification or the shared interpreter loop.
