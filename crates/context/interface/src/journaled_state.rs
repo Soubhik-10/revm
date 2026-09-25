@@ -136,6 +136,14 @@ pub trait JournalTr {
     /// Returns the addresses of the precompiles.
     fn precompile_addresses(&self) -> &AddressSet;
 
+    /// Returns whether an account access would be cold without accessing or warming it.
+    ///
+    /// EIP-8141 uses this to validate a frame target's entry charge before resolving the
+    /// target. Journals that opt in to EIP-8141 support must override this method.
+    fn is_account_cold(&self, _address: Address) -> bool {
+        true
+    }
+
     /// Sets the spec id.
     fn set_spec_id(&mut self, spec_id: SpecId);
 
@@ -307,6 +315,22 @@ pub trait JournalTr {
     /// Reverts the changes made since the last checkpoint.
     fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint);
 
+    /// Captures all accesses that are warm in the current transaction.
+    fn warm_access_snapshot(&self) -> WarmAccessSnapshot {
+        WarmAccessSnapshot::default()
+    }
+
+    /// Returns whether this journal implements the EIP-8141 frame-boundary hooks.
+    fn supports_eip8141(&self) -> bool {
+        false
+    }
+
+    /// Restores accesses captured before an EIP-8141 atomic rollback.
+    fn restore_warm_access_snapshot(&mut self, _snapshot: &WarmAccessSnapshot) {}
+
+    /// Clears EIP-1153 transient storage at an EIP-8141 top-level frame boundary.
+    fn clear_transient_storage(&mut self) {}
+
     /// Creates a checkpoint of the account creation.
     fn create_account_checkpoint(
         &mut self,
@@ -444,6 +468,13 @@ pub struct JournalCheckpoint {
     pub journal_i: usize,
     /// Checkpoint for self-destructed addresses tracking (EIP-7708).
     pub selfdestructed_i: usize,
+}
+
+/// Warm account and storage accesses retained across EIP-8141 top-level frames.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WarmAccessSnapshot {
+    /// Warm accounts and their warm storage keys.
+    pub accesses: Vec<(Address, Vec<StorageKey>)>,
 }
 
 /// State load information that contains the data and if the account or storage is cold loaded

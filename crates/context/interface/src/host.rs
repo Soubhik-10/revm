@@ -9,6 +9,19 @@ use auto_impl::auto_impl;
 use primitives::{hardfork::SpecId, Address, Bytes, Log, StorageKey, StorageValue, B256, U256};
 use state::Bytecode;
 
+/// Error returned by EIP-8141 host operations.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum FrameHostError {
+    /// The operation is unavailable or a selector/index is invalid.
+    Invalid,
+    /// The current frame must revert.
+    Revert,
+    /// The current call frame has insufficient state gas.
+    OutOfGas,
+    /// A database or other fatal host error occurred.
+    Fatal,
+}
+
 /// Error that can happen when loading account info.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -57,6 +70,72 @@ pub trait Host {
     fn caller(&self) -> Address;
     /// Transaction blob hash, calls `ContextTr::tx().blob_hash(number)`
     fn blob_hash(&self, number: usize) -> Option<U256>;
+
+    /// Returns an EIP-8141 transaction parameter.
+    ///
+    /// `state_gas_left` is the remaining state-gas budget of the currently executing frame. It is
+    /// supplied by the interpreter because it is dynamic execution state rather than transaction
+    /// metadata.
+    fn frame_tx_param(&self, _param: U256, _state_gas_left: u64) -> Option<U256> {
+        None
+    }
+
+    /// Returns one EIP-8141 frame's calldata.
+    fn frame_data(&self, _frame_index: U256) -> Option<Bytes> {
+        None
+    }
+
+    /// Returns an EIP-8141 frame parameter.
+    fn frame_param(&self, _frame_index: U256, _param: U256) -> Option<U256> {
+        None
+    }
+
+    /// Returns EIP-8141 signature metadata.
+    fn frame_signature_param(&self, _signature_index: U256, _param: U256) -> Option<U256> {
+        None
+    }
+
+    /// Returns an EIP-8141 arbitrary signature witness.
+    fn frame_signature_bytes(&self, _signature_index: U256) -> Option<Bytes> {
+        None
+    }
+
+    /// Applies an EIP-8141 approval from the current call context.
+    fn approve_frame(
+        &mut self,
+        _current_target: Address,
+        _scope: U256,
+    ) -> Result<(), FrameHostError> {
+        Err(FrameHostError::Invalid)
+    }
+
+    /// Applies an EIP-8141 approval and returns any sender-creation state-gas charge.
+    ///
+    /// `state_gas_left` is supplied by the interpreter so the host can reject an unaffordable
+    /// approval before changing state. The default preserves compatibility with hosts that do not
+    /// implement EIP-8141 state-gas accounting.
+    fn approve_frame_with_state_gas(
+        &mut self,
+        current_target: Address,
+        scope: U256,
+        _state_gas_left: u64,
+    ) -> Result<u64, FrameHostError> {
+        self.approve_frame(current_target, scope)?;
+        Ok(0)
+    }
+
+    /// Records EIP-8141 storage state-gas ownership and returns the spendable refill.
+    ///
+    /// Outside a frame transaction, the full refill remains spendable under EIP-8037.
+    fn frame_sstore_state_gas(
+        &mut self,
+        _address: Address,
+        _key: StorageKey,
+        _charge: u64,
+        refill: u64,
+    ) -> u64 {
+        refill
+    }
 
     /* Config */
 

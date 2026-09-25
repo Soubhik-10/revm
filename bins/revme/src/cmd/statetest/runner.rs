@@ -165,6 +165,7 @@ fn format_evm_result(
             ExecutionResult::Success { reason, .. } => format!("Success: {reason:?}"),
             ExecutionResult::Revert { .. } => "Revert".to_string(),
             ExecutionResult::Halt { reason, .. } => format!("Halt: {reason:?}"),
+            ExecutionResult::FrameTransaction { .. } => "Frame transaction".to_string(),
         },
         Err(e) => e.to_string(),
     }

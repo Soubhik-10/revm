@@ -3,14 +3,14 @@ use crate::TransactionType;
 use context_interface::{
     either::Either,
     transaction::{
-        AccessList, AccessListItem, Authorization, RecoveredAuthority, RecoveredAuthorization,
-        SignedAuthorization, Transaction,
+        AccessList, AccessListItem, Authorization, FrameTransaction, RecoveredAuthority,
+        RecoveredAuthorization, SignedAuthorization, Transaction,
     },
 };
 use core::fmt::Debug;
 use database_interface::{BENCH_CALLER, BENCH_TARGET};
 use primitives::{eip7825, Address, Bytes, TxKind, B256, U256};
-use std::{vec, vec::Vec};
+use std::{boxed::Box, vec, vec::Vec};
 
 /// The Transaction Environment is a struct that contains all fields that can be found in all Ethereum transaction,
 /// including EIP-4844, EIP-7702, EIP-7873, etc.  It implements the [`Transaction`] trait, which is used inside the EVM to execute a transaction.
@@ -86,6 +86,9 @@ pub struct TxEnv {
     ///
     /// [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
     pub authorization_list: Vec<Either<SignedAuthorization, RecoveredAuthorization>>,
+
+    /// EIP-8141 execution payload, allocated only for frame transactions.
+    pub frame_transaction: Option<Box<FrameTransaction>>,
 }
 
 impl Default for TxEnv {
@@ -133,6 +136,13 @@ impl TxEnv {
     /// Derives tx type from transaction fields and sets it to `tx_type`.
     /// Returns error in case some fields were not set correctly.
     pub const fn derive_tx_type(&mut self) -> Result<(), DeriveTxTypeError> {
+        // Frame transactions may also carry blobs, so their dedicated payload must take
+        // precedence over all fields shared with earlier transaction types.
+        if self.frame_transaction.is_some() {
+            self.tx_type = TransactionType::Eip8141 as u8;
+            return Ok(());
+        }
+
         if !self.access_list.0.is_empty() {
             self.tx_type = TransactionType::Eip2930 as u8;
         }
@@ -178,6 +188,10 @@ impl Transaction for TxEnv {
 
     fn tx_type(&self) -> u8 {
         self.tx_type
+    }
+
+    fn frame_transaction(&self) -> Option<&FrameTransaction> {
+        self.frame_transaction.as_deref()
     }
 
     fn kind(&self) -> TxKind {
@@ -258,6 +272,7 @@ pub struct TxEnvBuilder {
     blob_hashes: Vec<B256>,
     max_fee_per_blob_gas: u128,
     authorization_list: Vec<Either<SignedAuthorization, RecoveredAuthorization>>,
+    frame_transaction: Option<FrameTransaction>,
 }
 
 impl TxEnvBuilder {
@@ -278,6 +293,7 @@ impl TxEnvBuilder {
             blob_hashes: Vec::new(),
             max_fee_per_blob_gas: 0,
             authorization_list: Vec::new(),
+            frame_transaction: None,
         }
     }
 
@@ -408,6 +424,12 @@ impl TxEnvBuilder {
         self
     }
 
+    /// Set the EIP-8141 frame transaction execution payload.
+    pub fn frame_transaction(mut self, frame_transaction: FrameTransaction) -> Self {
+        self.frame_transaction = Some(frame_transaction);
+        self
+    }
+
     /// Build the final [`TxEnv`] with default values for missing fields.
     pub fn build_fill(mut self) -> TxEnv {
         if let Some(tx_type) = self.tx_type {
@@ -465,6 +487,17 @@ impl TxEnvBuilder {
                         self.kind = TxKind::Call(Address::default());
                     }
                 }
+                TransactionType::Eip8141 => {
+                    self.gas_priority_fee.get_or_insert(0);
+                    self.frame_transaction
+                        .get_or_insert_with(FrameTransaction::default);
+                    self.kind = TxKind::Call(self.caller);
+                    self.value = U256::ZERO;
+                    self.data = Bytes::new();
+                    if let Some(frame_tx) = &self.frame_transaction {
+                        self.gas_limit = frame_tx.gas_limit(self.caller).unwrap_or(u64::MAX);
+                    }
+                }
                 TransactionType::Custom => {
                     // do nothing
                 }
@@ -486,6 +519,7 @@ impl TxEnvBuilder {
             blob_hashes: self.blob_hashes,
             max_fee_per_blob_gas: self.max_fee_per_blob_gas,
             authorization_list: self.authorization_list,
+            frame_transaction: self.frame_transaction.map(Box::new),
         };
 
         // if tx_type is not set, derive it from fields and fix errors.
@@ -557,6 +591,14 @@ impl TxEnvBuilder {
                         return Err(DeriveTxTypeError::MissingTargetForEip7702.into());
                     }
                 }
+                TransactionType::Eip8141 => {
+                    if self.frame_transaction.is_none() {
+                        return Err(TxEnvBuildError::MissingFrameTransactionForEip8141);
+                    }
+                    if self.gas_priority_fee.is_none() {
+                        return Err(TxEnvBuildError::MissingGasPriorityFeeForEip1559);
+                    }
+                }
                 TransactionType::Custom => {
                     // do nothing, custom transaction type is handled by the caller.
                 }
@@ -578,6 +620,7 @@ impl TxEnvBuilder {
             blob_hashes: self.blob_hashes,
             max_fee_per_blob_gas: self.max_fee_per_blob_gas,
             authorization_list: self.authorization_list,
+            frame_transaction: self.frame_transaction.map(Box::new),
         };
 
         // Derive tx type from fields, if some fields are wrongly set it will return an error.
@@ -601,6 +644,8 @@ pub enum TxEnvBuildError {
     MissingBlobHashesForEip4844,
     /// Missing authorization list for EIP-7702
     MissingAuthorizationListForEip7702,
+    /// Missing frame execution payload for EIP-8141.
+    MissingFrameTransactionForEip8141,
     /// Missing target for EIP-4844
     MissingTargetForEip4844,
 }
@@ -615,6 +660,9 @@ impl core::fmt::Display for TxEnvBuildError {
             Self::MissingBlobHashesForEip4844 => f.write_str("missing blob hashes for EIP-4844"),
             Self::MissingAuthorizationListForEip7702 => {
                 f.write_str("missing authorization list for EIP-7702")
+            }
+            Self::MissingFrameTransactionForEip8141 => {
+                f.write_str("missing frame transaction payload for EIP-8141")
             }
             Self::MissingTargetForEip4844 => f.write_str("missing target for EIP-4844"),
         }
@@ -664,9 +712,10 @@ impl TxEnv {
             blob_hashes,
             max_fee_per_blob_gas,
             authorization_list,
+            frame_transaction,
         } = self;
 
-        TxEnvBuilder::new()
+        let builder = TxEnvBuilder::new()
             .tx_type(Some(tx_type))
             .caller(caller)
             .gas_limit(gas_limit)
@@ -680,7 +729,13 @@ impl TxEnv {
             .gas_priority_fee(gas_priority_fee)
             .blob_hashes(blob_hashes)
             .max_fee_per_blob_gas(max_fee_per_blob_gas)
-            .authorization_list(authorization_list)
+            .authorization_list(authorization_list);
+
+        if let Some(frame_transaction) = frame_transaction {
+            builder.frame_transaction(*frame_transaction)
+        } else {
+            builder
+        }
     }
 }
 
@@ -1084,6 +1139,22 @@ mod tests {
             .unwrap();
 
         assert_eq!(tx.tx_type, TransactionType::Eip7702);
+    }
+
+    #[test]
+    fn test_tx_env_builder_derive_tx_type_eip8141_with_blobs() {
+        let caller = Address::from([1u8; 20]);
+        let payload = FrameTransaction::default();
+        let tx = TxEnvBuilder::new()
+            .caller(caller)
+            .kind(TxKind::Call(caller))
+            .gas_priority_fee(Some(10))
+            .blob_hashes(vec![B256::from([5u8; 32])])
+            .frame_transaction(payload)
+            .build()
+            .unwrap();
+
+        assert_eq!(tx.tx_type, TransactionType::Eip8141);
     }
 
     #[test]

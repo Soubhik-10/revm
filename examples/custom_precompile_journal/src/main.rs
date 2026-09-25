@@ -98,6 +98,12 @@ fn main() -> anyhow::Result<()> {
                 gas.tx_gas_used()
             );
         }
+        Ok(revm::context::result::ExecutionResult::FrameTransaction { gas, .. }) => {
+            println!(
+                "   Frame transaction completed. Gas used: {}",
+                gas.tx_gas_used()
+            );
+        }
         Err(e) => {
             println!("   ❌ Error: {e:?}");
         }
@@ -133,6 +139,12 @@ fn main() -> anyhow::Result<()> {
         Ok(revm::context::result::ExecutionResult::Halt { reason, gas, .. }) => {
             println!(
                 "   🛑 Halted! Reason: {reason:?}, Gas used: {}",
+                gas.tx_gas_used()
+            );
+        }
+        Ok(revm::context::result::ExecutionResult::FrameTransaction { gas, .. }) => {
+            println!(
+                "   Frame transaction completed. Gas used: {}",
                 gas.tx_gas_used()
             );
         }
@@ -176,6 +188,12 @@ fn main() -> anyhow::Result<()> {
         Ok(revm::context::result::ExecutionResult::Halt { reason, gas, .. }) => {
             println!(
                 "   🛑 Halted! Reason: {reason:?}, Gas used: {}",
+                gas.tx_gas_used()
+            );
+        }
+        Ok(revm::context::result::ExecutionResult::FrameTransaction { gas, .. }) => {
+            println!(
+                "   Frame transaction completed. Gas used: {}",
                 gas.tx_gas_used()
             );
         }
