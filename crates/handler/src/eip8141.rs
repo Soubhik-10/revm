@@ -22,6 +22,12 @@ use primitives::{keccak256, Address, Bytes, KECCAK_EMPTY, U256};
 use state::Bytecode as StateBytecode;
 use std::{boxed::Box, vec::Vec};
 
+struct ExecutedFrames {
+    receipts: Vec<FrameReceipt>,
+    refunds: Vec<i64>,
+    outputs: Vec<Bytes>,
+}
+
 struct AtomicBatch {
     checkpoint: context_interface::journaled_state::JournalCheckpoint,
     approval: FrameApprovalState,
@@ -42,7 +48,11 @@ pub fn run<H: Handler + ?Sized>(
     evm: &mut H::Evm,
 ) -> Result<ExecutionResult<H::HaltReason>, H::Error> {
     let (intrinsic, floor_gas, frame_count) = prepare(handler, evm)?;
-    let (receipts, frame_refunds) = execute_frames(
+    let ExecutedFrames {
+        receipts,
+        refunds: frame_refunds,
+        outputs: frame_outputs,
+    } = execute_frames(
         handler,
         evm,
         frame_count,
@@ -50,7 +60,14 @@ pub fn run<H: Handler + ?Sized>(
         &mut run_frame::<H>,
         &mut no_default_frame::<H>,
     )?;
-    finish_transaction::<H>(evm, intrinsic, floor_gas, receipts, frame_refunds)
+    finish_transaction::<H>(
+        evm,
+        intrinsic,
+        floor_gas,
+        receipts,
+        frame_refunds,
+        frame_outputs,
+    )
 }
 
 /// Result of validating the executable prefix of an EIP-8141 transaction.
@@ -136,7 +153,7 @@ where
     let result =
         (|| {
             let _ = prepare(handler, evm)?;
-            let (receipts, _) = execute_frames(
+            let ExecutedFrames { receipts, .. } = execute_frames(
                 handler,
                 evm,
                 frame_count,
@@ -285,7 +302,7 @@ fn execute_frames<H, RUN, DEFAULT>(
     prefix_end: Option<usize>,
     run_frame: &mut RUN,
     default_frame: &mut DEFAULT,
-) -> Result<(Vec<FrameReceipt>, Vec<i64>), H::Error>
+) -> Result<ExecutedFrames, H::Error>
 where
     H: Handler + ?Sized,
     RUN: FnMut(&mut H, &mut H::Evm, FrameInit) -> Result<FrameResult, H::Error>,
@@ -295,12 +312,17 @@ where
     let capacity = prefix_end.unwrap_or(frame_count);
     let mut receipts = Vec::with_capacity(capacity);
     let mut frame_refunds = Vec::with_capacity(capacity);
+    let mut frame_outputs = Vec::with_capacity(capacity);
     let mut batch: Option<AtomicBatch> = None;
     let mut frame_index = 0usize;
 
     while frame_index < frame_count {
         if prefix_end.is_some_and(|end| frame_index == end) {
-            return Ok((receipts, frame_refunds));
+            return Ok(ExecutedFrames {
+                receipts,
+                refunds: frame_refunds,
+                outputs: frame_outputs,
+            });
         }
         let (frame, target) = {
             let tx = evm.ctx_ref().tx();
@@ -353,7 +375,7 @@ where
             )
         };
 
-        let (result, spent, state_gas, refund) = execute_frame(
+        let (result, spent, state_gas, refund, output) = execute_frame(
             handler,
             evm,
             &frame,
@@ -400,6 +422,7 @@ where
             logs,
         });
         frame_refunds.push(refund);
+        frame_outputs.push(output);
         {
             let runtime = evm.ctx().local_mut().frame_transaction_mut().unwrap();
             runtime.statuses.push(status);
@@ -446,6 +469,7 @@ where
                         logs: Vec::new(),
                     });
                     frame_refunds.push(0);
+                    frame_outputs.push(Bytes::new());
                     let runtime = evm.ctx().local_mut().frame_transaction_mut().unwrap();
                     runtime.statuses.push(FrameStatus::SkippedAtomicBatch);
                     runtime.execution_gas_used.push(0);
@@ -470,12 +494,20 @@ where
                 .frame_transaction()
                 .is_some_and(|runtime| runtime.approval.payer.is_some())
         {
-            return Ok((receipts, frame_refunds));
+            return Ok(ExecutedFrames {
+                receipts,
+                refunds: frame_refunds,
+                outputs: frame_outputs,
+            });
         }
         frame_index += 1;
     }
 
-    Ok((receipts, frame_refunds))
+    Ok(ExecutedFrames {
+        receipts,
+        refunds: frame_refunds,
+        outputs: frame_outputs,
+    })
 }
 
 /// Executes one top-level frame through default verification or the shared interpreter loop.
@@ -487,7 +519,7 @@ fn execute_frame<H, RUN, DEFAULT>(
     entry_gas: u64,
     run_frame: &mut RUN,
     default_frame: &mut DEFAULT,
-) -> Result<(InstructionResult, u64, u64, i64), H::Error>
+) -> Result<(InstructionResult, u64, u64, i64, Bytes), H::Error>
 where
     H: Handler + ?Sized,
     RUN: FnMut(&mut H, &mut H::Evm, FrameInit) -> Result<FrameResult, H::Error>,
@@ -509,7 +541,13 @@ where
     // particular, an underfunded cold access must not load the target or add it
     // to the EIP-7928 block access list.
     Ok(if frame.limits.execution < entry_gas {
-        (InstructionResult::OutOfGas, frame.limits.execution, 0, 0)
+        (
+            InstructionResult::OutOfGas,
+            frame.limits.execution,
+            0,
+            0,
+            Bytes::new(),
+        )
     } else {
         let (target_code_hash, mut frame_input, loaded_entry_gas) =
             frame_input::<H>(evm, frame, target)?;
@@ -525,7 +563,7 @@ where
             // An unaffordable transfer pays only the target access, without resolving
             // delegated code or charging any further frame-entry costs.
             if balance < frame.value {
-                return Ok((InstructionResult::OutOfFunds, entry_gas, 0, 0));
+                return Ok((InstructionResult::OutOfFunds, entry_gas, 0, 0, Bytes::new()));
             }
         }
         let uses_default_code = frame.mode == FrameMode::Verify
@@ -636,6 +674,7 @@ where
                     0
                 },
                 0,
+                frame_result.output().into_data(),
             )
         } else {
             let memory =
@@ -671,7 +710,13 @@ where
                 0
             };
             let refund = if result.is_ok() { gas.refunded() } else { 0 };
-            (result, spent, state_gas, refund)
+            (
+                result,
+                spent,
+                state_gas,
+                refund,
+                frame_result.output().into_data(),
+            )
         }
     })
 }
@@ -683,6 +728,7 @@ fn finish_transaction<H: Handler + ?Sized>(
     floor_gas: u64,
     mut receipts: Vec<FrameReceipt>,
     frame_refunds: Vec<i64>,
+    frame_outputs: Vec<Bytes>,
 ) -> Result<ExecutionResult<H::HaltReason>, H::Error> {
     let payer = evm
         .ctx_ref()
@@ -743,6 +789,7 @@ fn finish_transaction<H: Handler + ?Sized>(
         payer,
         logs,
         frame_receipts: receipts,
+        frame_outputs,
     })
 }
 
@@ -855,6 +902,15 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
         return Err(invalid("multiple EIP-8141 expiry verifier frames"));
     }
     for signature in &frame_tx.signatures {
+        if signature.msg.digest().is_some_and(|digest| digest.is_zero()) {
+            return Err(invalid("EIP-8141 explicit signature message cannot be zero"));
+        }
+        if ctx.cfg().allow_frame_signature_placeholders()
+            && signature.scheme != SignatureScheme::Arbitrary
+            && signature.signature.is_empty()
+        {
+            continue;
+        }
         if signature.validate_structure_with_sender(tx.caller()).is_err() {
             return Err(invalid("invalid EIP-8141 signature structure"));
         }
@@ -868,6 +924,13 @@ fn validate_signatures<H: Handler + ?Sized>(evm: &H::Evm) -> Result<(), H::Error
     let frame_tx = tx.frame_transaction().expect("validated frame tx");
     let signature_hash = frame_tx.signature_hash;
     for signature in &frame_tx.signatures {
+        if evm.ctx_ref().cfg().allow_frame_signature_placeholders()
+            && signature.scheme != SignatureScheme::Arbitrary
+            && signature.signature.is_empty()
+        {
+            continue;
+        }
+
         let message = signature.explicit_message().unwrap_or(signature_hash).0;
         let expected = signature
             .resolved_signer(sender)
@@ -1250,10 +1313,26 @@ mod tests {
                     .with_db(db)
                     .build_mainnet();
                 let output = evm.transact(tx_env(SENDER, payload)).unwrap();
-                let ExecutionResult::FrameTransaction { frame_receipts, .. } = output.result else {
+                let ExecutionResult::FrameTransaction {
+                    frame_receipts,
+                    frame_outputs,
+                    ..
+                } = output.result
+                else {
                     panic!("expected frame transaction result")
                 };
                 assert_eq!(frame_receipts.len(), 3);
+                assert_eq!(frame_outputs.len(), 3);
+                assert!(frame_outputs[0].is_empty());
+                assert!(frame_outputs[2].is_empty());
+                let expected = if ending.last() == Some(&RETURN) || ending.last() == Some(&REVERT) {
+                    let mut bytes = vec![0; 32];
+                    bytes[31] = 0xab;
+                    Bytes::from(bytes)
+                } else {
+                    Bytes::new()
+                };
+                assert_eq!(frame_outputs[1], expected);
                 assert_eq!(frame_receipts[0].status, FrameStatus::Success);
                 assert_eq!(frame_receipts[1].status, expected_status);
                 assert_eq!(frame_receipts[2].status, FrameStatus::Success);
@@ -1755,6 +1834,41 @@ mod tests {
         ));
         assert!(evm.ctx_ref().local().frame_transaction().is_none());
         assert_eq!(evm.frame_stack().index(), None);
+    }
+
+    #[test]
+    fn empty_signature_placeholders_require_simulation_configuration() {
+        for (allow, signature, succeeds) in [
+            (false, Bytes::new(), false),
+            (true, Bytes::new(), true),
+            (true, Bytes::from(vec![0; 65]), false),
+        ] {
+            let payload = FrameTransaction {
+                frames: vec![Frame {
+                    mode: FrameMode::Verify,
+                    flags: 3,
+                    limits: FrameLimits {
+                        execution: 50_000,
+                        state: 1_000_000,
+                    },
+                    ..Default::default()
+                }],
+                signatures: vec![FrameSignature {
+                    scheme: SignatureScheme::Secp256k1,
+                    signature,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            let mut evm = Context::mainnet()
+                .modify_cfg_chained(|cfg| {
+                    cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA);
+                    cfg.allow_frame_signature_placeholders = allow;
+                })
+                .with_db(CacheDB::<EmptyDB>::default())
+                .build_mainnet();
+            assert_eq!(evm.transact(tx_env(SENDER, payload)).is_ok(), succeeds);
+        }
     }
 
     #[test]
