@@ -2,7 +2,10 @@ pub mod post_block;
 pub mod pre_block;
 
 use crate::dir_utils::find_all_json_tests;
-use alloy_consensus::{proofs::calculate_receipt_root, Receipt, ReceiptEnvelope, TxType};
+use alloy_consensus::{
+    private::alloy_eips::eip8141::FrameReceiptPayload, proofs::calculate_receipt_root, Receipt,
+    ReceiptEnvelope, TxType,
+};
 use clap::Parser;
 
 use revm::statetest_types::blockchain::{
@@ -11,7 +14,10 @@ use revm::statetest_types::blockchain::{
 use revm::{
     bytecode::Bytecode,
     context::{cfg::CfgEnv, ContextTr},
-    context_interface::{block::BlobExcessGasAndPrice, result::HaltReason},
+    context_interface::{
+        block::BlobExcessGasAndPrice,
+        result::{ExecutionResult, HaltReason},
+    },
     database::{states::bundle_state::BundleRetention, EmptyDB, State},
     handler::EvmTr,
     inspector::inspectors::TracerEip3155,
@@ -938,14 +944,36 @@ fn execute_blockchain_test(
                     block_state_gas_used += gas.block_state_gas_used();
                     let tx_type = TxType::try_from(tx_env.tx_type)
                         .expect("tests only contain known transaction types");
-                    receipts.push(ReceiptEnvelope::from_typed(
-                        tx_type,
-                        Receipt {
-                            status: result.result.is_success().into(),
-                            cumulative_gas_used: cumulative_tx_gas_used,
-                            logs: result.result.logs().to_vec(),
-                        },
-                    ));
+                    let receipt = match result.result {
+                        ExecutionResult::FrameTransaction {
+                            payer,
+                            frame_receipts,
+                            ..
+                        } => ReceiptEnvelope::Eip8141(
+                            FrameReceiptPayload {
+                                cumulative_gas_used: cumulative_tx_gas_used,
+                                payer,
+                                frame_receipts,
+                            }
+                            .into(),
+                        ),
+                        result => ReceiptEnvelope::from_typed(
+                            tx_type,
+                            Receipt {
+                                status: result.is_success().into(),
+                                cumulative_gas_used: cumulative_tx_gas_used,
+                                logs: result.into_logs(),
+                            },
+                        )
+                        .map_err(|error| {
+                            TestExecutionError::ReceiptConstruction {
+                                block_idx,
+                                tx_idx,
+                                error: format!("{error:?}"),
+                            }
+                        })?,
+                    };
+                    receipts.push(receipt);
                     evm.commit(result.state);
                 }
                 Err(e) => {
@@ -1254,6 +1282,13 @@ pub enum TestExecutionError {
         block_idx: usize,
         expected: B256,
         actual: B256,
+    },
+
+    #[error("Receipt construction failed at block {block_idx}, tx {tx_idx}: {error}")]
+    ReceiptConstruction {
+        block_idx: usize,
+        tx_idx: usize,
+        error: String,
     },
 
     #[error("Pre-block system call failed at block {block_idx}: {error}")]
