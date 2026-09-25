@@ -926,6 +926,13 @@ fn validate_signatures<H: Handler + ?Sized>(evm: &H::Evm) -> Result<(), H::Error
     let frame_tx = tx.frame_transaction().expect("validated frame tx");
     let signature_hash = frame_tx.signature_hash;
     for signature in &frame_tx.signatures {
+        if evm.ctx_ref().cfg().allow_frame_signature_placeholders()
+            && signature.scheme != SignatureScheme::Arbitrary
+            && signature.signature.is_empty()
+        {
+            continue;
+        }
+
         let message = if signature.msg.is_transaction_hash() {
             signature_hash.0
         } else {
@@ -1627,6 +1634,41 @@ mod tests {
         ));
         assert!(evm.ctx_ref().local().frame_transaction().is_none());
         assert_eq!(evm.frame_stack().index(), None);
+    }
+
+    #[test]
+    fn empty_signature_placeholders_require_simulation_configuration() {
+        for (allow, signature, succeeds) in [
+            (false, Bytes::new(), false),
+            (true, Bytes::new(), true),
+            (true, Bytes::from(vec![0; 65]), false),
+        ] {
+            let payload = FrameTransaction {
+                frames: vec![Frame {
+                    mode: FrameMode::Verify,
+                    flags: 3,
+                    limits: FrameLimits {
+                        execution: 50_000,
+                        state: 1_000_000,
+                    },
+                    ..Default::default()
+                }],
+                signatures: vec![FrameSignature {
+                    scheme: SignatureScheme::Secp256k1,
+                    signature,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            let mut evm = Context::mainnet()
+                .modify_cfg_chained(|cfg| {
+                    cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA);
+                    cfg.allow_frame_signature_placeholders = allow;
+                })
+                .with_db(CacheDB::<EmptyDB>::default())
+                .build_mainnet();
+            assert_eq!(evm.transact(tx_env(SENDER, payload)).is_ok(), succeeds);
+        }
     }
 
     #[test]
