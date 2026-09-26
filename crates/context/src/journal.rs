@@ -136,6 +136,25 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
             .map_err(JournalLoadError::unwrap_db_error)
     }
 
+    fn protocol_storage(
+        &mut self,
+        address: Address,
+        key: StorageKey,
+    ) -> Result<StorageValue, <Self::Database as Database>::Error> {
+        self.inner
+            .protocol_storage(&mut self.database, address, key)
+    }
+
+    fn set_protocol_storage(
+        &mut self,
+        address: Address,
+        key: StorageKey,
+        value: StorageValue,
+    ) -> Result<(), <Self::Database as Database>::Error> {
+        self.inner
+            .set_protocol_storage(&mut self.database, address, key, value)
+    }
+
     fn tload(&mut self, address: Address, key: StorageKey) -> StorageValue {
         self.inner.tload(address, key)
     }

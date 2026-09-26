@@ -19,6 +19,8 @@ pub struct FrameApprovalState {
 /// Per-transaction EIP-8141 interpreter runtime state.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FrameTransactionRuntime {
+    /// Sender account nonce observed before the first frame executes.
+    pub tx_legacy_nonce: u64,
     /// Index of the currently executing top-level frame.
     pub current_frame_index: usize,
     /// Resolved target of the current top-level frame.
@@ -73,10 +75,20 @@ impl FrameTransactionRuntime {
 
     /// Creates runtime state with capacity for all top-level frame results.
     pub fn with_capacity(resolved_target: Address, frame_count: usize) -> Self {
+        Self::with_capacity_and_legacy_nonce(resolved_target, 0, frame_count)
+    }
+
+    /// Creates runtime state with the pre-state legacy nonce and frame-result capacity.
+    pub fn with_capacity_and_legacy_nonce(
+        resolved_target: Address,
+        tx_legacy_nonce: u64,
+        frame_count: usize,
+    ) -> Self {
         Self {
             statuses: Vec::with_capacity(frame_count),
             execution_gas_used: Vec::with_capacity(frame_count),
             state_gas_used: Vec::with_capacity(frame_count),
+            tx_legacy_nonce,
             ..Self::new(resolved_target)
         }
     }

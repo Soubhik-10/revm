@@ -532,7 +532,7 @@ impl<
         let runtime = self.local().frame_transaction()?;
         Some(match param {
             p if p == U256::from(0) => U256::from(0x06),
-            p if p == U256::from(1) => U256::from(tx.nonce()),
+            p if p == U256::from(1) => U256::from(frame_tx.nonce_seq),
             p if p == U256::from(2) => U256::from_be_slice(tx.caller().as_slice()),
             p if p == U256::from(3) => frame_tx.max_priority_fee_per_gas,
             p if p == U256::from(4) => frame_tx.max_fee_per_gas,
@@ -549,6 +549,18 @@ impl<
             p if p == U256::from(10) => U256::from(runtime.current_frame_index),
             p if p == U256::from(11) => U256::from(frame_tx.signatures.len()),
             p if p == U256::from(12) => U256::from(state_gas_left),
+            p if p == U256::from(alloy_eip8141::TXPARAM_LEGACY_NONCE) => {
+                U256::from(runtime.tx_legacy_nonce)
+            }
+            p if p == U256::from(alloy_eip8141::TXPARAM_NONCE_KEY_COUNT) => {
+                U256::from(frame_tx.nonce_keys.len())
+            }
+            p if p == U256::from(alloy_eip8141::TXPARAM_NONCE_KEYS_HASH) => {
+                U256::from_be_bytes(alloy_eip8141::nonce_keys_hash(&frame_tx.nonce_keys).0)
+            }
+            p if p == U256::from(alloy_eip8141::TXPARAM_NONCE_KEY_0) => {
+                *frame_tx.nonce_keys.first()?
+            }
             _ => return None,
         })
     }
@@ -568,9 +580,7 @@ impl<
         let frame_tx = tx.frame_transaction()?;
         let runtime = self.local().frame_transaction()?;
         let frame = frame_tx.frames.get(index)?;
-        let target = frame
-            .target_address()
-            .or_else(|| frame.target.is_empty().then_some(tx.caller()))?;
+        let target = frame.resolved_target(tx.caller());
         Some(match param {
             p if p == U256::from(0) => U256::from_be_slice(target.as_slice()),
             p if p == U256::from(1) => U256::from(frame.limits.execution),
@@ -612,20 +622,14 @@ impl<
                 if signature.scheme == alloy_eip8141::SignatureScheme::Arbitrary {
                     return None;
                 }
-                let signer = if signature.signer.is_empty() {
-                    tx.caller()
-                } else {
-                    signature.signer_address()?
-                };
+                let signer = signature.resolved_signer(tx.caller()).ok()??;
                 U256::from_be_slice(signer.as_slice())
             }
             p if p == U256::from(1) => U256::from(u8::from(signature.scheme)),
             p if p == U256::from(2) => {
-                if signature.msg.is_transaction_hash() {
-                    U256::ZERO
-                } else {
-                    U256::from_be_slice(signature.msg.digest()?.as_slice())
-                }
+                signature
+                    .explicit_message()
+                    .map_or(U256::ZERO, |message| U256::from_be_bytes(message.0))
             }
             p if p == U256::from(3) => {
                 if signature.scheme != alloy_eip8141::SignatureScheme::Arbitrary {
@@ -858,30 +862,58 @@ fn charge_frame_payer<CTX: ContextTr>(
     payer: Address,
     state_gas_left: u64,
 ) -> Result<u64, FrameHostError> {
-    let tx = ctx.tx();
-    let max_cost = tx
-        .frame_transaction()
-        .ok_or(FrameHostError::Invalid)?
-        .max_cost_with_params(
-            sender,
-            ctx.cfg().gas_params(),
-            tx.total_blob_gas(),
-            ctx.block().blob_gasprice().unwrap_or_default(),
-        );
-    let mut charged_state_gas = 0;
+    let (max_cost, nonce_keys, nonce_seq) = {
+        let tx = ctx.tx();
+        let frame_tx = tx
+            .frame_transaction()
+            .ok_or(FrameHostError::Invalid)?;
+        (
+            frame_tx.max_cost_with_params(
+                sender,
+                ctx.cfg().gas_params(),
+                tx.total_blob_gas(),
+                ctx.block().blob_gasprice().unwrap_or_default(),
+            ),
+            frame_tx.nonce_keys.clone(),
+            frame_tx.nonce_seq,
+        )
+    };
+    let uses_legacy_nonce = nonce_keys.as_slice() == [U256::ZERO];
     let balance_check_disabled = ctx.cfg().is_balance_check_disabled();
     let fee_charge_disabled = ctx.cfg().is_fee_charge_disabled();
     let new_account_state_gas = ctx.cfg().gas_params().new_account_state_gas();
-    let sender_is_empty_result = ctx
-        .journal_mut()
-        .load_account_info_skip_cold_load(sender, false, false)
-        .map(|account| account.is_empty);
-    let sender_is_empty = match sender_is_empty_result {
-        Ok(is_empty) => is_empty,
-        Err(error) => {
-            *ctx.error() = Err(error.unwrap_db_error().into());
-            return Err(FrameHostError::Fatal);
+    let nonce_state_gas = if uses_legacy_nonce {
+        let sender_is_empty_result = ctx
+            .journal_mut()
+            .load_account_info_skip_cold_load(sender, false, false)
+            .map(|account| account.is_empty);
+        match sender_is_empty_result {
+            Ok(true) => new_account_state_gas,
+            Ok(false) => 0,
+            Err(error) => {
+                *ctx.error() = Err(error.unwrap_db_error().into());
+                return Err(FrameHostError::Fatal);
+            }
         }
+    } else {
+        let mut first_use_count = 0u64;
+        for nonce_key in &nonce_keys {
+            let slot = alloy_eip8141::nonce_manager_slot(sender, *nonce_key);
+            match ctx
+                .journal_mut()
+                .protocol_storage(alloy_eip8141::NONCE_MANAGER, U256::from_be_bytes(slot.0))
+            {
+                Ok(value) if value.is_zero() => first_use_count += 1,
+                Ok(_) => {}
+                Err(error) => {
+                    *ctx.error() = Err(error.into());
+                    return Err(FrameHostError::Fatal);
+                }
+            }
+        }
+        alloy_eip8141::KEYED_NONCE_FIRST_USE_STATE_GAS
+            .checked_mul(first_use_count)
+            .ok_or(FrameHostError::Invalid)?
     };
     let payer_balance_result = ctx
         .journal_mut()
@@ -907,25 +939,38 @@ fn charge_frame_payer<CTX: ContextTr>(
             return Err(FrameHostError::Fatal);
         }
     }
-    if sender_is_empty {
-        if state_gas_left < new_account_state_gas {
-            return Err(FrameHostError::OutOfGas);
-        }
-        charged_state_gas = new_account_state_gas;
+    if state_gas_left < nonce_state_gas {
+        return Err(FrameHostError::OutOfGas);
     }
-    let bump_result = ctx
-        .journal_mut()
-        .load_account_mut(sender)
-        .map(|mut account| account.bump_nonce());
-    let bumped = match bump_result {
-        Ok(bumped) => bumped,
-        Err(error) => {
-            *ctx.error() = Err(error.into());
-            return Err(FrameHostError::Fatal);
+
+    if uses_legacy_nonce {
+        let bump_result = ctx
+            .journal_mut()
+            .load_account_mut(sender)
+            .map(|mut account| account.bump_nonce());
+        let bumped = match bump_result {
+            Ok(bumped) => bumped,
+            Err(error) => {
+                *ctx.error() = Err(error.into());
+                return Err(FrameHostError::Fatal);
+            }
+        };
+        if !bumped {
+            return Err(FrameHostError::Revert);
         }
-    };
-    if !bumped {
-        return Err(FrameHostError::Revert);
+    } else {
+        let next_nonce = U256::from(nonce_seq + 1);
+        for nonce_key in nonce_keys {
+            let slot = alloy_eip8141::nonce_manager_slot(sender, nonce_key);
+            if let Err(error) = ctx.journal_mut().set_protocol_storage(
+                alloy_eip8141::NONCE_MANAGER,
+                U256::from_be_bytes(slot.0),
+                next_nonce,
+            ) {
+                *ctx.error() = Err(error.into());
+                return Err(FrameHostError::Fatal);
+            }
+        }
     }
     if !fee_charge_disabled {
         let result = ctx
@@ -938,5 +983,5 @@ fn charge_frame_payer<CTX: ContextTr>(
         }
     }
 
-    Ok(charged_state_gas)
+    Ok(nonce_state_gas)
 }
