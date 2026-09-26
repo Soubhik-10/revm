@@ -19,8 +19,8 @@ use context_interface::{
 use core::ops::{Deref, DerefMut};
 use database_interface::Database;
 use primitives::{
-    hardfork::SpecId, Address, AddressMap, AddressSet, HashSet, Log, StorageKey, StorageValue,
-    B256, U256,
+    hardfork::SpecId, Address, AddressMap, AddressSet, Bytes, HashSet, Log, StorageKey,
+    StorageValue, B256, KECCAK_EMPTY, U256,
 };
 use state::{Account, EvmState};
 use std::vec::Vec;
@@ -151,6 +151,69 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
     #[inline]
     fn logs(&self) -> &[Log] {
         &self.inner.logs
+    }
+
+    fn eip7906_txtrace(&self, param: U256, index: U256) -> Option<U256> {
+        let param = u8::try_from(param).ok()?;
+        let index = usize::try_from(index).ok()?;
+
+        match param {
+            0x00 => {
+                (index == 0).then(|| U256::from(eip7906_balance_changes(&self.inner.state).len()))
+            }
+            0x01 => {
+                (index == 0).then(|| U256::from(eip7906_storage_changes(&self.inner.state).len()))
+            }
+            0x02 => (index == 0).then(|| U256::from(eip7906_deployments(&self.inner.state).len())),
+            0x03..=0x05 => {
+                let changes = eip7906_balance_changes(&self.inner.state);
+                let (address, before, after) = *changes.get(index)?;
+                Some(match param {
+                    0x03 => U256::from_be_slice(address.as_slice()),
+                    0x04 => before,
+                    0x05 => after,
+                    _ => unreachable!(),
+                })
+            }
+            0x06..=0x09 => {
+                let changes = eip7906_storage_changes(&self.inner.state);
+                let (address, key, before, after) = *changes.get(index)?;
+                Some(match param {
+                    0x06 => U256::from_be_slice(address.as_slice()),
+                    0x07 => key,
+                    0x08 => before,
+                    0x09 => after,
+                    _ => unreachable!(),
+                })
+            }
+            0x0A..=0x0B => {
+                let deployments = eip7906_deployments(&self.inner.state);
+                let (address, code_hash) = *deployments.get(index)?;
+                Some(match param {
+                    0x0A => U256::from_be_slice(address.as_slice()),
+                    0x0B => U256::from_be_bytes(code_hash.0),
+                    _ => unreachable!(),
+                })
+            }
+            0x0C => (index == 0).then(|| U256::from(self.inner.logs.len())),
+            0x0D..=0x13 => {
+                let event = self.inner.logs.get(index)?;
+                let topics = event.data.topics();
+                Some(match param {
+                    0x0D => U256::from_be_slice(event.address.as_slice()),
+                    0x0E => U256::from(topics.len()),
+                    0x0F..=0x12 => U256::from_be_bytes(topics.get((param - 0x0F) as usize)?.0),
+                    0x13 => U256::from(event.data.data.len()),
+                    _ => unreachable!(),
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn eip7906_event_data(&self, event_index: U256) -> Option<Bytes> {
+        let index = usize::try_from(event_index).ok()?;
+        Some(self.inner.logs.get(index)?.data.data.clone())
     }
 
     #[inline]
@@ -450,4 +513,49 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
                 AccountInfoLoad::new(&a.data.info, a.is_cold, a.state_clear_aware_is_empty(spec))
             })
     }
+}
+
+fn eip7906_balance_changes(state: &EvmState) -> Vec<(Address, U256, U256)> {
+    let mut changes = state
+        .iter()
+        .filter_map(|(address, account)| {
+            let before = account.original_info().balance;
+            let after = account.info.balance;
+            (before != after).then_some((*address, before, after))
+        })
+        .collect::<Vec<_>>();
+    changes.sort_unstable_by_key(|(address, ..)| *address);
+    changes
+}
+
+fn eip7906_storage_changes(state: &EvmState) -> Vec<(Address, StorageKey, U256, U256)> {
+    let mut changes = state
+        .iter()
+        .flat_map(|(address, account)| {
+            account.changed_storage_slots().map(move |(key, slot)| {
+                (*address, *key, slot.original_value(), slot.present_value())
+            })
+        })
+        .collect::<Vec<_>>();
+    changes.sort_unstable_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    changes
+}
+
+fn eip7906_deployments(state: &EvmState) -> Vec<(Address, B256)> {
+    let mut deployments = state
+        .iter()
+        .filter_map(|(address, account)| {
+            let before = account.original_info().code_hash;
+            let after = account.info.code_hash;
+            let is_delegation = account
+                .info
+                .code
+                .as_ref()
+                .is_some_and(|code| code.is_eip7702());
+            (before == KECCAK_EMPTY && after != KECCAK_EMPTY && !is_delegation)
+                .then_some((*address, after))
+        })
+        .collect::<Vec<_>>();
+    deployments.sort_unstable_by_key(|(address, _)| *address);
+    deployments
 }

@@ -308,6 +308,8 @@ const fn instruction_table_impl<WIRE: InterpreterTypes, H: Host>() -> Instructio
     table[FRAMEPARAM as usize] = Instruction::new(frame::frameparam);
     table[SIGPARAM as usize] = Instruction::new(frame::sigparam);
     table[SIGDATACOPY as usize] = Instruction::new(frame::sigdatacopy);
+    table[TXTRACE as usize] = Instruction::new(frame::txtrace);
+    table[EVENTDATACOPY as usize] = Instruction::new(frame::eventdatacopy);
 
     table[CREATE as usize] = Instruction::new(contract::create::<false, _, _>);
     table[CALL as usize] = Instruction::new(contract::call::<CALL, _, _>);
@@ -491,6 +493,9 @@ const fn gas_table_impl() -> GasTable {
     table[FRAMEPARAM as usize] = 2;
     table[SIGPARAM as usize] = 2;
     table[SIGDATACOPY as usize] = 3;
+    // EIP-7906 leaves this cost provisional while keeping a flat trace-query cost.
+    table[TXTRACE as usize] = 100;
+    table[EVENTDATACOPY as usize] = 3;
 
     table[CREATE as usize] = 0;
     table[CALL as usize] = 40;

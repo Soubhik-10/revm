@@ -184,6 +184,7 @@ impl OpCode {
                 | OpCode::RETURNDATACOPY
                 | OpCode::FRAMEDATACOPY
                 | OpCode::SIGDATACOPY
+                | OpCode::EVENTDATACOPY
                 | OpCode::CALL
                 | OpCode::CALLCODE
                 | OpCode::DELEGATECALL
@@ -585,10 +586,10 @@ opcodes! {
     // Selectors 0..=3 have a 2 -> 1 effect.
     0xB4 => SIGPARAM => stack_io(2, 1);
     0xB5 => SIGDATACOPY => stack_io(4, 0);
-    // 0xB6
-    // 0xB7
-    // 0xB8
-    // 0xB9
+    // 0xB6 is reserved by the frame-transaction family registry.
+    0xB7 => TXTRACE => stack_io(2, 1);
+    // 0xB8 is reserved for TXDIFF.
+    0xB9 => EVENTDATACOPY => stack_io(4, 0);
     // 0xBA
     // 0xBB
     // 0xBC
@@ -715,6 +716,8 @@ mod tests {
             0xa0..=0xa4,
             0xaa..=0xaa,
             0xb0..=0xb5,
+            0xb7..=0xb7,
+            0xb9..=0xb9,
             0xf0..=0xf5,
             0xfa..=0xfa,
             0xfd..=0xfd,
@@ -734,7 +737,7 @@ mod tests {
         for _ in OPCODE_INFO.into_iter().flatten() {
             opcode_num += 1;
         }
-        assert_eq!(opcode_num, 161);
+        assert_eq!(opcode_num, 163);
     }
 
     #[test]

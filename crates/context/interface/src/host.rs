@@ -100,6 +100,21 @@ pub trait Host {
         None
     }
 
+    /// Returns whether the active EIP-8141 frame is an EIP-7906 `POST_TX` frame.
+    fn is_post_tx_frame(&self) -> bool {
+        false
+    }
+
+    /// Returns one EIP-7906 `TXTRACE` value for the active `POST_TX` frame.
+    fn txtrace(&self, _param: U256, _index: U256) -> Option<U256> {
+        None
+    }
+
+    /// Returns one EIP-7906 event's non-indexed data for the active `POST_TX` frame.
+    fn event_data(&self, _event_index: U256) -> Option<Bytes> {
+        None
+    }
+
     /// Applies an EIP-8141 approval from the current call context.
     fn approve_frame(
         &mut self,

@@ -621,10 +621,10 @@ impl<
             }
             p if p == U256::from(1) => U256::from(u8::from(signature.scheme)),
             p if p == U256::from(2) => {
-                if signature.msg.is_transaction_hash() {
+                if signature.signs_transaction_hash() {
                     U256::ZERO
                 } else {
-                    U256::from_be_slice(signature.msg.digest()?.as_slice())
+                    U256::from_be_slice(signature.explicit_message()?.as_slice())
                 }
             }
             p if p == U256::from(3) => {
@@ -642,6 +642,57 @@ impl<
         let signature = self.tx().frame_transaction()?.signatures.get(index)?;
         (signature.scheme == alloy_eip8141::SignatureScheme::Arbitrary)
             .then(|| signature.signature.clone())
+    }
+
+    fn is_post_tx_frame(&self) -> bool {
+        let frame_tx = match self.tx().frame_transaction() {
+            Some(frame_tx) => frame_tx,
+            None => return false,
+        };
+        let runtime = match self.local().frame_transaction() {
+            Some(runtime) => runtime,
+            None => return false,
+        };
+        frame_tx
+            .frames
+            .get(runtime.current_frame_index)
+            .is_some_and(|frame| frame.mode == alloy_eip8141::FrameMode::PostTx)
+    }
+
+    fn txtrace(&self, param: U256, index: U256) -> Option<U256> {
+        if !self.is_post_tx_frame() {
+            return None;
+        }
+
+        match u8::try_from(param).ok()? {
+            0x14 => {
+                if !index.is_zero() {
+                    return None;
+                }
+                let tx = self.tx();
+                let frame_tx = tx.frame_transaction()?;
+                Some(frame_tx.max_cost_with_params(
+                    tx.caller(),
+                    self.cfg().gas_params(),
+                    tx.total_blob_gas(),
+                    self.block().blob_gasprice().unwrap_or_default(),
+                ))
+            }
+            0x15 => {
+                if !index.is_zero() {
+                    return None;
+                }
+                let payer = self.local().frame_transaction()?.approval.payer?;
+                Some(U256::from_be_slice(payer.as_slice()))
+            }
+            _ => self.journal().eip7906_txtrace(param, index),
+        }
+    }
+
+    fn event_data(&self, event_index: U256) -> Option<Bytes> {
+        self.is_post_tx_frame()
+            .then(|| self.journal().eip7906_event_data(event_index))
+            .flatten()
     }
 
     fn approve_frame_with_state_gas(

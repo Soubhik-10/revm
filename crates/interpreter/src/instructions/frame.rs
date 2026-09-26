@@ -22,6 +22,11 @@ const fn host_error(error: FrameHostError) -> InstructionResult {
 /// EIP-8141 `APPROVE` (0xaa).
 pub fn approve<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
     check!(context.interpreter, BOGOTA);
+    // EIP-8141 deliberately permits APPROVE from VERIFY's static call. EIP-7906
+    // does not extend that exception to POST_TX frames.
+    if context.host.is_post_tx_frame() {
+        return Err(InstructionResult::StateChangeDuringStaticCall);
+    }
     popn!([offset, len, scope], context.interpreter);
     let len = as_usize_or_fail!(context.interpreter, len);
     let output = if len == 0 {
@@ -153,4 +158,50 @@ pub fn sigdatacopy<IT: ITy, H: Host + ?Sized>(mut context: Ictx<'_, H, IT>) -> R
         .frame_signature_bytes(signature_index)
         .ok_or(InstructionResult::OpcodeNotFound)?;
     copy_data(&mut context, memory_offset, data_offset, len, &data)
+}
+
+/// EIP-7906 `TXTRACE` (0xb7).
+pub fn txtrace<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+    check!(context.interpreter, BOGOTA);
+    // `in2` is on top of the stack, matching EIP-8141's FRAMEPARAM selector order.
+    popn!([index, param], context.interpreter);
+    let value = context
+        .host
+        .txtrace(param, index)
+        .ok_or(InstructionResult::OpcodeNotFound)?;
+    push!(context.interpreter, value);
+    Ok(())
+}
+
+/// EIP-7906 `EVENTDATACOPY` (0xb9).
+pub fn eventdatacopy<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+    check!(context.interpreter, BOGOTA);
+    // Stack top: event_index, mem_offset, data_offset, length.
+    popn!(
+        [event_index, memory_offset, data_offset, len],
+        context.interpreter
+    );
+    let data = context
+        .host
+        .event_data(event_index)
+        .ok_or(InstructionResult::OpcodeNotFound)?;
+    let len = as_usize_or_fail!(context.interpreter, len);
+    let data_offset = as_usize_saturated!(data_offset);
+    if data_offset.saturating_add(len) > data.len() {
+        return Err(InstructionResult::OutOfOffset);
+    }
+    let Some(memory_offset) = copy_cost_and_memory_resize(
+        context.interpreter,
+        context.host.gas_params(),
+        memory_offset,
+        len,
+    )?
+    else {
+        return Ok(());
+    };
+    context
+        .interpreter
+        .memory
+        .set_data(memory_offset, data_offset, len, &data);
+    Ok(())
 }

@@ -437,8 +437,11 @@ pub enum ExecutionResult<HaltReasonTy = HaltReason> {
         /// Logs emitted before the halt.
         logs: Vec<Log>,
     },
-    /// Successful EIP-8141 frame transaction.
+    /// EIP-8141 frame transaction.
     FrameTransaction {
+        /// Whether transaction execution succeeded. A failed EIP-7906 POST_TX
+        /// assertion keeps the transaction valid but produces a failed receipt.
+        success: bool,
         /// Aggregate transaction gas accounting.
         gas: ResultGas,
         /// Account that approved and paid the transaction fee.
@@ -460,7 +463,11 @@ impl<HaltReasonTy> ExecutionResult<HaltReasonTy> {
     ///
     /// <https://eips.ethereum.org/EIPS/eip-658>
     pub const fn is_success(&self) -> bool {
-        matches!(self, Self::Success { .. } | Self::FrameTransaction { .. })
+        match self {
+            Self::Success { .. } => true,
+            Self::FrameTransaction { success, .. } => *success,
+            Self::Revert { .. } | Self::Halt { .. } => false,
+        }
     }
 
     /// Maps a `DBError` to a new error type using the provided closure, leaving other variants unchanged.
@@ -487,12 +494,14 @@ impl<HaltReasonTy> ExecutionResult<HaltReasonTy> {
                 logs,
             },
             Self::FrameTransaction {
+                success,
                 gas,
                 payer,
                 logs,
                 frame_receipts,
                 frame_outputs,
             } => ExecutionResult::FrameTransaction {
+                success,
                 gas,
                 payer,
                 logs,

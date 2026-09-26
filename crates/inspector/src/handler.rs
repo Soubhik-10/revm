@@ -337,10 +337,7 @@ where
 mod tests {
     use super::*;
     use crate::CountInspector;
-    use alloy_eip8141::{
-        Frame, FrameAddress, FrameLimits, FrameMode, FrameSignature, SignatureMessage,
-        SignatureScheme,
-    };
+    use alloy_eip8141::{Frame, FrameLimits, FrameMode, FrameSignature, SignatureScheme};
     use alloy_signer::{Signature, SignerSync};
     use alloy_signer_local::PrivateKeySigner;
     use context::{transaction::FrameTransaction, Context, ContextSetters, LocalContextTr, TxEnv};
@@ -348,6 +345,8 @@ mod tests {
     use handler::{MainBuilder, MainContext, MainnetHandler};
     use primitives::{eip8037, hardfork::SpecId, keccak256, Bytes, TxKind, U256};
     use state::{AccountInfo, Bytecode};
+
+    type FrameAddress = Bytes;
 
     fn signature_bytes(signature: &Signature) -> Bytes {
         let mut bytes = Vec::with_capacity(65);
@@ -365,7 +364,7 @@ mod tests {
         FrameSignature {
             scheme: SignatureScheme::Secp256k1,
             signer: signer_field,
-            msg: SignatureMessage::TransactionHash,
+            msg: Bytes::new(),
             signature: signature_bytes(&signer.sign_hash_sync(&message).unwrap()),
         }
     }
@@ -376,7 +375,7 @@ mod tests {
         let sponsor = PrivateKeySigner::random();
         let suffix_target = primitives::address!("3000000000000000000000000000000000000003");
         let signature_hash = keccak256("inspected EIP-8141 prefix");
-        let encoded_sponsor = FrameAddress::from(sponsor.address());
+        let encoded_sponsor = Bytes::copy_from_slice(sponsor.address().as_slice());
         let transaction = FrameTransaction {
             frames: vec![
                 Frame::new(
@@ -404,7 +403,7 @@ mod tests {
                 Frame::new(
                     FrameMode::Sender,
                     0,
-                    suffix_target.into(),
+                    Bytes::copy_from_slice(suffix_target.as_slice()),
                     FrameLimits {
                         execution: 3_000,
                         state: 0,
@@ -415,7 +414,7 @@ mod tests {
                 Frame::new(
                     FrameMode::Sender,
                     0,
-                    suffix_target.into(),
+                    Bytes::copy_from_slice(suffix_target.as_slice()),
                     FrameLimits {
                         execution: 3_000,
                         state: 0,
@@ -428,7 +427,7 @@ mod tests {
                 signature(&sender, FrameAddress::default(), signature_hash),
                 signature(
                     &sponsor,
-                    FrameAddress::from(sponsor.address()),
+                    Bytes::copy_from_slice(sponsor.address().as_slice()),
                     signature_hash,
                 ),
             ],

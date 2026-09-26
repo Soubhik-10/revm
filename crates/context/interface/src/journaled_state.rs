@@ -116,6 +116,21 @@ pub trait JournalTr {
     /// Returns the logs from journal.
     fn logs(&self) -> &[Log];
 
+    /// Returns one EIP-7906 transaction-trace value.
+    ///
+    /// Journals that do not retain the transaction baseline return `None`. The
+    /// caller maps an unavailable or invalid query to an exceptional halt.
+    fn eip7906_txtrace(&self, _param: U256, _index: U256) -> Option<U256> {
+        None
+    }
+
+    /// Returns the non-indexed data for one EIP-7906 transaction event.
+    ///
+    /// Journals that do not retain transaction logs return `None`.
+    fn eip7906_event_data(&self, _event_index: U256) -> Option<Bytes> {
+        None
+    }
+
     /// Marks the account for selfdestruction and transfers all the balance to the target.
     fn selfdestruct(
         &mut self,
