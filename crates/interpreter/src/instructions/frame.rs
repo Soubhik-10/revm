@@ -4,6 +4,7 @@ use crate::{
     interpreter_types::{InputsTr, InterpreterTypes as ITy, MemoryTr, RuntimeFlag, StackTr},
     InstructionContext as Ictx, InstructionExecResult as Result, InstructionResult,
 };
+use alloy_eip7906::TxDiffParam;
 use context_interface::{host::FrameHostError, Host};
 use primitives::{Bytes, B256, U256};
 
@@ -170,6 +171,34 @@ pub fn txtrace<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
         .txtrace(param, index)
         .ok_or(InstructionResult::OpcodeNotFound)?;
     push!(context.interpreter, value);
+    Ok(())
+}
+
+/// EIP-7906 `TXDIFF` (0xb8).
+pub fn txdiff<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
+    check!(context.interpreter, BOGOTA);
+    // Stack top: in3, in2, param.
+    popn!([in3, in2, param], context.interpreter);
+    let selector = u8::try_from(param)
+        .ok()
+        .and_then(|value| TxDiffParam::try_from(value).ok())
+        .ok_or(InstructionResult::OpcodeNotFound)?;
+    let additional_cold_cost = if selector.is_storage_lookup() {
+        context.host.gas_params().cold_storage_additional_cost()
+    } else if selector.is_account_lookup() {
+        context.host.gas_params().cold_account_additional_cost()
+    } else {
+        0
+    };
+    let skip_cold_load = context.interpreter.gas.remaining() < additional_cold_cost;
+    let value = context
+        .host
+        .txdiff(param, in2, in3, skip_cold_load)
+        .map_err(host_error)?;
+    if value.is_cold {
+        gas!(context.interpreter, additional_cold_cost);
+    }
+    push!(context.interpreter, value.data);
     Ok(())
 }
 

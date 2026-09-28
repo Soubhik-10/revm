@@ -588,7 +588,7 @@ opcodes! {
     0xB5 => SIGDATACOPY => stack_io(4, 0);
     // 0xB6 is reserved by the frame-transaction family registry.
     0xB7 => TXTRACE => stack_io(2, 1);
-    // 0xB8 is reserved for TXDIFF.
+    0xB8 => TXDIFF => stack_io(3, 1);
     0xB9 => EVENTDATACOPY => stack_io(4, 0);
     // 0xBA
     // 0xBB

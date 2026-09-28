@@ -98,8 +98,8 @@ impl FrameTransaction {
             .iter()
             .fold(frame_tokens, |total, signature| {
                 total
-                    .saturating_add(tokens(&signature.signer))
-                    .saturating_add(tokens(&signature.msg))
+                    .saturating_add(tokens(signature.signer.as_bytes()))
+                    .saturating_add(tokens(signature.msg.as_bytes()))
                     .saturating_add(tokens(&signature.signature))
             })
     }
@@ -111,8 +111,8 @@ impl FrameTransaction {
         });
         self.signatures.iter().fold(frame_len, |total, signature| {
             total
-                .saturating_add(signature.signer.len() as u64)
-                .saturating_add(signature.msg.len() as u64)
+                .saturating_add(signature.signer.as_bytes().len() as u64)
+                .saturating_add(signature.msg.as_bytes().len() as u64)
                 .saturating_add(signature.signature.len() as u64)
         })
     }

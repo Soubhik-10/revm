@@ -689,6 +689,37 @@ impl<
         }
     }
 
+    fn txdiff(
+        &mut self,
+        param: U256,
+        in2: U256,
+        in3: U256,
+        skip_cold_load: bool,
+    ) -> Result<StateLoad<U256>, FrameHostError> {
+        if !self.is_post_tx_frame() {
+            return Err(FrameHostError::Invalid);
+        }
+
+        match self
+            .journal_mut()
+            .eip7906_txdiff(param, in2, in3, skip_cold_load)
+        {
+            Ok(Some(value)) => Ok(value),
+            Ok(None) => Err(FrameHostError::Invalid),
+            Err(error) => {
+                cold_path();
+                let (load_error, db_error) = error.into_parts();
+                if let Some(error) = db_error {
+                    *self.error() = Err(error.into());
+                }
+                Err(match load_error {
+                    LoadError::ColdLoadSkipped => FrameHostError::OutOfGas,
+                    LoadError::DBError => FrameHostError::Fatal,
+                })
+            }
+        }
+    }
+
     fn event_data(&self, event_index: U256) -> Option<Bytes> {
         self.is_post_tx_frame()
             .then(|| self.journal().eip7906_event_data(event_index))

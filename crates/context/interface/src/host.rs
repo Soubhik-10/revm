@@ -110,6 +110,20 @@ pub trait Host {
         None
     }
 
+    /// Returns one EIP-7906 `TXDIFF` value for the active `POST_TX` frame.
+    ///
+    /// `skip_cold_load` prevents a cold state read when the interpreter cannot
+    /// pay its EIP-2929 surcharge.
+    fn txdiff(
+        &mut self,
+        _param: U256,
+        _in2: U256,
+        _in3: U256,
+        _skip_cold_load: bool,
+    ) -> Result<StateLoad<U256>, FrameHostError> {
+        Err(FrameHostError::Invalid)
+    }
+
     /// Returns one EIP-7906 event's non-indexed data for the active `POST_TX` frame.
     fn event_data(&self, _event_index: U256) -> Option<Bytes> {
         None

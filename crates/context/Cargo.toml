@@ -25,6 +25,7 @@ database-interface.workspace = true
 state.workspace = true
 bytecode.workspace = true
 alloy-eip8141.workspace = true
+alloy-eip7906.workspace = true
 
 # misc
 derive-where.workspace = true
@@ -49,6 +50,7 @@ std = [
 	"state/std",
 	"bitvec/std",
 	"alloy-eip8141/std",
+	"alloy-eip7906/std",
 ]
 serde = [
 	"dep:serde",

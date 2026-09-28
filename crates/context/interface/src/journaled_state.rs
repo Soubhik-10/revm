@@ -124,6 +124,21 @@ pub trait JournalTr {
         None
     }
 
+    /// Returns one EIP-7906 direct or indexed state-diff lookup.
+    ///
+    /// `Ok(None)` denotes an invalid selector or operand. Implementations must
+    /// preserve the cold-load flag so the interpreter can charge EIP-2929 gas.
+    fn eip7906_txdiff(
+        &mut self,
+        _param: U256,
+        _in2: U256,
+        _in3: U256,
+        _skip_cold_load: bool,
+    ) -> Result<Option<StateLoad<U256>>, JournalLoadError<<Self::Database as Database>::Error>>
+    {
+        Ok(None)
+    }
+
     /// Returns the non-indexed data for one EIP-7906 transaction event.
     ///
     /// Journals that do not retain transaction logs return `None`.

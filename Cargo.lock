@@ -119,6 +119,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-eip7906"
+version = "0.1.0"
+source = "git+https://github.com/Soubhik-10/eips?rev=1c61bc61789d99b66cda55aec67b5df5aed5ed03#1c61bc61789d99b66cda55aec67b5df5aed5ed03"
+
+[[package]]
 name = "alloy-eip7928"
 version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -135,18 +140,19 @@ dependencies = [
 [[package]]
 name = "alloy-eip8141"
 version = "0.1.0"
-source = "git+https://github.com/Soubhik-10/eips?rev=e6034527dafa5342f522338ff8c2cc6d2c4e6628#e6034527dafa5342f522338ff8c2cc6d2c4e6628"
+source = "git+https://github.com/Soubhik-10/eips?rev=34e7c51884d47356a619dcc4629ea77ad96a6b23#34e7c51884d47356a619dcc4629ea77ad96a6b23"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "borsh",
  "serde",
+ "thiserror",
 ]
 
 [[package]]
 name = "alloy-eip8141"
-version = "0.1.0"
-source = "git+https://github.com/Soubhik-10/eips?rev=34e7c51884d47356a619dcc4629ea77ad96a6b23#34e7c51884d47356a619dcc4629ea77ad96a6b23"
+version = "0.1.1"
+source = "git+https://github.com/Soubhik-10/eips?rev=1c61bc61789d99b66cda55aec67b5df5aed5ed03#1c61bc61789d99b66cda55aec67b5df5aed5ed03"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -164,7 +170,7 @@ dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
  "alloy-eip7928",
- "alloy-eip8141 0.1.0 (git+https://github.com/Soubhik-10/eips?rev=34e7c51884d47356a619dcc4629ea77ad96a6b23)",
+ "alloy-eip8141 0.1.0",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-serde",
@@ -4056,7 +4062,8 @@ dependencies = [
 name = "revm-context"
 version = "43.0.2"
 dependencies = [
- "alloy-eip8141 0.1.0 (git+https://github.com/Soubhik-10/eips?rev=e6034527dafa5342f522338ff8c2cc6d2c4e6628)",
+ "alloy-eip7906",
+ "alloy-eip8141 0.1.1",
  "bitvec",
  "cfg-if",
  "derive-where",
@@ -4075,7 +4082,7 @@ version = "43.0.1"
 dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
- "alloy-eip8141 0.1.0 (git+https://github.com/Soubhik-10/eips?rev=e6034527dafa5342f522338ff8c2cc6d2c4e6628)",
+ "alloy-eip8141 0.1.1",
  "auto_impl",
  "either",
  "revm-database-interface",
@@ -4128,7 +4135,7 @@ dependencies = [
 name = "revm-handler"
 version = "43.0.2"
 dependencies = [
- "alloy-eip8141 0.1.0 (git+https://github.com/Soubhik-10/eips?rev=e6034527dafa5342f522338ff8c2cc6d2c4e6628)",
+ "alloy-eip8141 0.1.1",
  "alloy-signer",
  "alloy-signer-local",
  "auto_impl",
@@ -4149,7 +4156,7 @@ dependencies = [
 name = "revm-inspector"
 version = "43.0.2"
 dependencies = [
- "alloy-eip8141 0.1.0 (git+https://github.com/Soubhik-10/eips?rev=e6034527dafa5342f522338ff8c2cc6d2c4e6628)",
+ "alloy-eip8141 0.1.1",
  "alloy-signer",
  "alloy-signer-local",
  "auto_impl",
@@ -4169,6 +4176,7 @@ dependencies = [
 name = "revm-interpreter"
 version = "43.0.1"
 dependencies = [
+ "alloy-eip7906",
  "revm-bytecode",
  "revm-context-interface",
  "revm-primitives",

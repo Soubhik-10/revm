@@ -1266,12 +1266,12 @@ fn settle_fees<H: Handler + ?Sized>(
 mod tests {
     use super::*;
     use crate::{ExecuteEvm, MainBuilder, MainContext};
-    use alloy_eip8141::{Frame, FrameLimits, FrameSignature};
+    use alloy_eip8141::{Frame, FrameAddress, FrameLimits, FrameSignature, SignatureMessage};
     use alloy_signer::{Signature, SignerSync};
     use alloy_signer_local::PrivateKeySigner;
     use bytecode::opcode::{
         APPROVE, CALLDATALOAD, CALLER, EVENTDATACOPY, FRAMEDATACOPY, LOG0, MSTORE, PUSH0, PUSH1,
-        RETURN, REVERT, SIGDATACOPY, SSTORE, STOP, TXTRACE,
+        PUSH20, RETURN, REVERT, SIGDATACOPY, SSTORE, STOP, TXDIFF, TXTRACE,
     };
     use context::{
         result::EVMError, transaction::FrameTransaction, Context, ContextSetters, TxEnv,
@@ -1290,10 +1290,8 @@ mod tests {
     const NEW_ACCOUNT_STATE_GAS: u64 = eip8037::NEW_ACCOUNT_BYTES * eip8037::CPSB_GLAMSTERDAM;
     const NEW_SLOT_STATE_GAS: u64 = eip8037::SSTORE_SET_BYTES * eip8037::CPSB_GLAMSTERDAM;
 
-    type FrameAddress = Bytes;
-
     fn encoded_target(target: Address) -> FrameAddress {
-        Bytes::copy_from_slice(target.as_slice())
+        target.into()
     }
 
     fn account_with_code(code: impl Into<Bytes>) -> AccountInfo {
@@ -1330,12 +1328,18 @@ mod tests {
         FrameSignature {
             scheme: SignatureScheme::Secp256k1,
             signer: signer_field,
-            msg: Bytes::new(),
+            msg: SignatureMessage::default(),
             signature: signature_bytes(&signature),
         }
     }
 
-    fn frame(mode: FrameMode, flags: u8, target: Bytes, execution: u64, state: u64) -> Frame {
+    fn frame(
+        mode: FrameMode,
+        flags: u8,
+        target: FrameAddress,
+        execution: u64,
+        state: u64,
+    ) -> Frame {
         Frame::new(
             mode,
             flags,
@@ -1347,11 +1351,34 @@ mod tests {
     }
 
     fn payment_frame() -> Frame {
-        frame(FrameMode::Default, 0x03, Bytes::new(), 10_000, 0)
+        frame(FrameMode::Default, 0x03, FrameAddress::default(), 10_000, 0)
     }
 
     fn post_tx_frame(target: Address) -> Frame {
         frame(FrameMode::PostTx, 0, encoded_target(target), 10_000, 0)
+    }
+
+    fn append_txdiff_query(
+        code: &mut Vec<u8>,
+        param: u8,
+        address: Address,
+        in3: u8,
+        memory_offset: u8,
+    ) {
+        code.extend_from_slice(&[PUSH1, param, PUSH20]);
+        code.extend_from_slice(address.as_slice());
+        if in3 == 0 {
+            code.push(PUSH0);
+        } else {
+            code.extend_from_slice(&[PUSH1, in3]);
+        }
+        code.push(TXDIFF);
+        if memory_offset == 0 {
+            code.push(PUSH0);
+        } else {
+            code.extend_from_slice(&[PUSH1, memory_offset]);
+        }
+        code.push(MSTORE);
     }
 
     #[test]
@@ -1709,7 +1736,7 @@ mod tests {
                 FrameSignature {
                     scheme: SignatureScheme::Secp256k1,
                     signer: FrameAddress::default(),
-                    msg: Bytes::new(),
+                    msg: SignatureMessage::default(),
                     signature: Bytes::new(),
                 },
             ],
@@ -2573,10 +2600,10 @@ mod tests {
         let invalid_frames = [
             vec![
                 post_tx_frame(REVERT_TARGET),
-                frame(FrameMode::Default, 0, Bytes::new(), 1, 0),
+                frame(FrameMode::Default, 0, FrameAddress::default(), 1, 0),
             ],
             vec![
-                frame(FrameMode::Default, 0, Bytes::new(), 1, 0),
+                frame(FrameMode::Default, 0, FrameAddress::default(), 1, 0),
                 frame(FrameMode::PostTx, 0x04, encoded_target(REVERT_TARGET), 1, 0),
             ],
         ];
@@ -2786,6 +2813,83 @@ mod tests {
                     FrameMode::Default,
                     0,
                     encoded_target(STORAGE_TARGET),
+                    10_000,
+                    0,
+                ),
+            ],
+            ..Default::default()
+        };
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+            .with_db(db)
+            .build_mainnet();
+
+        let output = evm.transact(tx_env(SENDER, payload)).unwrap();
+        let ExecutionResult::FrameTransaction { frame_receipts, .. } = output.result else {
+            panic!("expected frame transaction result")
+        };
+        assert_eq!(frame_receipts[1].status, FrameStatus::Failure);
+    }
+
+    #[test]
+    fn txdiff_reads_before_and_after_values_only_inside_post_tx() {
+        let mut reader = Vec::new();
+        append_txdiff_query(&mut reader, 0x00, STORAGE_TARGET, 0, 0);
+        append_txdiff_query(&mut reader, 0x01, STORAGE_TARGET, 0, 32);
+        reader.extend_from_slice(&[PUSH1, 64, PUSH0, RETURN]);
+
+        let mut db = CacheDB::<EmptyDB>::default();
+        db.insert_account_info(
+            SENDER,
+            account_with_code([PUSH1, 0x03, PUSH0, PUSH0, APPROVE]),
+        );
+        db.insert_account_info(
+            STORAGE_TARGET,
+            account_with_code([PUSH1, 9, PUSH0, SSTORE, STOP]),
+        );
+        db.insert_account_storage(STORAGE_TARGET, U256::ZERO, U256::from(7))
+            .unwrap();
+        db.insert_account_info(REVERT_TARGET, account_with_code(reader.clone()));
+        let payload = FrameTransaction {
+            frames: vec![
+                payment_frame(),
+                frame(
+                    FrameMode::Sender,
+                    0,
+                    encoded_target(STORAGE_TARGET),
+                    100_000,
+                    NEW_SLOT_STATE_GAS,
+                ),
+                post_tx_frame(REVERT_TARGET),
+            ],
+            ..Default::default()
+        };
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+            .with_db(db)
+            .build_mainnet();
+
+        let output = evm.transact(tx_env(SENDER, payload)).unwrap();
+        assert!(output.result.is_success());
+        let ExecutionResult::FrameTransaction { frame_outputs, .. } = output.result else {
+            panic!("expected frame transaction result")
+        };
+        assert_eq!(U256::from_be_slice(&frame_outputs[2][..32]), U256::from(7));
+        assert_eq!(U256::from_be_slice(&frame_outputs[2][32..]), U256::from(9));
+
+        let mut db = CacheDB::<EmptyDB>::default();
+        db.insert_account_info(
+            SENDER,
+            account_with_code([PUSH1, 0x03, PUSH0, PUSH0, APPROVE]),
+        );
+        db.insert_account_info(REVERT_TARGET, account_with_code(reader));
+        let payload = FrameTransaction {
+            frames: vec![
+                payment_frame(),
+                frame(
+                    FrameMode::Default,
+                    0,
+                    encoded_target(REVERT_TARGET),
                     10_000,
                     0,
                 ),
