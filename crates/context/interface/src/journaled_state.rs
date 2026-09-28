@@ -101,20 +101,15 @@ pub trait JournalTr {
         _skip_cold_load: bool,
     ) -> Result<StateLoad<SStoreResult>, JournalLoadError<<Self::Database as Database>::Error>>;
 
-    /// Loads protocol-managed storage without warming the account or slot.
-    ///
-    /// This bypasses EIP-2929 access tracking and is intended only for consensus bookkeeping.
-    fn protocol_storage(
+    /// Reads protocol storage without warming the account or slot.
+    fn protocol_sload(
         &mut self,
         address: Address,
         key: StorageKey,
     ) -> Result<StorageValue, <Self::Database as Database>::Error>;
 
-    /// Writes protocol-managed storage without warming the account or slot.
-    ///
-    /// The write is journaled for checkpoint rollback but does not apply ordinary `SSTORE`
-    /// pricing or access-list effects.
-    fn set_protocol_storage(
+    /// Journals a protocol storage write without warming the account or slot.
+    fn protocol_sstore(
         &mut self,
         address: Address,
         key: StorageKey,

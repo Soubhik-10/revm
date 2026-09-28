@@ -70,6 +70,11 @@ pub trait Cfg {
     /// Returns whether the fee charge is disabled.
     fn is_fee_charge_disabled(&self) -> bool;
 
+    /// Enables EIP-8250 keyed nonces for frame transactions.
+    fn is_eip8250_enabled(&self) -> bool {
+        false
+    }
+
     /// Allows empty protocol signature placeholders during RPC simulation only.
     fn allow_frame_signature_placeholders(&self) -> bool {
         false

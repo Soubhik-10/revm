@@ -2,7 +2,6 @@
 
 use crate::cfg::GasParams;
 use alloy_eip8141::{Frame, FrameSignature, FRAME_TX_INTRINSIC_COST, FRAME_TX_PER_FRAME_COST};
-use alloy_rlp::Encodable;
 use primitives::{eip2780, hardfork::SpecId, Address, B256, U256};
 use std::vec::Vec;
 
@@ -11,14 +10,14 @@ use std::vec::Vec;
 /// Envelope encoding and hashing remain owned by the consensus library. `signature_hash` is the
 /// canonical type-`0x06` signing hash calculated there and supplied to REVM for protocol signature
 /// validation and `TXPARAM`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct FrameTransaction {
-    /// Canonical, strictly increasing EIP-8250 nonce-domain keys.
-    pub nonce_keys: Vec<U256>,
-    /// Shared EIP-8250 sequence selected for every nonce key.
-    pub nonce_seq: u64,
+    /// Nonce keys, absent for the pre-EIP-8250 payload.
+    pub nonce_keys: Option<Vec<U256>>,
+    /// Canonical nonce calldata supplied by the consensus decoder.
+    pub nonce_calldata: Vec<u8>,
     /// Ordered top-level frames.
     pub frames: Vec<Frame>,
     /// Signature and witness entries exposed to validation code.
@@ -34,30 +33,7 @@ pub struct FrameTransaction {
     pub max_fee_per_blob_gas: U256,
 }
 
-impl Default for FrameTransaction {
-    fn default() -> Self {
-        Self {
-            nonce_keys: vec![U256::ZERO],
-            nonce_seq: 0,
-            frames: Vec::new(),
-            signatures: Vec::new(),
-            signature_hash: B256::ZERO,
-            max_priority_fee_per_gas: U256::ZERO,
-            max_fee_per_gas: U256::ZERO,
-            max_fee_per_blob_gas: U256::ZERO,
-        }
-    }
-}
-
 impl FrameTransaction {
-    /// Returns `rlp(nonce_keys) || rlp(nonce_seq)` as priced by EIP-8250.
-    fn nonce_calldata(&self) -> Vec<u8> {
-        let mut calldata = Vec::new();
-        self.nonce_keys.encode(&mut calldata);
-        self.nonce_seq.encode(&mut calldata);
-        calldata
-    }
-
     /// Calculates the EIP-1559 effective price without narrowing EIP-8141's
     /// 256-bit fee fields.
     #[inline]
@@ -119,33 +95,36 @@ impl FrameTransaction {
                 })
             })
         };
-        let frame_tokens = self.frames.iter().fold(0u64, |total, frame| {
-            total.saturating_add(tokens(&frame.data))
-        });
-        let signature_tokens = self
-            .signatures
+        let frame_tokens = self
+            .frames
+            .iter()
+            .fold(tokens(&self.nonce_calldata), |total, frame| {
+                total.saturating_add(tokens(&frame.data))
+            });
+        self.signatures
             .iter()
             .fold(frame_tokens, |total, signature| {
                 total
                     .saturating_add(tokens(signature.signer.as_bytes()))
                     .saturating_add(tokens(signature.msg.as_bytes()))
                     .saturating_add(tokens(&signature.signature))
-            });
-        signature_tokens.saturating_add(tokens(&self.nonce_calldata()))
+            })
     }
 
     /// Returns the byte length of the charged calldata fields.
     pub fn calldata_len(&self) -> u64 {
-        let frame_len = self.frames.iter().fold(0u64, |total, frame| {
-            total.saturating_add(frame.data.len() as u64)
-        });
-        let signature_len = self.signatures.iter().fold(frame_len, |total, signature| {
+        let frame_len = self
+            .frames
+            .iter()
+            .fold(self.nonce_calldata.len() as u64, |total, frame| {
+                total.saturating_add(frame.data.len() as u64)
+            });
+        self.signatures.iter().fold(frame_len, |total, signature| {
             total
                 .saturating_add(signature.signer.as_bytes().len() as u64)
                 .saturating_add(signature.msg.as_bytes().len() as u64)
                 .saturating_add(signature.signature.len() as u64)
-        });
-        signature_len.saturating_add(self.nonce_calldata().len() as u64)
+        })
     }
 
     /// Returns the EIP-2780 value-transfer charge for frames with an explicit target other than
@@ -309,14 +288,13 @@ mod tests {
             ..Default::default()
         };
 
-        // Two zero bytes, two non-zero bytes, and the three-byte default nonce encoding are
-        // twenty-two standard calldata tokens.
+        // Two zero bytes and two non-zero bytes are ten standard calldata tokens.
         // Arbitrary signatures carry the fixed protocol-verification charge from EIP-8141.
-        assert_eq!(transaction.calldata_tokens(), 22);
+        assert_eq!(transaction.calldata_tokens(), 10);
         assert_eq!(transaction.signature_verification_gas(), Some(100));
-        assert_eq!(transaction.intrinsic_gas(Address::ZERO), Some(12_663));
-        assert_eq!(transaction.gas_limit(Address::ZERO), Some(13_023));
-        assert_eq!(transaction.calldata_floor_gas(Address::ZERO), Some(13_023));
+        assert_eq!(transaction.intrinsic_gas(Address::ZERO), Some(12_615));
+        assert_eq!(transaction.gas_limit(Address::ZERO), Some(12_831));
+        assert_eq!(transaction.calldata_floor_gas(Address::ZERO), Some(12_831));
     }
 
     #[test]

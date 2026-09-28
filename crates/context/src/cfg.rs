@@ -142,6 +142,9 @@ pub struct CfgEnv<SPEC = SpecId> {
     /// Allows empty protocol signatures during RPC simulation. Never enable for consensus.
     #[cfg_attr(feature = "serde", serde(default))]
     pub allow_frame_signature_placeholders: bool,
+    /// Enables EIP-8250 keyed nonce payloads and execution.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub enable_eip8250: bool,
     /// Enables EIP-2780 (Amsterdam) reduced intrinsic transaction gas.
     ///
     /// Replaces the legacy 21,000 base with the decomposed
@@ -284,6 +287,7 @@ impl<SPEC> CfgEnv<SPEC> {
             #[cfg(feature = "optional_fee_charge")]
             disable_fee_charge: self.disable_fee_charge,
             allow_frame_signature_placeholders: self.allow_frame_signature_placeholders,
+            enable_eip8250: self.enable_eip8250,
             enable_amsterdam_eip8037: self.enable_amsterdam_eip8037,
             enable_amsterdam_eip2780: self.enable_amsterdam_eip2780,
             amsterdam_eip7708_disabled: self.amsterdam_eip7708_disabled,
@@ -376,6 +380,7 @@ impl<SPEC: Into<SpecId> + Clone> CfgEnv<SPEC> {
             #[cfg(feature = "optional_fee_charge")]
             disable_fee_charge: false,
             allow_frame_signature_placeholders: false,
+            enable_eip8250: false,
             enable_amsterdam_eip8037: is_amsterdam,
             enable_amsterdam_eip2780: is_amsterdam,
             amsterdam_eip7708_disabled: false,
@@ -562,6 +567,10 @@ impl<SPEC: Into<SpecId> + Clone> Cfg for CfgEnv<SPEC> {
                 false
             }
         }
+    }
+
+    fn is_eip8250_enabled(&self) -> bool {
+        self.enable_eip8250
     }
 
     fn allow_frame_signature_placeholders(&self) -> bool {

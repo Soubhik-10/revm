@@ -2,9 +2,8 @@
 
 use crate::{EvmTr, FrameResult, Handler};
 use alloy_eip8141::{
-    nonce_manager_slot, validate_nonce_keys, FrameGasUsed, FrameMode, FrameReceipt, FrameStatus,
-    SignatureScheme, ENTRY_POINT, EXPIRY_VERIFIER, EXPIRY_VERIFIER_RUNTIME, MAX_FRAMES,
-    MAX_NONCE_SEQ, NONCE_MANAGER,
+    FrameGasUsed, FrameMode, FrameReceipt, FrameStatus, SignatureScheme, ENTRY_POINT,
+    EXPIRY_VERIFIER, EXPIRY_VERIFIER_RUNTIME, FRAME_FLAGS_MASK, MAX_FRAMES, SECP256K1N, SECP256R1N,
 };
 use context::{ContextTr, LocalContextTr};
 use context_interface::{
@@ -227,7 +226,7 @@ fn run_frame<H: Handler + ?Sized>(
     handler.run_exec_loop(evm, frame)
 }
 
-const fn no_default_frame<H: Handler + ?Sized>(
+fn no_default_frame<H: Handler + ?Sized>(
     _: &mut H,
     _: &mut H::Evm,
     _: DefaultFrameStage,
@@ -251,9 +250,26 @@ fn prepare<H: Handler + ?Sized>(
             "EIP-8141 requires frame-capable local context and journal implementations",
         ));
     }
+    let keys = &evm
+        .ctx_ref()
+        .tx()
+        .frame_transaction()
+        .ok_or_else(|| invalid::<H::Error>("missing frame payload"))?
+        .nonce_keys;
+    if keys.is_some() != evm.ctx_ref().cfg().is_eip8250_enabled() {
+        return Err(invalid(
+            "frame nonce payload does not match EIP-8250 activation",
+        ));
+    }
+    if let Some(keys) = keys {
+        alloy_eip8141::validate_nonce_keys(keys).map_err(invalid::<H::Error>)?;
+        if evm.ctx_ref().tx().nonce() == u64::MAX {
+            return Err(InvalidTransaction::NonceOverflowInTransaction.into());
+        }
+    }
     validate_structure::<H>(evm)?;
     validate_signatures::<H>(evm)?;
-    let tx_legacy_nonce = validate_sender::<H>(evm)?;
+    validate_sender::<H>(evm)?;
     handler.load_accounts(evm)?;
 
     let sender = evm.ctx_ref().tx().caller();
@@ -282,15 +298,16 @@ fn prepare<H: Handler + ?Sized>(
             frame_tx.frames.len(),
         )
     };
-    evm.ctx()
-        .local_mut()
-        .set_frame_transaction(Some(
-            FrameTransactionRuntime::with_capacity_and_legacy_nonce(
-                sender,
-                tx_legacy_nonce,
-                frame_count,
-            ),
-        ));
+    let legacy_nonce = evm
+        .ctx()
+        .journal_mut()
+        .load_account(sender)
+        .map_err(H::Error::from)?
+        .info
+        .nonce;
+    let mut runtime = FrameTransactionRuntime::with_capacity(sender, frame_count);
+    runtime.legacy_nonce = legacy_nonce;
+    evm.ctx().local_mut().set_frame_transaction(Some(runtime));
     Ok((intrinsic, floor_gas, frame_count))
 }
 
@@ -327,7 +344,10 @@ where
         let (frame, target) = {
             let tx = evm.ctx_ref().tx();
             let frame = tx.frame_transaction().unwrap().frames[frame_index].clone();
-            let target = frame.resolved_target(tx.caller());
+            let target = frame
+                .target_address()
+                .or_else(|| frame.target.is_empty().then_some(tx.caller()))
+                .expect("validated target");
             (frame, target)
         };
         let sender_approved = evm
@@ -810,12 +830,6 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
     {
         return Err(InvalidTransaction::Eip8141InvalidFields.into());
     }
-    if validate_nonce_keys(&frame_tx.nonce_keys).is_err()
-        || frame_tx.nonce_seq == MAX_NONCE_SEQ
-        || frame_tx.nonce_seq != tx.nonce()
-    {
-        return Err(invalid("invalid EIP-8250 keyed nonce fields"));
-    }
     if frame_tx.frames.is_empty() || frame_tx.frames.len() > MAX_FRAMES {
         return Err(invalid("EIP-8141 frame count must be in 1..=64"));
     }
@@ -859,7 +873,11 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
     {
         return Err(InvalidTransaction::OverflowPaymentInTransaction.into());
     }
-    if frame_tx.frames.iter().any(|frame| frame.has_reserved_flags()) {
+    if frame_tx
+        .frames
+        .iter()
+        .any(|frame| frame.flags & !FRAME_FLAGS_MASK != 0)
+    {
         return Err(invalid("EIP-8141 reserved frame flag is set"));
     }
     let mut expiry_frames = 0usize;
@@ -867,8 +885,10 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
         if frame.mode != FrameMode::Sender && !frame.value.is_zero() {
             return Err(invalid("only EIP-8141 SENDER frames may transfer value"));
         }
-        let target = frame.resolved_target(tx.caller());
-        if u8::from(frame.allowed_scope()) & 0x02 != 0 && target != tx.caller() {
+        let target = frame
+            .target_address()
+            .or_else(|| frame.target.is_empty().then_some(tx.caller()));
+        if u8::from(frame.allowed_scope()) & 0x02 != 0 && target != Some(tx.caller()) {
             return Err(invalid(
                 "EIP-8141 execution approval target must be the sender",
             ));
@@ -885,7 +905,7 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
             ));
         }
         if (frame.is_atomic_batch() || (index > 0 && frame_tx.frames[index - 1].is_atomic_batch()))
-            && frame.allowed_scope() != alloy_eip8141::ApprovalScope::None
+            && u8::from(frame.allowed_scope()) != 0
         {
             return Err(invalid(
                 "EIP-8141 atomic batch frames cannot carry approval scope",
@@ -902,17 +922,20 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
         return Err(invalid("multiple EIP-8141 expiry verifier frames"));
     }
     for signature in &frame_tx.signatures {
-        if signature.msg.digest().is_some_and(|digest| digest.is_zero()) {
-            return Err(invalid("EIP-8141 explicit signature message cannot be zero"));
+        match signature.scheme {
+            SignatureScheme::Arbitrary if !signature.signer.is_empty() => {
+                return Err(invalid("EIP-8141 arbitrary signature signer must be empty"));
+            }
+            _ => {}
         }
-        if ctx.cfg().allow_frame_signature_placeholders()
-            && signature.scheme != SignatureScheme::Arbitrary
-            && signature.signature.is_empty()
+        if signature
+            .msg
+            .digest()
+            .is_some_and(|digest| digest.is_zero())
         {
-            continue;
-        }
-        if signature.validate_structure_with_sender(tx.caller()).is_err() {
-            return Err(invalid("invalid EIP-8141 signature structure"));
+            return Err(invalid(
+                "EIP-8141 explicit signature message cannot be zero",
+            ));
         }
     }
     Ok(())
@@ -931,36 +954,64 @@ fn validate_signatures<H: Handler + ?Sized>(evm: &H::Evm) -> Result<(), H::Error
             continue;
         }
 
-        let message = signature.explicit_message().unwrap_or(signature_hash).0;
-        let expected = signature
-            .resolved_signer(sender)
-            .expect("validated signature structure");
+        let message = if signature.msg.is_transaction_hash() {
+            signature_hash.0
+        } else {
+            let mut message = [0u8; 32];
+            message.copy_from_slice(signature.msg.digest().expect("explicit message").as_slice());
+            message
+        };
+        let expected = if signature.signer.is_empty() {
+            sender
+        } else if signature.scheme == SignatureScheme::Arbitrary {
+            Address::ZERO
+        } else {
+            signature.signer_address().expect("validated signer")
+        };
         let valid = match signature.scheme {
             SignatureScheme::Arbitrary => true,
             SignatureScheme::Secp256k1 => {
-                let expected = expected.expect("protocol signature has resolved signer");
-                let mut rs = [0u8; 64];
-                rs.copy_from_slice(&signature.signature[1..]);
-                let recovered = precompile::crypto()
-                    .secp256k1_ecrecover(&rs, signature.signature[0], &message)
-                    .map(|word| Address::from_slice(&word[12..]))
-                    .ok();
-                if recovered.is_some() && recovered != Some(expected) {
-                    return Err(invalid("EIP-8141 signature signer does not match"));
+                if signature.signature.len() != 65 || signature.signature[0] > 1 {
+                    false
+                } else {
+                    let r = U256::from_be_slice(&signature.signature[1..33]);
+                    let s = U256::from_be_slice(&signature.signature[33..65]);
+                    let half_curve_order = SECP256K1N >> 1;
+                    if r.is_zero() || r >= SECP256K1N || s.is_zero() || s > half_curve_order {
+                        return Err(invalid("EIP-8141 signature validation failed"));
+                    }
+                    let mut rs = [0u8; 64];
+                    rs.copy_from_slice(&signature.signature[1..]);
+                    let recovered = precompile::crypto()
+                        .secp256k1_ecrecover(&rs, signature.signature[0], &message)
+                        .map(|word| Address::from_slice(&word[12..]))
+                        .ok();
+                    if recovered.is_some() && recovered != Some(expected) {
+                        return Err(invalid("EIP-8141 signature signer does not match"));
+                    }
+                    recovered == Some(expected)
                 }
-                recovered == Some(expected)
             }
             SignatureScheme::P256 => {
-                let expected = expected.expect("protocol signature has resolved signer");
-                let mut sig = [0u8; 64];
-                let mut public_key = [0u8; 64];
-                sig.copy_from_slice(&signature.signature[..64]);
-                public_key.copy_from_slice(&signature.signature[64..]);
-                let recovered = Address::from_slice(&keccak256(public_key)[12..]);
-                if recovered != expected {
-                    return Err(invalid("EIP-8141 signature signer does not match"));
+                if signature.signature.len() != 128 {
+                    false
+                } else {
+                    let mut sig = [0u8; 64];
+                    let mut public_key = [0u8; 64];
+                    sig.copy_from_slice(&signature.signature[..64]);
+                    public_key.copy_from_slice(&signature.signature[64..]);
+                    let r = U256::from_be_slice(&signature.signature[..32]);
+                    let s = U256::from_be_slice(&signature.signature[32..64]);
+                    let p256_half_order = SECP256R1N >> 1;
+                    if r.is_zero() || r >= SECP256R1N || s.is_zero() || s > p256_half_order {
+                        return Err(invalid("EIP-8141 signature validation failed"));
+                    }
+                    let recovered = Address::from_slice(&keccak256(public_key)[12..]);
+                    if recovered != expected {
+                        return Err(invalid("EIP-8141 signature signer does not match"));
+                    }
+                    precompile::crypto().secp256r1_verify_signature(&message, &sig, &public_key)
                 }
-                precompile::crypto().secp256r1_verify_signature(&message, &sig, &public_key)
             }
         };
         if !valid {
@@ -971,60 +1022,63 @@ fn validate_signatures<H: Handler + ?Sized>(evm: &H::Evm) -> Result<(), H::Error
     Ok(())
 }
 
-fn validate_sender<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<u64, H::Error> {
+fn validate_sender<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Error> {
     let sender = evm.ctx_ref().tx().caller();
-    let (nonce_keys, nonce_seq) = {
-        let frame_tx = evm
-            .ctx_ref()
-            .tx()
-            .frame_transaction()
-            .expect("validated frame tx");
-        (frame_tx.nonce_keys.clone(), frame_tx.nonce_seq)
-    };
+    let nonce = evm.ctx_ref().tx().nonce();
     let nonce_check_disabled = evm.ctx_ref().cfg().is_nonce_check_disabled();
     // EIP-8141 static validation, including every signature, precedes the
     // sender-state lookup. Invalid transactions may legitimately omit the
     // sender from an attached block access list, so loading it first can
     // incorrectly turn a transaction error into a BAL database error.
-    let tx_legacy_nonce = evm
-        .ctx()
-        .journal_mut()
-        .load_account_with_code(sender)
-        .map_err(H::Error::from)?
-        .info
-        .nonce;
+    let keys = evm
+        .ctx_ref()
+        .tx()
+        .frame_transaction()
+        .and_then(|tx| tx.nonce_keys.clone());
+    if !nonce_check_disabled && keys.as_ref().is_some_and(|keys| keys != &[U256::ZERO]) {
+        for key in keys.expect("keyed nonce set") {
+            let current = evm
+                .ctx()
+                .journal_mut()
+                .protocol_sload(
+                    alloy_eip8141::NONCE_MANAGER,
+                    alloy_eip8141::nonce_slot(sender, key),
+                )
+                .map_err(H::Error::from)?;
+            if current != U256::from(nonce) {
+                return Err(invalid("EIP-8250 nonce sequence mismatch"));
+            }
+        }
+        return Ok(());
+    }
     if !nonce_check_disabled {
-        if nonce_keys.as_slice() == [U256::ZERO] {
-            if nonce_seq > tx_legacy_nonce {
-                return Err(InvalidTransaction::NonceTooHigh {
-                    tx: nonce_seq,
-                    state: tx_legacy_nonce,
-                }
-                .into());
+        let state_nonce = evm
+            .ctx()
+            .journal_mut()
+            .load_account_with_code(sender)
+            .map_err(H::Error::from)?
+            .info
+            .nonce;
+        if nonce > state_nonce {
+            return Err(InvalidTransaction::NonceTooHigh {
+                tx: nonce,
+                state: state_nonce,
             }
-            if nonce_seq < tx_legacy_nonce {
-                return Err(InvalidTransaction::NonceTooLow {
-                    tx: nonce_seq,
-                    state: tx_legacy_nonce,
-                }
-                .into());
+            .into());
+        }
+        if nonce < state_nonce {
+            return Err(InvalidTransaction::NonceTooLow {
+                tx: nonce,
+                state: state_nonce,
             }
-        } else {
-            for nonce_key in nonce_keys {
-                let slot = nonce_manager_slot(sender, nonce_key);
-                let current = evm
-                    .ctx()
-                    .journal_mut()
-                    .protocol_storage(NONCE_MANAGER, U256::from_be_bytes(slot.0))
-                    .map_err(H::Error::from)?;
-                if current != U256::from(nonce_seq) {
-                    return Err(invalid("EIP-8250 keyed nonce sequence mismatch"));
-                }
-            }
+            .into());
+        }
+        if nonce == u64::MAX {
+            return Err(InvalidTransaction::NonceOverflowInTransaction.into());
         }
     }
 
-    Ok(tx_legacy_nonce)
+    Ok(())
 }
 
 fn frame_input<H: Handler + ?Sized>(
@@ -1123,9 +1177,10 @@ fn default_verification_is_valid<H: Handler + ?Sized>(
         return false;
     };
     signature.scheme == SignatureScheme::Secp256k1
-        && signature.signs_transaction_hash()
+        && signature.msg.is_transaction_hash()
         && scope != 0
-        && signature.signer.resolve(tx.caller()) == target
+        && (signature.signer.is_empty() && tx.caller() == target
+            || signature.signer_address() == Some(target))
 }
 
 fn settle_fees<H: Handler + ?Sized>(
@@ -1179,15 +1234,11 @@ fn settle_fees<H: Handler + ?Sized>(
 mod tests {
     use super::*;
     use crate::{ExecuteEvm, MainBuilder, MainContext};
-    use alloy_eip8141::{
-        nonce_keys_hash, nonce_manager_slot, Frame, FrameAddress, FrameLimits, FrameSignature,
-        SignatureMessage, KEYED_NONCE_FIRST_USE_STATE_GAS, NONCE_MANAGER, NONCE_MANAGER_CODE,
-    };
+    use alloy_eip8141::{Frame, FrameAddress, FrameLimits, FrameSignature, SignatureMessage};
     use alloy_signer::{Signature, SignerSync};
     use alloy_signer_local::PrivateKeySigner;
     use bytecode::opcode::{
         APPROVE, CALLDATALOAD, FRAMEDATACOPY, PUSH0, PUSH1, REVERT, SIGDATACOPY, SSTORE, STOP,
-        TXPARAM,
     };
     use context::{
         result::EVMError, transaction::FrameTransaction, Context, ContextSetters, TxEnv,
@@ -1206,8 +1257,8 @@ mod tests {
     const NEW_ACCOUNT_STATE_GAS: u64 = eip8037::NEW_ACCOUNT_BYTES * eip8037::CPSB_GLAMSTERDAM;
     const NEW_SLOT_STATE_GAS: u64 = eip8037::SSTORE_SET_BYTES * eip8037::CPSB_GLAMSTERDAM;
 
-    const fn encoded_target(target: Address) -> FrameAddress {
-        FrameAddress::Address(target)
+    fn encoded_target(target: Address) -> FrameAddress {
+        target.into()
     }
 
     fn account_with_code(code: impl Into<Bytes>) -> AccountInfo {
@@ -1215,7 +1266,6 @@ mod tests {
     }
 
     fn tx_env(caller: Address, frame_transaction: FrameTransaction) -> TxEnv {
-        let nonce = frame_transaction.nonce_seq;
         let gas_limit = frame_transaction.gas_limit(caller).unwrap();
         TxEnv::builder()
             .tx_type(Some(0x06))
@@ -1223,7 +1273,6 @@ mod tests {
             .kind(TxKind::Call(caller))
             .gas_limit(gas_limit)
             .gas_priority_fee(Some(0))
-            .nonce(nonce)
             .frame_transaction(frame_transaction)
             .build()
             .unwrap()
@@ -1421,14 +1470,20 @@ mod tests {
                 frames: vec![
                     Frame {
                         flags: 3,
-                        limits: FrameLimits { execution: 10_000, state: 0 },
+                        limits: FrameLimits {
+                            execution: 10_000,
+                            state: 0,
+                        },
                         ..Default::default()
                     },
                     Frame {
                         mode: FrameMode::Sender,
                         target: encoded_target(VALUE_TARGET),
                         value: U256::from(1),
-                        limits: FrameLimits { execution: execution_limit, state: 0 },
+                        limits: FrameLimits {
+                            execution: execution_limit,
+                            state: 0,
+                        },
                         ..Default::default()
                     },
                 ],
@@ -1451,6 +1506,323 @@ mod tests {
     }
 
     #[test]
+    fn keyed_nonce_protocol_access_preserves_warmth_and_reverts() {
+        use alloy_eip8141::NONCE_MANAGER;
+        use context_interface::JournalTr;
+        let mut journal = context::Journal::<_>::new(CacheDB::<EmptyDB>::default());
+        let key = U256::from(1);
+        assert_eq!(
+            journal.protocol_sload(NONCE_MANAGER, key).unwrap(),
+            U256::ZERO
+        );
+        let checkpoint = journal.checkpoint();
+        journal
+            .protocol_sstore(NONCE_MANAGER, key, U256::from(1))
+            .unwrap();
+        assert!(journal.load_account(NONCE_MANAGER).unwrap().is_cold);
+        assert!(journal.sload(NONCE_MANAGER, key).unwrap().is_cold);
+        journal
+            .protocol_sstore(NONCE_MANAGER, key, U256::from(2))
+            .unwrap();
+        assert!(!journal.load_account(NONCE_MANAGER).unwrap().is_cold);
+        assert!(!journal.sload(NONCE_MANAGER, key).unwrap().is_cold);
+        journal.checkpoint_revert(checkpoint);
+        assert_eq!(
+            journal.protocol_sload(NONCE_MANAGER, key).unwrap(),
+            U256::ZERO
+        );
+    }
+
+    #[test]
+    fn keyed_nonce_txparams_preserve_legacy_prestate() {
+        use alloy_eip8141::nonce_calldata;
+        use bytecode::opcode::{MSTORE, RETURN, TXPARAM};
+        let keys = vec![U256::from(1)];
+        // Return nonce parameters from a frame after payment approval.
+        let mut code = vec![];
+        for (offset, param) in [1, 13, 14, 15, 16].into_iter().enumerate() {
+            code.extend([PUSH1, param, TXPARAM, PUSH1, (offset * 32) as u8, MSTORE]);
+        }
+        code.extend([PUSH1, 160, PUSH0, RETURN]);
+        let mut sender = account_with_code([PUSH1, 3, PUSH0, PUSH0, APPROVE]);
+        sender.nonce = 7;
+        let mut db = CacheDB::<EmptyDB>::default();
+        db.insert_account_info(SENDER, sender);
+        db.insert_account_info(STORAGE_TARGET, account_with_code(code));
+        let payload = FrameTransaction {
+            nonce_keys: Some(keys.clone()),
+            nonce_calldata: nonce_calldata(&keys, 0),
+            frames: vec![
+                Frame {
+                    flags: 3,
+                    limits: FrameLimits {
+                        execution: 10_000,
+                        state: NEW_SLOT_STATE_GAS,
+                    },
+                    ..Default::default()
+                },
+                Frame {
+                    mode: FrameMode::Sender,
+                    target: STORAGE_TARGET.into(),
+                    limits: FrameLimits {
+                        execution: 10_000,
+                        state: 0,
+                    },
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| {
+                cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA);
+                cfg.enable_eip8250 = true;
+            })
+            .with_db(db)
+            .build_mainnet();
+        let output = evm.transact(tx_env(SENDER, payload)).unwrap();
+        let ExecutionResult::FrameTransaction { frame_outputs, .. } = output.result else {
+            panic!("frame result")
+        };
+        let mut expected = Vec::new();
+        for value in [
+            U256::ZERO,
+            U256::from(7),
+            U256::from(1),
+            U256::from_be_bytes(
+                primitives::b256!(
+                    "cc69885fda6bcc1a4ace058b4a62bf5e179ea78fd58a1ccd71c22cc9b688792f"
+                )
+                .0,
+            ),
+            U256::from(1),
+        ] {
+            expected.extend(value.to_be_bytes::<32>());
+        }
+        assert_eq!(frame_outputs[1].as_ref(), expected);
+        assert_eq!(output.state[&SENDER].info.nonce, 7);
+    }
+
+    #[test]
+    fn keyed_nonce_domains_are_independent_and_overlap_is_atomic() {
+        use crate::ExecuteCommitEvm;
+        use alloy_eip8141::{nonce_calldata, nonce_slot, NONCE_MANAGER};
+        let mut db = CacheDB::<EmptyDB>::default();
+        let mut sender = account_with_code([PUSH1, 3, PUSH0, PUSH0, APPROVE]);
+        sender.nonce = 7;
+        db.insert_account_info(SENDER, sender);
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| {
+                cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA);
+                cfg.enable_eip8250 = true;
+            })
+            .with_db(db)
+            .build_mainnet();
+        let transaction = |keys: Vec<U256>, nonce: u64| {
+            let payload = FrameTransaction {
+                nonce_calldata: nonce_calldata(&keys, nonce),
+                nonce_keys: Some(keys),
+                frames: vec![Frame {
+                    mode: FrameMode::Verify,
+                    flags: 3,
+                    limits: FrameLimits {
+                        execution: 10_000,
+                        state: 2 * NEW_SLOT_STATE_GAS,
+                    },
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            let mut tx = tx_env(SENDER, payload);
+            tx.nonce = nonce;
+            tx
+        };
+        assert!(evm
+            .transact_commit(transaction(vec![U256::from(1)], 0))
+            .is_ok());
+        assert!(evm
+            .transact_commit(transaction(vec![U256::from(2)], 0))
+            .is_ok());
+        assert!(evm
+            .transact_commit(transaction(vec![U256::from(1), U256::from(3)], 0))
+            .is_err());
+        assert!(evm
+            .transact_commit(transaction(vec![U256::from(1), U256::from(3)], 1))
+            .is_err());
+        let result = evm
+            .transact_commit(transaction(vec![U256::from(1), U256::from(2)], 1))
+            .unwrap();
+        let ExecutionResult::FrameTransaction { frame_receipts, .. } = result else {
+            panic!("frame result")
+        };
+        assert_eq!(frame_receipts[0].gas_used.state, 0);
+        let db = &mut evm.ctx.journaled_state.database;
+        assert_eq!(
+            database_interface::Database::basic(db, SENDER)
+                .unwrap()
+                .unwrap()
+                .nonce,
+            7
+        );
+        assert_eq!(
+            database_interface::Database::storage(
+                db,
+                NONCE_MANAGER,
+                nonce_slot(SENDER, U256::from(1))
+            )
+            .unwrap(),
+            U256::from(2)
+        );
+        assert_eq!(
+            database_interface::Database::storage(
+                db,
+                NONCE_MANAGER,
+                nonce_slot(SENDER, U256::from(3))
+            )
+            .unwrap(),
+            U256::ZERO
+        );
+        assert!(evm
+            .transact_commit(transaction(vec![U256::ZERO], 7))
+            .is_ok());
+        assert_eq!(
+            database_interface::Database::basic(&mut evm.ctx.journaled_state.database, SENDER)
+                .unwrap()
+                .unwrap()
+                .nonce,
+            8
+        );
+        assert!(evm
+            .transact_commit(transaction(vec![U256::from(4)], u64::MAX))
+            .is_err());
+    }
+
+    #[test]
+    fn keyed_nonce_activation_rejects_the_other_payload() {
+        for active in [false, true] {
+            let mut db = CacheDB::<EmptyDB>::default();
+            db.insert_account_info(SENDER, account_with_code([PUSH1, 3, PUSH0, PUSH0, APPROVE]));
+            let mut evm = Context::mainnet()
+                .modify_cfg_chained(|cfg| {
+                    cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA);
+                    cfg.enable_eip8250 = active;
+                })
+                .with_db(db)
+                .build_mainnet();
+            let payload = FrameTransaction {
+                nonce_keys: (!active).then(|| vec![U256::ZERO]),
+                frames: vec![Frame {
+                    flags: 3,
+                    limits: FrameLimits {
+                        execution: 10_000,
+                        state: 0,
+                    },
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            assert!(evm.transact(tx_env(SENDER, payload)).is_err());
+        }
+    }
+
+    #[test]
+    fn keyed_nonce_consumption_and_later_revert() {
+        use alloy_eip8141::{nonce_calldata, nonce_slot, NONCE_MANAGER};
+        let keys = vec![U256::from(1), U256::MAX];
+        for later_revert in [false, true] {
+            let mut db = CacheDB::<EmptyDB>::default();
+            db.insert_account_info(SENDER, account_with_code([PUSH1, 3, PUSH0, PUSH0, APPROVE]));
+            db.insert_account_info(REVERT_TARGET, account_with_code([PUSH0, PUSH0, REVERT]));
+            let mut payload = FrameTransaction {
+                nonce_keys: Some(keys.clone()),
+                nonce_calldata: nonce_calldata(&keys, 0),
+                frames: vec![Frame {
+                    mode: FrameMode::Verify,
+                    flags: 3,
+                    limits: FrameLimits {
+                        execution: 10_000,
+                        state: 2 * NEW_SLOT_STATE_GAS,
+                    },
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            if later_revert {
+                payload.frames.push(Frame {
+                    mode: FrameMode::Sender,
+                    target: REVERT_TARGET.into(),
+                    limits: FrameLimits {
+                        execution: 10_000,
+                        state: 0,
+                    },
+                    ..Default::default()
+                });
+            }
+            let mut evm = Context::mainnet()
+                .modify_cfg_chained(|cfg| {
+                    cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA);
+                    cfg.enable_eip8250 = true;
+                })
+                .with_db(db)
+                .build_mainnet();
+            let output = evm.transact(tx_env(SENDER, payload)).unwrap();
+            assert_eq!(output.state[&SENDER].info.nonce, 0);
+            for key in &keys {
+                assert_eq!(
+                    output.state[&NONCE_MANAGER].storage[&nonce_slot(SENDER, *key)].present_value(),
+                    U256::from(1)
+                );
+            }
+            let ExecutionResult::FrameTransaction { frame_receipts, .. } = output.result else {
+                panic!("frame result")
+            };
+            assert_eq!(frame_receipts[0].gas_used.state, 195_840);
+            if later_revert {
+                assert_eq!(frame_receipts[1].status, FrameStatus::Failure);
+            }
+        }
+    }
+
+    #[test]
+    fn keyed_nonce_state_gas_is_required_before_approval() {
+        use alloy_eip8141::{nonce_calldata, NONCE_MANAGER};
+        let mut db = CacheDB::<EmptyDB>::default();
+        db.insert_account_info(SENDER, account_with_code([PUSH1, 3, PUSH0, PUSH0, APPROVE]));
+        let keys = vec![U256::from(1)];
+        let payload = FrameTransaction {
+            nonce_calldata: nonce_calldata(&keys, 0),
+            nonce_keys: Some(keys),
+            frames: vec![Frame {
+                mode: FrameMode::Verify,
+                flags: 3,
+                limits: FrameLimits {
+                    execution: 10_000,
+                    state: 97_919,
+                },
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| {
+                cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA);
+                cfg.enable_eip8250 = true;
+            })
+            .with_db(db)
+            .build_mainnet();
+        assert!(evm.transact(tx_env(SENDER, payload)).is_err());
+        assert!(!evm
+            .ctx
+            .journaled_state
+            .state
+            .get(&NONCE_MANAGER)
+            .is_some_and(|account| account
+                .storage
+                .values()
+                .any(|slot| !slot.present_value().is_zero())));
+    }
+
+    #[test]
     fn approve_opcode_sets_payer_and_bumps_sender_nonce() {
         // APPROVE expects offset, length, scope from the top of the stack.
         let approve_code = [PUSH1, 0x03, PUSH0, PUSH0, APPROVE];
@@ -1461,7 +1833,7 @@ mod tests {
             frames: vec![Frame {
                 mode: FrameMode::Default,
                 flags: 0x03,
-                target: FrameAddress::Empty,
+                target: FrameAddress::default(),
                 limits: FrameLimits {
                     execution: 10_000,
                     state: 0,
@@ -1494,232 +1866,19 @@ mod tests {
     }
 
     #[test]
-    fn keyed_approval_consumes_all_keys_without_bumping_sender_nonce() {
-        let approve_code = [PUSH1, 0x03, PUSH0, PUSH0, APPROVE];
-        let mut db = CacheDB::<EmptyDB>::default();
-        db.insert_account_info(SENDER, account_with_code(approve_code).with_nonce(7));
-        db.insert_account_info(REVERT_TARGET, account_with_code([PUSH0, PUSH0, REVERT]));
-        db.insert_account_info(
-            NONCE_MANAGER,
-            account_with_code(NONCE_MANAGER_CODE).with_nonce(1),
-        );
-        let nonce_keys = vec![U256::from(1), U256::from(2)];
-        let payload = FrameTransaction {
-            nonce_keys: nonce_keys.clone(),
-            frames: vec![
-                Frame {
-                    mode: FrameMode::Default,
-                    flags: 0x03,
-                    limits: FrameLimits {
-                        execution: 10_000,
-                        state: KEYED_NONCE_FIRST_USE_STATE_GAS * 2,
-                    },
-                    ..Default::default()
-                },
-                Frame {
-                    target: encoded_target(REVERT_TARGET),
-                    limits: FrameLimits {
-                        execution: 1_000,
-                        state: 0,
-                    },
-                    ..Default::default()
-                },
-            ],
-            ..Default::default()
-        };
-        let mut evm = Context::mainnet()
-            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
-            .with_db(db)
-            .build_mainnet();
-
-        let output = evm.transact(tx_env(SENDER, payload)).unwrap();
-        let ExecutionResult::FrameTransaction { frame_receipts, .. } = output.result else {
-            panic!("expected frame transaction result")
-        };
-        assert_eq!(output.state[&SENDER].info.nonce, 7);
-        assert_eq!(frame_receipts[1].status, FrameStatus::Failure);
-        assert_eq!(
-            frame_receipts[0].gas_used.state,
-            KEYED_NONCE_FIRST_USE_STATE_GAS * 2
-        );
-        for nonce_key in nonce_keys {
-            let slot = U256::from_be_bytes(nonce_manager_slot(SENDER, nonce_key).0);
-            assert_eq!(
-                output.state[&NONCE_MANAGER].storage[&slot].present_value,
-                U256::from(1)
-            );
-        }
-    }
-
-    #[test]
-    fn keyed_validation_rejects_a_mismatched_sequence() {
-        let approve_code = [PUSH1, 0x03, PUSH0, PUSH0, APPROVE];
-        let nonce_key = U256::from(7);
-        let slot = U256::from_be_bytes(nonce_manager_slot(SENDER, nonce_key).0);
-        let mut db = CacheDB::<EmptyDB>::default();
-        db.insert_account_info(SENDER, account_with_code(approve_code));
-        db.insert_account_info(
-            NONCE_MANAGER,
-            account_with_code(NONCE_MANAGER_CODE).with_nonce(1),
-        );
-        db.insert_account_storage(NONCE_MANAGER, slot, U256::from(2))
-            .unwrap();
-        let payload = FrameTransaction {
-            nonce_keys: vec![nonce_key],
-            nonce_seq: 1,
-            frames: vec![Frame {
-                mode: FrameMode::Default,
-                flags: 0x03,
-                limits: FrameLimits {
-                    execution: 10_000,
-                    state: 0,
-                },
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-        let mut evm = Context::mainnet()
-            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
-            .with_db(db)
-            .build_mainnet();
-
-        assert!(matches!(
-            evm.transact(tx_env(SENDER, payload)),
-            Err(EVMError::Transaction(InvalidTransaction::Str(_)))
-        ));
-    }
-
-    #[test]
-    fn existing_key_advances_without_first_use_state_gas() {
-        let approve_code = [PUSH1, 0x03, PUSH0, PUSH0, APPROVE];
-        let nonce_key = U256::from(7);
-        let slot = U256::from_be_bytes(nonce_manager_slot(SENDER, nonce_key).0);
-        let mut db = CacheDB::<EmptyDB>::default();
-        db.insert_account_info(SENDER, account_with_code(approve_code));
-        db.insert_account_info(
-            NONCE_MANAGER,
-            account_with_code(NONCE_MANAGER_CODE).with_nonce(1),
-        );
-        db.insert_account_storage(NONCE_MANAGER, slot, U256::from(3))
-            .unwrap();
-        let payload = FrameTransaction {
-            nonce_keys: vec![nonce_key],
-            nonce_seq: 3,
-            frames: vec![Frame {
-                mode: FrameMode::Default,
-                flags: 0x03,
-                limits: FrameLimits {
-                    execution: 10_000,
-                    state: 0,
-                },
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-        let mut evm = Context::mainnet()
-            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
-            .with_db(db)
-            .build_mainnet();
-
-        let output = evm.transact(tx_env(SENDER, payload)).unwrap();
-        let ExecutionResult::FrameTransaction { frame_receipts, .. } = output.result else {
-            panic!("expected frame transaction result")
-        };
-        assert_eq!(frame_receipts[0].gas_used.state, 0);
-        assert_eq!(
-            output.state[&NONCE_MANAGER].storage[&slot].present_value,
-            U256::from(4)
-        );
-    }
-
-    #[test]
-    fn txparam_exposes_keyed_nonce_metadata_and_prestate_nonce() {
-        let code = [
-            PUSH1, 0x0d, TXPARAM, PUSH0, SSTORE, PUSH1, 0x0e, TXPARAM, PUSH1, 0x01, SSTORE,
-            PUSH1, 0x0f, TXPARAM, PUSH1, 0x02, SSTORE, PUSH1, 0x10, TXPARAM, PUSH1, 0x03,
-            SSTORE, PUSH1, 0x03, PUSH0, PUSH0, APPROVE,
-        ];
-        let nonce_keys = vec![U256::from(7), U256::from(9)];
-        let mut db = CacheDB::<EmptyDB>::default();
-        db.insert_account_info(SENDER, account_with_code(code).with_nonce(5));
-        db.insert_account_info(
-            NONCE_MANAGER,
-            account_with_code(NONCE_MANAGER_CODE).with_nonce(1),
-        );
-        let payload = FrameTransaction {
-            nonce_keys: nonce_keys.clone(),
-            frames: vec![Frame {
-                mode: FrameMode::Default,
-                flags: 0x03,
-                limits: FrameLimits {
-                    execution: 100_000,
-                    state: NEW_SLOT_STATE_GAS * 6,
-                },
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-        let mut evm = Context::mainnet()
-            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
-            .with_db(db)
-            .build_mainnet();
-
-        let output = evm.transact(tx_env(SENDER, payload)).unwrap();
-        let storage = &output.state[&SENDER].storage;
-        assert_eq!(storage[&U256::ZERO].present_value, U256::from(5));
-        assert_eq!(storage[&U256::from(1)].present_value, U256::from(2));
-        assert_eq!(
-            storage[&U256::from(2)].present_value,
-            U256::from_be_bytes(nonce_keys_hash(&nonce_keys).0)
-        );
-        assert_eq!(storage[&U256::from(3)].present_value, U256::from(7));
-    }
-
-    #[test]
-    fn rejects_noncanonical_nonce_key_sets() {
-        let frame = Frame {
-            limits: FrameLimits {
-                execution: 1_000,
-                state: 0,
-            },
-            ..Default::default()
-        };
-        for nonce_keys in [
-            Vec::new(),
-            vec![U256::ZERO, U256::from(1)],
-            vec![U256::from(2), U256::from(2)],
-            vec![U256::from(2), U256::from(1)],
-        ] {
-            let payload = FrameTransaction {
-                nonce_keys,
-                frames: vec![frame.clone()],
-                ..Default::default()
-            };
-            let mut evm = Context::mainnet()
-                .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
-                .with_db(CacheDB::<EmptyDB>::default())
-                .build_mainnet();
-            assert!(matches!(
-                evm.transact(tx_env(SENDER, payload)),
-                Err(EVMError::Transaction(InvalidTransaction::Str(_)))
-            ));
-        }
-    }
-
-    #[test]
     fn default_code_uses_second_signature_for_payment_only_approval() {
         let sender = PrivateKeySigner::random();
         let sponsor = PrivateKeySigner::random();
         let signature_hash = keccak256("frame transaction default verification");
         let signatures = vec![
-            signed_entry(&sender, FrameAddress::Empty, signature_hash),
+            signed_entry(&sender, FrameAddress::default(), signature_hash),
             signed_entry(&sponsor, encoded_target(sponsor.address()), signature_hash),
         ];
         let frames = vec![
             Frame {
                 mode: FrameMode::Verify,
                 flags: 0x02,
-                target: FrameAddress::Empty,
+                target: FrameAddress::default(),
                 limits: FrameLimits {
                     execution: 2_000,
                     state: 0,
@@ -1776,7 +1935,7 @@ mod tests {
                 Frame {
                     mode: FrameMode::Verify,
                     flags: 0x02,
-                    target: FrameAddress::Empty,
+                    target: FrameAddress::default(),
                     limits: FrameLimits {
                         execution: 2_000,
                         state: 0,
@@ -1798,7 +1957,7 @@ mod tests {
                 Frame {
                     mode: FrameMode::Sender,
                     flags: 0,
-                    target: FrameAddress::Empty,
+                    target: FrameAddress::default(),
                     limits: FrameLimits {
                         execution: 3_000,
                         state: 0,
@@ -1808,11 +1967,11 @@ mod tests {
                 },
             ],
             signatures: vec![
-                signed_entry(&sender, FrameAddress::Empty, signature_hash),
+                signed_entry(&sender, FrameAddress::default(), signature_hash),
                 signed_entry(&sponsor, encoded_target(sponsor.address()), signature_hash),
                 FrameSignature {
                     scheme: SignatureScheme::Secp256k1,
-                    signer: FrameAddress::Empty,
+                    signer: FrameAddress::default(),
                     msg: SignatureMessage::TransactionHash,
                     signature: Bytes::new(),
                 },
@@ -1879,7 +2038,7 @@ mod tests {
             frames: vec![Frame {
                 mode: FrameMode::Verify,
                 flags: 0x03,
-                target: FrameAddress::Empty,
+                target: FrameAddress::default(),
                 limits: FrameLimits {
                     execution: 99,
                     state: NEW_ACCOUNT_STATE_GAS,
@@ -1887,7 +2046,11 @@ mod tests {
                 value: U256::ZERO,
                 data: Bytes::new(),
             }],
-            signatures: vec![signed_entry(&sender, FrameAddress::Empty, signature_hash)],
+            signatures: vec![signed_entry(
+                &sender,
+                FrameAddress::default(),
+                signature_hash,
+            )],
             signature_hash,
             ..Default::default()
         };
@@ -1910,7 +2073,7 @@ mod tests {
             frames: vec![Frame {
                 mode: FrameMode::Verify,
                 flags: 0x03,
-                target: FrameAddress::Empty,
+                target: FrameAddress::default(),
                 limits: FrameLimits {
                     execution: 100,
                     state: NEW_ACCOUNT_STATE_GAS - 1,
@@ -1918,7 +2081,11 @@ mod tests {
                 value: U256::ZERO,
                 data: Bytes::new(),
             }],
-            signatures: vec![signed_entry(&sender, FrameAddress::Empty, signature_hash)],
+            signatures: vec![signed_entry(
+                &sender,
+                FrameAddress::default(),
+                signature_hash,
+            )],
             signature_hash,
             ..Default::default()
         };
@@ -1946,7 +2113,7 @@ mod tests {
                 Frame {
                     mode: FrameMode::Default,
                     flags: 0x03,
-                    target: FrameAddress::Empty,
+                    target: FrameAddress::default(),
                     limits: FrameLimits {
                         execution: 10_000,
                         state: 0,
@@ -1992,7 +2159,7 @@ mod tests {
                 Frame::new(
                     FrameMode::Default,
                     0x03,
-                    FrameAddress::Empty,
+                    FrameAddress::default(),
                     FrameLimits {
                         execution: 10_000,
                         state: 0,
@@ -2041,7 +2208,7 @@ mod tests {
                 Frame::new(
                     FrameMode::Default,
                     0x03,
-                    FrameAddress::Empty,
+                    FrameAddress::default(),
                     FrameLimits {
                         execution: 10_000,
                         state: 0,
@@ -2113,7 +2280,7 @@ mod tests {
                 Frame::new(
                     FrameMode::Default,
                     0x03,
-                    FrameAddress::Empty,
+                    FrameAddress::default(),
                     FrameLimits {
                         execution: 10_000,
                         state: 0,
@@ -2183,7 +2350,7 @@ mod tests {
             frames: vec![Frame::new(
                 FrameMode::Default,
                 0x03,
-                FrameAddress::Empty,
+                FrameAddress::default(),
                 FrameLimits {
                     execution: 1_000,
                     state: 0,
@@ -2243,97 +2410,116 @@ mod tests {
 
     #[test]
     fn failed_atomic_batch_rolls_back_state_and_skips_remaining_frames() {
-        let approve_code = [PUSH1, 0x03, PUSH0, PUSH0, APPROVE];
-        let store_code = [PUSH1, 0x02, PUSH0, SSTORE, STOP];
-        let revert_code = [PUSH0, PUSH0, REVERT];
-        let mut db = CacheDB::<EmptyDB>::default();
-        db.insert_account_info(SENDER, account_with_code(approve_code));
-        db.insert_account_info(STORAGE_TARGET, account_with_code(store_code));
-        db.insert_account_storage(STORAGE_TARGET, U256::ZERO, U256::from(1))
-            .unwrap();
-        db.insert_account_info(REVERT_TARGET, account_with_code(revert_code));
+        for keyed in [false, true] {
+            let approve_code = [PUSH1, 0x03, PUSH0, PUSH0, APPROVE];
+            let store_code = [PUSH1, 0x02, PUSH0, SSTORE, STOP];
+            let revert_code = [PUSH0, PUSH0, REVERT];
+            let mut db = CacheDB::<EmptyDB>::default();
+            db.insert_account_info(SENDER, account_with_code(approve_code));
+            db.insert_account_info(STORAGE_TARGET, account_with_code(store_code));
+            db.insert_account_storage(STORAGE_TARGET, U256::ZERO, U256::from(1))
+                .unwrap();
+            db.insert_account_info(REVERT_TARGET, account_with_code(revert_code));
 
-        let payload = FrameTransaction {
-            frames: vec![
-                Frame::new(
-                    FrameMode::Default,
-                    0x03,
-                    FrameAddress::Empty,
-                    FrameLimits {
-                        execution: 10_000,
-                        state: 0,
-                    },
-                    U256::ZERO,
-                    Bytes::new(),
-                ),
-                Frame::new(
-                    FrameMode::Default,
-                    0x04,
-                    encoded_target(STORAGE_TARGET),
-                    FrameLimits {
-                        execution: 100_000,
-                        state: 0,
-                    },
-                    U256::ZERO,
-                    Bytes::new(),
-                ),
-                Frame::new(
-                    FrameMode::Default,
-                    0x04,
-                    encoded_target(REVERT_TARGET),
-                    FrameLimits {
-                        execution: 10_000,
-                        state: 0,
-                    },
-                    U256::ZERO,
-                    Bytes::new(),
-                ),
-                Frame::new(
-                    FrameMode::Default,
-                    0,
-                    encoded_target(STORAGE_TARGET),
-                    FrameLimits {
-                        execution: 100_000,
-                        state: 0,
-                    },
-                    U256::ZERO,
-                    Bytes::new(),
-                ),
-            ],
-            signatures: Vec::new(),
-            signature_hash: B256::ZERO,
-            ..Default::default()
-        };
-        let mut evm = Context::mainnet()
-            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
-            .with_db(db)
-            .build_mainnet();
+            let payload = FrameTransaction {
+                nonce_keys: keyed.then(|| vec![U256::from(1)]),
+                nonce_calldata: if keyed {
+                    alloy_eip8141::nonce_calldata(&[U256::from(1)], 0)
+                } else {
+                    vec![]
+                },
+                frames: vec![
+                    Frame::new(
+                        FrameMode::Default,
+                        0x03,
+                        FrameAddress::default(),
+                        FrameLimits {
+                            execution: 10_000,
+                            state: if keyed { NEW_SLOT_STATE_GAS } else { 0 },
+                        },
+                        U256::ZERO,
+                        Bytes::new(),
+                    ),
+                    Frame::new(
+                        FrameMode::Default,
+                        0x04,
+                        encoded_target(STORAGE_TARGET),
+                        FrameLimits {
+                            execution: 100_000,
+                            state: 0,
+                        },
+                        U256::ZERO,
+                        Bytes::new(),
+                    ),
+                    Frame::new(
+                        FrameMode::Default,
+                        0x04,
+                        encoded_target(REVERT_TARGET),
+                        FrameLimits {
+                            execution: 10_000,
+                            state: 0,
+                        },
+                        U256::ZERO,
+                        Bytes::new(),
+                    ),
+                    Frame::new(
+                        FrameMode::Default,
+                        0,
+                        encoded_target(STORAGE_TARGET),
+                        FrameLimits {
+                            execution: 100_000,
+                            state: 0,
+                        },
+                        U256::ZERO,
+                        Bytes::new(),
+                    ),
+                ],
+                signatures: Vec::new(),
+                signature_hash: B256::ZERO,
+                ..Default::default()
+            };
+            let mut evm = Context::mainnet()
+                .modify_cfg_chained(|cfg| {
+                    cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA);
+                    cfg.enable_eip8250 = keyed;
+                })
+                .with_db(db)
+                .build_mainnet();
 
-        let output = evm.transact(tx_env(SENDER, payload)).unwrap();
-        let ExecutionResult::FrameTransaction { frame_receipts, .. } = output.result else {
-            panic!("expected frame transaction result")
-        };
-        assert_eq!(
-            frame_receipts
-                .iter()
-                .map(|receipt| receipt.status)
-                .collect::<Vec<_>>(),
-            vec![
-                FrameStatus::Success,
-                FrameStatus::Success,
-                FrameStatus::Failure,
-                FrameStatus::SkippedAtomicBatch,
-            ]
-        );
-        assert!(frame_receipts[1].gas_used.execution > 0);
-        assert_eq!(frame_receipts[3].gas_used.execution, 0);
-        let stored = output
-            .state
-            .get(&STORAGE_TARGET)
-            .and_then(|account| account.storage.get(&U256::ZERO))
-            .map(|slot| slot.present_value)
-            .unwrap_or_default();
-        assert_eq!(stored, U256::from(1));
+            let output = evm.transact(tx_env(SENDER, payload)).unwrap();
+            let ExecutionResult::FrameTransaction { frame_receipts, .. } = output.result else {
+                panic!("expected frame transaction result")
+            };
+            assert_eq!(
+                frame_receipts
+                    .iter()
+                    .map(|receipt| receipt.status)
+                    .collect::<Vec<_>>(),
+                vec![
+                    FrameStatus::Success,
+                    FrameStatus::Success,
+                    FrameStatus::Failure,
+                    FrameStatus::SkippedAtomicBatch,
+                ]
+            );
+            assert!(frame_receipts[1].gas_used.execution > 0);
+            assert_eq!(frame_receipts[3].gas_used.execution, 0);
+            let stored = output
+                .state
+                .get(&STORAGE_TARGET)
+                .and_then(|account| account.storage.get(&U256::ZERO))
+                .map(|slot| slot.present_value)
+                .unwrap_or_default();
+            assert_eq!(stored, U256::from(1));
+            if keyed {
+                use alloy_eip8141::{nonce_slot, NONCE_MANAGER};
+                assert_eq!(
+                    output.state[&NONCE_MANAGER].storage[&nonce_slot(SENDER, U256::from(1))]
+                        .present_value(),
+                    U256::from(1)
+                );
+            }
+        }
     }
 
     #[test]
@@ -2403,7 +2589,11 @@ mod tests {
                     Bytes::new(),
                 ),
             ],
-            signatures: vec![signed_entry(&sender, FrameAddress::Empty, signature_hash)],
+            signatures: vec![signed_entry(
+                &sender,
+                FrameAddress::default(),
+                signature_hash,
+            )],
             signature_hash,
             ..Default::default()
         };
@@ -2539,7 +2729,7 @@ mod tests {
                 Frame::new(
                     FrameMode::Default,
                     0x03,
-                    FrameAddress::Empty,
+                    FrameAddress::default(),
                     FrameLimits {
                         execution: 10_000,
                         state: 0,
@@ -2600,7 +2790,7 @@ mod tests {
                 Frame::new(
                     FrameMode::Default,
                     0x03,
-                    FrameAddress::Empty,
+                    FrameAddress::default(),
                     FrameLimits {
                         execution: 10_000,
                         state: 0,

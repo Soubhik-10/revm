@@ -136,23 +136,69 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
             .map_err(JournalLoadError::unwrap_db_error)
     }
 
-    fn protocol_storage(
+    fn protocol_sload(
         &mut self,
         address: Address,
         key: StorageKey,
-    ) -> Result<StorageValue, <Self::Database as Database>::Error> {
-        self.inner
-            .protocol_storage(&mut self.database, address, key)
+    ) -> Result<StorageValue, DB::Error> {
+        let id = self.inner.transaction_id;
+        let account_cold = self
+            .inner
+            .state
+            .get(&address)
+            .is_none_or(|account| account.is_cold_transaction_id(id));
+        let slot_cold = self
+            .inner
+            .state
+            .get(&address)
+            .and_then(|account| account.storage.get(&key))
+            .is_none_or(|slot| slot.is_cold_transaction_id(id));
+        self.load_account(address)?;
+        let result = self.sload(address, key).map(|load| load.data);
+        let account = self
+            .inner
+            .state
+            .get_mut(&address)
+            .expect("loaded protocol account");
+        if account_cold {
+            account.mark_cold();
+        }
+        if slot_cold {
+            if let Some(slot) = account.storage.get_mut(&key) {
+                slot.mark_cold();
+            }
+        }
+        result
     }
 
-    fn set_protocol_storage(
+    fn protocol_sstore(
         &mut self,
         address: Address,
         key: StorageKey,
         value: StorageValue,
-    ) -> Result<(), <Self::Database as Database>::Error> {
-        self.inner
-            .set_protocol_storage(&mut self.database, address, key, value)
+    ) -> Result<(), DB::Error> {
+        self.protocol_sload(address, key)?;
+        let id = self.inner.transaction_id;
+        let account = &self.inner.state[&address];
+        let account_cold = account.is_cold_transaction_id(id);
+        let slot_cold = account.storage[&key].is_cold_transaction_id(id);
+        let result = self.sstore(address, key, value).map(|_| ());
+        let account = self
+            .inner
+            .state
+            .get_mut(&address)
+            .expect("loaded protocol account");
+        if account_cold {
+            account.mark_cold();
+        }
+        if slot_cold {
+            account
+                .storage
+                .get_mut(&key)
+                .expect("loaded protocol slot")
+                .mark_cold();
+        }
+        result
     }
 
     fn tload(&mut self, address: Address, key: StorageKey) -> StorageValue {
