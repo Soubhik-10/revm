@@ -121,7 +121,7 @@ dependencies = [
 [[package]]
 name = "alloy-eip7906"
 version = "0.1.0"
-source = "git+https://github.com/Soubhik-10/eips?rev=1c61bc61789d99b66cda55aec67b5df5aed5ed03#1c61bc61789d99b66cda55aec67b5df5aed5ed03"
+source = "git+https://github.com/Rimeeeeee/eips?rev=1c61bc61789d99b66cda55aec67b5df5aed5ed03#1c61bc61789d99b66cda55aec67b5df5aed5ed03"
 
 [[package]]
 name = "alloy-eip7928"
@@ -152,7 +152,7 @@ dependencies = [
 [[package]]
 name = "alloy-eip8141"
 version = "0.1.1"
-source = "git+https://github.com/Soubhik-10/eips?rev=1c61bc61789d99b66cda55aec67b5df5aed5ed03#1c61bc61789d99b66cda55aec67b5df5aed5ed03"
+source = "git+https://github.com/Rimeeeeee/eips?rev=1c61bc61789d99b66cda55aec67b5df5aed5ed03#1c61bc61789d99b66cda55aec67b5df5aed5ed03"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
