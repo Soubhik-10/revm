@@ -549,6 +549,14 @@ impl<
             p if p == U256::from(10) => U256::from(runtime.current_frame_index),
             p if p == U256::from(11) => U256::from(frame_tx.signatures.len()),
             p if p == U256::from(12) => U256::from(state_gas_left),
+            p if p == U256::from(13) && self.cfg().is_eip8250_enabled() => {
+                U256::from(runtime.legacy_nonce)
+            }
+            p if p == U256::from(14) => U256::from(frame_tx.nonce_keys.as_ref()?.len()),
+            p if p == U256::from(15) => U256::from_be_bytes(
+                alloy_eip8141::nonce_keys_hash(frame_tx.nonce_keys.as_deref()?).0,
+            ),
+            p if p == U256::from(16) => *frame_tx.nonce_keys.as_ref()?.first()?,
             _ => return None,
         })
     }
@@ -868,74 +876,107 @@ fn charge_frame_payer<CTX: ContextTr>(
             tx.total_blob_gas(),
             ctx.block().blob_gasprice().unwrap_or_default(),
         );
-    let mut charged_state_gas = 0;
+    let keys = tx.frame_transaction().and_then(|tx| tx.nonce_keys.clone());
+    let sequence = tx.nonce();
+    let keyed = keys.as_ref().is_some_and(|keys| keys != &[U256::ZERO]);
     let balance_check_disabled = ctx.cfg().is_balance_check_disabled();
     let fee_charge_disabled = ctx.cfg().is_fee_charge_disabled();
-    let new_account_state_gas = ctx.cfg().gas_params().new_account_state_gas();
-    let sender_is_empty_result = ctx
-        .journal_mut()
-        .load_account_info_skip_cold_load(sender, false, false)
-        .map(|account| account.is_empty);
-    let sender_is_empty = match sender_is_empty_result {
-        Ok(is_empty) => is_empty,
-        Err(error) => {
-            *ctx.error() = Err(error.unwrap_db_error().into());
-            return Err(FrameHostError::Fatal);
+    let charged_state_gas = if keyed {
+        let first_use_cost =
+            ctx.cfg()
+                .gas_params()
+                .sstore_state_gas(&context_interface::context::SStoreResult {
+                    original_value: U256::ZERO,
+                    present_value: U256::ZERO,
+                    new_value: U256::from(1),
+                });
+        let mut cost = 0;
+        for key in keys.as_ref().expect("keyed nonce set") {
+            let value = ctx
+                .journal_mut()
+                .protocol_sload(
+                    alloy_eip8141::NONCE_MANAGER,
+                    alloy_eip8141::nonce_slot(sender, *key),
+                )
+                .map_err(|error| {
+                    *ctx.error() = Err(error.into());
+                    FrameHostError::Fatal
+                })?;
+            if value.is_zero() {
+                cost += first_use_cost;
+            }
+        }
+        cost
+    } else {
+        let (nonce, is_empty) = ctx
+            .journal_mut()
+            .load_account_info_skip_cold_load(sender, false, false)
+            .map(|account| (account.nonce, account.is_empty))
+            .map_err(|error| {
+                *ctx.error() = Err(error.unwrap_db_error().into());
+                FrameHostError::Fatal
+            })?;
+        if nonce == u64::MAX {
+            return Err(FrameHostError::OutOfGas);
+        }
+        if is_empty {
+            ctx.cfg().gas_params().new_account_state_gas()
+        } else {
+            0
         }
     };
-    let payer_balance_result = ctx
+    let payer_balance = ctx
         .journal_mut()
         .load_account_mut(payer)
-        .map(|account| *account.balance());
-    let payer_balance = match payer_balance_result {
-        Ok(balance) => balance,
-        Err(error) => {
+        .map(|account| *account.balance())
+        .map_err(|error| {
             *ctx.error() = Err(error.into());
-            return Err(FrameHostError::Fatal);
-        }
-    };
+            FrameHostError::Fatal
+        })?;
     if !balance_check_disabled && payer_balance < max_cost {
         return Err(FrameHostError::Revert);
     }
-    if balance_check_disabled && payer_balance < max_cost {
-        let result = ctx
-            .journal_mut()
+    if state_gas_left < charged_state_gas {
+        return Err(FrameHostError::OutOfGas);
+    }
+
+    if keyed {
+        let next = sequence.checked_add(1).ok_or(FrameHostError::OutOfGas)?;
+        for key in keys.expect("keyed nonce set") {
+            ctx.journal_mut()
+                .protocol_sstore(
+                    alloy_eip8141::NONCE_MANAGER,
+                    alloy_eip8141::nonce_slot(sender, key),
+                    U256::from(next),
+                )
+                .map_err(|error| {
+                    *ctx.error() = Err(error.into());
+                    FrameHostError::Fatal
+                })?;
+        }
+    } else {
+        ctx.journal_mut()
+            .load_account_mut(sender)
+            .map(|mut account| account.bump_nonce())
+            .map_err(|error| {
+                *ctx.error() = Err(error.into());
+                FrameHostError::Fatal
+            })?;
+    }
+    if !fee_charge_disabled || (balance_check_disabled && payer_balance < max_cost) {
+        ctx.journal_mut()
             .load_account_mut(payer)
-            .map(|mut account| account.incr_balance(max_cost - payer_balance));
-        if let Err(error) = result {
-            *ctx.error() = Err(error.into());
-            return Err(FrameHostError::Fatal);
-        }
-    }
-    if sender_is_empty {
-        if state_gas_left < new_account_state_gas {
-            return Err(FrameHostError::OutOfGas);
-        }
-        charged_state_gas = new_account_state_gas;
-    }
-    let bump_result = ctx
-        .journal_mut()
-        .load_account_mut(sender)
-        .map(|mut account| account.bump_nonce());
-    let bumped = match bump_result {
-        Ok(bumped) => bumped,
-        Err(error) => {
-            *ctx.error() = Err(error.into());
-            return Err(FrameHostError::Fatal);
-        }
-    };
-    if !bumped {
-        return Err(FrameHostError::Revert);
-    }
-    if !fee_charge_disabled {
-        let result = ctx
-            .journal_mut()
-            .load_account_mut(payer)
-            .map(|mut account| account.decr_balance(max_cost));
-        if let Err(error) = result {
-            *ctx.error() = Err(error.into());
-            return Err(FrameHostError::Fatal);
-        }
+            .map(|mut account| {
+                account.set_balance(if fee_charge_disabled {
+                    max_cost
+                } else {
+                    payer_balance.saturating_sub(max_cost)
+                });
+            })
+            .map_err(|error| {
+                *ctx.error() = Err(error.into());
+                FrameHostError::Fatal
+            })?;
     }
 
     Ok(charged_state_gas)
