@@ -19,6 +19,8 @@ pub struct FrameApprovalState {
 /// Per-transaction EIP-8141 interpreter runtime state.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FrameTransactionRuntime {
+    /// Sender account nonce before any transaction frame executes.
+    pub legacy_nonce: u64,
     /// Index of the currently executing top-level frame.
     pub current_frame_index: usize,
     /// Resolved target of the current top-level frame.
