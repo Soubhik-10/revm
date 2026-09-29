@@ -716,8 +716,7 @@ mod tests {
             0xa0..=0xa4,
             0xaa..=0xaa,
             0xb0..=0xb5,
-            0xb7..=0xb7,
-            0xb9..=0xb9,
+            0xb7..=0xb9,
             0xf0..=0xf5,
             0xfa..=0xfa,
             0xfd..=0xfd,
@@ -737,7 +736,7 @@ mod tests {
         for _ in OPCODE_INFO.into_iter().flatten() {
             opcode_num += 1;
         }
-        assert_eq!(opcode_num, 163);
+        assert_eq!(opcode_num, 164);
     }
 
     #[test]
