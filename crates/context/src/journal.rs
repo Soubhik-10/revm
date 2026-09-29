@@ -8,10 +8,6 @@ pub mod warm_addresses;
 pub use context_interface::journaled_state::entry::{JournalEntry, JournalEntryTr};
 pub use inner::{JournalCfg, JournalInner};
 
-use alloy_eip7906::{
-    TxDiffParam, ACCOUNT_BALANCE_CHANGED, ACCOUNT_CODE_HASH_CHANGED, ACCOUNT_NONCE_CHANGED,
-    ACCOUNT_STORAGE_CHANGED,
-};
 use bytecode::Bytecode;
 use context_interface::{
     context::{SStoreResult, SelfDestructResult, StateLoad},
@@ -22,6 +18,10 @@ use context_interface::{
 };
 use core::ops::{Deref, DerefMut};
 use database_interface::Database;
+use primitives::eip7906::{
+    TxDiffParam, TxTraceParam, ACCOUNT_BALANCE_CHANGED, ACCOUNT_CODE_HASH_CHANGED,
+    ACCOUNT_NONCE_CHANGED, ACCOUNT_STORAGE_CHANGED,
+};
 use primitives::{
     hardfork::SpecId, Address, AddressMap, AddressSet, Bytes, HashSet, Log, StorageKey,
     StorageValue, B256, KECCAK_EMPTY, U256,
@@ -94,6 +94,55 @@ impl<DB, ENTRY: JournalEntryTr + Clone> Journal<DB, ENTRY> {
     }
 }
 
+impl<DB: Database, ENTRY: JournalEntryTr> Journal<DB, ENTRY> {
+    fn eip7906_storage_value(
+        &mut self,
+        selector: TxDiffParam,
+        address: Address,
+        key: StorageKey,
+        skip_cold_load: bool,
+    ) -> Result<Option<StateLoad<U256>>, JournalLoadError<DB::Error>> {
+        let load = self
+            .inner
+            .sload(&mut self.database, address, key, skip_cold_load)?;
+        let value = if selector == TxDiffParam::SlotValueBefore {
+            let Some(slot) = self
+                .inner
+                .state
+                .get(&address)
+                .and_then(|account| account.storage.get(&key))
+            else {
+                return Ok(None);
+            };
+            slot.original_value()
+        } else {
+            load.data
+        };
+        Ok(Some(StateLoad::new(value, load.is_cold)))
+    }
+
+    fn eip7906_account_value(
+        &mut self,
+        selector: TxDiffParam,
+        address: Address,
+        skip_cold_load: bool,
+    ) -> Result<StateLoad<U256>, JournalLoadError<DB::Error>> {
+        let load =
+            self.inner
+                .load_account_optional(&mut self.database, address, false, skip_cold_load)?;
+        let value = match selector {
+            TxDiffParam::BalanceBefore => load.data.original_info().balance,
+            TxDiffParam::BalanceAfter => load.data.info.balance,
+            TxDiffParam::CodeHashBefore => {
+                U256::from_be_bytes(load.data.original_info().code_hash.0)
+            }
+            TxDiffParam::CodeHashAfter => U256::from_be_bytes(load.data.info.code_hash.0),
+            _ => unreachable!("only account lookup selectors are dispatched here"),
+        };
+        Ok(StateLoad::new(value, load.is_cold))
+    }
+}
+
 impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
     type Database = DB;
     type State = EvmState;
@@ -158,61 +207,13 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
     }
 
     fn eip7906_txtrace(&self, param: U256, index: U256) -> Option<U256> {
-        let param = u8::try_from(param).ok()?;
+        let selector = TxTraceParam::try_from(u8::try_from(param).ok()?).ok()?;
         let index = usize::try_from(index).ok()?;
-
-        match param {
-            0x00 => {
-                (index == 0).then(|| U256::from(eip7906_balance_changes(&self.inner.state).len()))
-            }
-            0x01 => {
-                (index == 0).then(|| U256::from(eip7906_storage_changes(&self.inner.state).len()))
-            }
-            0x02 => (index == 0).then(|| U256::from(eip7906_deployments(&self.inner.state).len())),
-            0x03..=0x05 => {
-                let changes = eip7906_balance_changes(&self.inner.state);
-                let (address, before, after) = *changes.get(index)?;
-                Some(match param {
-                    0x03 => U256::from_be_slice(address.as_slice()),
-                    0x04 => before,
-                    0x05 => after,
-                    _ => unreachable!(),
-                })
-            }
-            0x06..=0x09 => {
-                let changes = eip7906_storage_changes(&self.inner.state);
-                let (address, key, before, after) = *changes.get(index)?;
-                Some(match param {
-                    0x06 => U256::from_be_slice(address.as_slice()),
-                    0x07 => key,
-                    0x08 => before,
-                    0x09 => after,
-                    _ => unreachable!(),
-                })
-            }
-            0x0A..=0x0B => {
-                let deployments = eip7906_deployments(&self.inner.state);
-                let (address, code_hash) = *deployments.get(index)?;
-                Some(match param {
-                    0x0A => U256::from_be_slice(address.as_slice()),
-                    0x0B => U256::from_be_bytes(code_hash.0),
-                    _ => unreachable!(),
-                })
-            }
-            0x0C => (index == 0).then(|| U256::from(self.inner.logs.len())),
-            0x0D..=0x13 => {
-                let event = self.inner.logs.get(index)?;
-                let topics = event.data.topics();
-                Some(match param {
-                    0x0D => U256::from_be_slice(event.address.as_slice()),
-                    0x0E => U256::from(topics.len()),
-                    0x0F..=0x12 => U256::from_be_bytes(topics.get((param - 0x0F) as usize)?.0),
-                    0x13 => U256::from(event.data.data.len()),
-                    _ => unreachable!(),
-                })
-            }
-            _ => None,
+        if selector.requires_zero_index() && index != 0 {
+            return None;
         }
+
+        eip7906_trace_value(&self.inner.state, &self.inner.logs, selector, index)
     }
 
     fn eip7906_txdiff(
@@ -233,136 +234,26 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
             return Ok(None);
         }
 
+        let address = eip7906_address(in2);
         if selector.is_storage_lookup() {
-            let address = eip7906_address(in2);
-            let load = self
-                .inner
-                .sload(&mut self.database, address, in3, skip_cold_load)?;
-            let value = if selector == TxDiffParam::SlotValueBefore {
-                let Some(slot) = self
-                    .inner
-                    .state
-                    .get(&address)
-                    .and_then(|account| account.storage.get(&in3))
-                else {
-                    return Ok(None);
-                };
-                slot.original_value()
-            } else {
-                load.data
-            };
-            return Ok(Some(StateLoad::new(value, load.is_cold)));
+            return self.eip7906_storage_value(selector, address, in3, skip_cold_load);
         }
 
         if selector.is_account_lookup() {
-            let address = eip7906_address(in2);
-            let load = self.inner.load_account_optional(
-                &mut self.database,
-                address,
-                false,
-                skip_cold_load,
-            )?;
-            let value = match selector {
-                TxDiffParam::BalanceBefore => load.data.original_info().balance,
-                TxDiffParam::BalanceAfter => load.data.info.balance,
-                TxDiffParam::CodeHashBefore => {
-                    U256::from_be_bytes(load.data.original_info().code_hash.0)
-                }
-                TxDiffParam::CodeHashAfter => U256::from_be_bytes(load.data.info.code_hash.0),
-                _ => unreachable!(),
-            };
-            return Ok(Some(StateLoad::new(value, load.is_cold)));
+            return self
+                .eip7906_account_value(selector, address, skip_cold_load)
+                .map(Some);
         }
 
-        let value = match selector {
-            TxDiffParam::AddressSlotsCount => {
-                let address = eip7906_address(in2);
-                U256::from(
-                    self.inner
-                        .state
-                        .get(&address)
-                        .map_or(0, |account| account.changed_storage_slots().count()),
-                )
-            }
-            TxDiffParam::AddressSlotIndex => {
-                let address = eip7906_address(in2);
-                let Some(local_index) = usize::try_from(in3).ok() else {
-                    return Ok(None);
-                };
-                let Some(global_index) = eip7906_storage_changes(&self.inner.state)
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, (entry_address, ..))| *entry_address == address)
-                    .nth(local_index)
-                    .map(|(index, _)| index)
-                else {
-                    return Ok(None);
-                };
-                U256::from(global_index)
-            }
-            TxDiffParam::AddressEventsCount => {
-                let address = eip7906_address(in2);
-                U256::from(
-                    self.inner
-                        .logs
-                        .iter()
-                        .filter(|event| event.address == address)
-                        .count(),
-                )
-            }
-            TxDiffParam::AddressEventIndex => {
-                let address = eip7906_address(in2);
-                let Some(local_index) = usize::try_from(in3).ok() else {
-                    return Ok(None);
-                };
-                let Some(global_index) = self
-                    .inner
-                    .logs
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, event)| event.address == address)
-                    .nth(local_index)
-                    .map(|(index, _)| index)
-                else {
-                    return Ok(None);
-                };
-                U256::from(global_index)
-            }
-            TxDiffParam::AccountChangeFlags => U256::from(eip7906_account_change_flags(
-                &self.inner.state,
-                eip7906_address(in2),
-            )),
-            TxDiffParam::TopicEventsCount => {
-                let topic = B256::from(in2.to_be_bytes());
-                U256::from(
-                    self.inner
-                        .logs
-                        .iter()
-                        .filter(|event| eip7906_event_has_indexed_topic(event, topic))
-                        .count(),
-                )
-            }
-            TxDiffParam::TopicEventIndex => {
-                let topic = B256::from(in2.to_be_bytes());
-                let Some(local_index) = usize::try_from(in3).ok() else {
-                    return Ok(None);
-                };
-                let Some(global_index) = self
-                    .inner
-                    .logs
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, event)| eip7906_event_has_indexed_topic(event, topic))
-                    .nth(local_index)
-                    .map(|(index, _)| index)
-                else {
-                    return Ok(None);
-                };
-                U256::from(global_index)
-            }
-            _ => unreachable!(),
-        };
-        Ok(Some(StateLoad::new(value, false)))
+        Ok(eip7906_transaction_local_value(
+            &self.inner.state,
+            &self.inner.logs,
+            selector,
+            address,
+            in2,
+            in3,
+        )
+        .map(|value| StateLoad::new(value, false)))
     }
 
     fn eip7906_event_data(&self, event_index: U256) -> Option<Bytes> {
@@ -714,6 +605,164 @@ fn eip7906_deployments(state: &EvmState) -> Vec<(Address, B256)> {
     deployments
 }
 
+fn eip7906_trace_value(
+    state: &EvmState,
+    logs: &[Log],
+    selector: TxTraceParam,
+    index: usize,
+) -> Option<U256> {
+    match selector {
+        TxTraceParam::BalancesChanged => Some(U256::from(eip7906_balance_changes(state).len())),
+        TxTraceParam::SlotsChanged => Some(U256::from(eip7906_storage_changes(state).len())),
+        TxTraceParam::ContractsDeployed => Some(U256::from(eip7906_deployments(state).len())),
+        TxTraceParam::BalanceChangeAddress
+        | TxTraceParam::BalanceBefore
+        | TxTraceParam::BalanceAfter => eip7906_balance_trace_value(state, selector, index),
+        TxTraceParam::SlotChangeAddress
+        | TxTraceParam::SlotKey
+        | TxTraceParam::SlotValueBefore
+        | TxTraceParam::SlotValueAfter => eip7906_storage_trace_value(state, selector, index),
+        TxTraceParam::DeployedAddress | TxTraceParam::DeployedCodeHash => {
+            eip7906_deployment_trace_value(state, selector, index)
+        }
+        TxTraceParam::EventsCount => Some(U256::from(logs.len())),
+        TxTraceParam::EventAddress
+        | TxTraceParam::EventTopicCount
+        | TxTraceParam::EventTopic0
+        | TxTraceParam::EventTopic1
+        | TxTraceParam::EventTopic2
+        | TxTraceParam::EventTopic3
+        | TxTraceParam::EventDataLength => eip7906_event_trace_value(logs, selector, index),
+        TxTraceParam::GasPreCharge | TxTraceParam::GasPayerAddress => None,
+    }
+}
+
+fn eip7906_balance_trace_value(
+    state: &EvmState,
+    selector: TxTraceParam,
+    index: usize,
+) -> Option<U256> {
+    let (address, before, after) = *eip7906_balance_changes(state).get(index)?;
+    Some(match selector {
+        TxTraceParam::BalanceChangeAddress => U256::from_be_slice(address.as_slice()),
+        TxTraceParam::BalanceBefore => before,
+        TxTraceParam::BalanceAfter => after,
+        _ => unreachable!("only balance selectors are dispatched here"),
+    })
+}
+
+fn eip7906_storage_trace_value(
+    state: &EvmState,
+    selector: TxTraceParam,
+    index: usize,
+) -> Option<U256> {
+    let (address, key, before, after) = *eip7906_storage_changes(state).get(index)?;
+    Some(match selector {
+        TxTraceParam::SlotChangeAddress => U256::from_be_slice(address.as_slice()),
+        TxTraceParam::SlotKey => key,
+        TxTraceParam::SlotValueBefore => before,
+        TxTraceParam::SlotValueAfter => after,
+        _ => unreachable!("only storage selectors are dispatched here"),
+    })
+}
+
+fn eip7906_deployment_trace_value(
+    state: &EvmState,
+    selector: TxTraceParam,
+    index: usize,
+) -> Option<U256> {
+    let (address, code_hash) = *eip7906_deployments(state).get(index)?;
+    Some(match selector {
+        TxTraceParam::DeployedAddress => U256::from_be_slice(address.as_slice()),
+        TxTraceParam::DeployedCodeHash => U256::from_be_bytes(code_hash.0),
+        _ => unreachable!("only deployment selectors are dispatched here"),
+    })
+}
+
+fn eip7906_event_trace_value(logs: &[Log], selector: TxTraceParam, index: usize) -> Option<U256> {
+    let event = logs.get(index)?;
+    let topics = event.data.topics();
+    Some(match selector {
+        TxTraceParam::EventAddress => U256::from_be_slice(event.address.as_slice()),
+        TxTraceParam::EventTopicCount => U256::from(topics.len()),
+        TxTraceParam::EventTopic0 => U256::from_be_bytes(topics.first()?.0),
+        TxTraceParam::EventTopic1 => U256::from_be_bytes(topics.get(1)?.0),
+        TxTraceParam::EventTopic2 => U256::from_be_bytes(topics.get(2)?.0),
+        TxTraceParam::EventTopic3 => U256::from_be_bytes(topics.get(3)?.0),
+        TxTraceParam::EventDataLength => U256::from(event.data.data.len()),
+        _ => unreachable!("only event selectors are dispatched here"),
+    })
+}
+
+fn eip7906_transaction_local_value(
+    state: &EvmState,
+    logs: &[Log],
+    selector: TxDiffParam,
+    address: Address,
+    operand: U256,
+    local_index: U256,
+) -> Option<U256> {
+    match selector {
+        TxDiffParam::AddressSlotsCount => {
+            Some(U256::from(state.get(&address).map_or(0, |account| {
+                account.changed_storage_slots().count()
+            })))
+        }
+        TxDiffParam::AddressSlotIndex => eip7906_address_slot_index(state, address, local_index),
+        TxDiffParam::AddressEventsCount => Some(U256::from(
+            logs.iter().filter(|event| event.address == address).count(),
+        )),
+        TxDiffParam::AddressEventIndex => {
+            eip7906_event_index(logs, local_index, |event| event.address == address)
+        }
+        TxDiffParam::AccountChangeFlags => {
+            Some(U256::from(eip7906_account_change_flags(state, address)))
+        }
+        TxDiffParam::TopicEventsCount => {
+            let topic = B256::from(operand.to_be_bytes());
+            Some(U256::from(
+                logs.iter()
+                    .filter(|event| eip7906_event_has_indexed_topic(event, topic))
+                    .count(),
+            ))
+        }
+        TxDiffParam::TopicEventIndex => {
+            let topic = B256::from(operand.to_be_bytes());
+            eip7906_event_index(logs, local_index, |event| {
+                eip7906_event_has_indexed_topic(event, topic)
+            })
+        }
+        _ => unreachable!("only transaction-local selectors are dispatched here"),
+    }
+}
+
+fn eip7906_address_slot_index(
+    state: &EvmState,
+    address: Address,
+    local_index: U256,
+) -> Option<U256> {
+    let local_index = usize::try_from(local_index).ok()?;
+    eip7906_storage_changes(state)
+        .iter()
+        .enumerate()
+        .filter(|(_, (entry_address, ..))| *entry_address == address)
+        .nth(local_index)
+        .map(|(index, _)| U256::from(index))
+}
+
+fn eip7906_event_index(
+    logs: &[Log],
+    local_index: U256,
+    matches: impl Fn(&Log) -> bool,
+) -> Option<U256> {
+    let local_index = usize::try_from(local_index).ok()?;
+    logs.iter()
+        .enumerate()
+        .filter(|(_, event)| matches(event))
+        .nth(local_index)
+        .map(|(index, _)| U256::from(index))
+}
+
 #[inline]
 fn eip7906_address(value: U256) -> Address {
     Address::from_word(B256::from(value.to_be_bytes()))
@@ -753,9 +802,9 @@ fn eip7906_event_has_indexed_topic(event: &Log, topic: B256) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_eip7906::{TxDiffParam, TxTraceParam};
     use context_interface::journaled_state::account::JournaledAccountTr;
     use database::{CacheDB, EmptyDB};
+    use primitives::eip7906::{TxDiffParam, TxTraceParam};
     use primitives::{address, b256, LogData};
 
     const ACCOUNT: Address = address!("1000000000000000000000000000000000000001");

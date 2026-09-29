@@ -4,9 +4,8 @@ use crate::{
     interpreter_types::{InputsTr, InterpreterTypes as ITy, MemoryTr, RuntimeFlag, StackTr},
     InstructionContext as Ictx, InstructionExecResult as Result, InstructionResult,
 };
-use alloy_eip7906::TxDiffParam;
 use context_interface::{host::FrameHostError, Host};
-use primitives::{Bytes, B256, U256};
+use primitives::{eip7906::TxDiffParam, Bytes, B256, U256};
 
 use super::system::copy_cost_and_memory_resize;
 

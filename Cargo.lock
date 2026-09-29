@@ -43,7 +43,7 @@ dependencies = [
 [[package]]
 name = "alloy-consensus"
 version = "2.4.1"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#0ace036b77699ffc77e366f3d24af81e96863881"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#b3a94d4f145169e5e623d386f9cb33f7b46fbc14"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -69,7 +69,7 @@ dependencies = [
 [[package]]
 name = "alloy-consensus-any"
 version = "2.4.1"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#0ace036b77699ffc77e366f3d24af81e96863881"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#b3a94d4f145169e5e623d386f9cb33f7b46fbc14"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -119,11 +119,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alloy-eip7906"
-version = "0.1.0"
-source = "git+https://github.com/Rimeeeeee/eips?rev=1c61bc61789d99b66cda55aec67b5df5aed5ed03#1c61bc61789d99b66cda55aec67b5df5aed5ed03"
-
-[[package]]
 name = "alloy-eip7928"
 version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -140,7 +135,7 @@ dependencies = [
 [[package]]
 name = "alloy-eip8141"
 version = "0.1.1"
-source = "git+https://github.com/Rimeeeeee/eips?rev=1c61bc61789d99b66cda55aec67b5df5aed5ed03#1c61bc61789d99b66cda55aec67b5df5aed5ed03"
+source = "git+https://github.com/Rimeeeeee/eips?rev=77332dcce5fc1f17226802f615b136cbc6728c1a#77332dcce5fc1f17226802f615b136cbc6728c1a"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -152,12 +147,11 @@ dependencies = [
 [[package]]
 name = "alloy-eips"
 version = "2.4.1"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#0ace036b77699ffc77e366f3d24af81e96863881"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#b3a94d4f145169e5e623d386f9cb33f7b46fbc14"
 dependencies = [
  "alloy-eip2124",
  "alloy-eip2930",
  "alloy-eip7702",
- "alloy-eip7906",
  "alloy-eip7928",
  "alloy-eip8141",
  "alloy-primitives",
@@ -188,7 +182,7 @@ dependencies = [
 [[package]]
 name = "alloy-json-rpc"
 version = "2.4.1"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#0ace036b77699ffc77e366f3d24af81e96863881"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#b3a94d4f145169e5e623d386f9cb33f7b46fbc14"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -202,7 +196,7 @@ dependencies = [
 [[package]]
 name = "alloy-network"
 version = "2.4.1"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#0ace036b77699ffc77e366f3d24af81e96863881"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#b3a94d4f145169e5e623d386f9cb33f7b46fbc14"
 dependencies = [
  "alloy-consensus",
  "alloy-consensus-any",
@@ -227,7 +221,7 @@ dependencies = [
 [[package]]
 name = "alloy-network-primitives"
 version = "2.4.1"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#0ace036b77699ffc77e366f3d24af81e96863881"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#b3a94d4f145169e5e623d386f9cb33f7b46fbc14"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -271,7 +265,7 @@ dependencies = [
 [[package]]
 name = "alloy-provider"
 version = "2.4.1"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#0ace036b77699ffc77e366f3d24af81e96863881"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#b3a94d4f145169e5e623d386f9cb33f7b46fbc14"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -332,7 +326,7 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-client"
 version = "2.4.1"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#0ace036b77699ffc77e366f3d24af81e96863881"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#b3a94d4f145169e5e623d386f9cb33f7b46fbc14"
 dependencies = [
  "alloy-json-rpc",
  "alloy-primitives",
@@ -354,7 +348,7 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-types-any"
 version = "2.4.1"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#0ace036b77699ffc77e366f3d24af81e96863881"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#b3a94d4f145169e5e623d386f9cb33f7b46fbc14"
 dependencies = [
  "alloy-consensus-any",
  "alloy-network-primitives",
@@ -368,7 +362,7 @@ dependencies = [
 [[package]]
 name = "alloy-rpc-types-eth"
 version = "2.4.1"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#0ace036b77699ffc77e366f3d24af81e96863881"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#b3a94d4f145169e5e623d386f9cb33f7b46fbc14"
 dependencies = [
  "alloy-consensus",
  "alloy-consensus-any",
@@ -388,7 +382,7 @@ dependencies = [
 [[package]]
 name = "alloy-serde"
 version = "2.4.1"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#0ace036b77699ffc77e366f3d24af81e96863881"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#b3a94d4f145169e5e623d386f9cb33f7b46fbc14"
 dependencies = [
  "alloy-primitives",
  "serde",
@@ -398,7 +392,7 @@ dependencies = [
 [[package]]
 name = "alloy-signer"
 version = "2.4.1"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#0ace036b77699ffc77e366f3d24af81e96863881"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#b3a94d4f145169e5e623d386f9cb33f7b46fbc14"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -412,7 +406,7 @@ dependencies = [
 [[package]]
 name = "alloy-signer-local"
 version = "2.4.1"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#0ace036b77699ffc77e366f3d24af81e96863881"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#b3a94d4f145169e5e623d386f9cb33f7b46fbc14"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
@@ -497,7 +491,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport"
 version = "2.4.1"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#0ace036b77699ffc77e366f3d24af81e96863881"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#b3a94d4f145169e5e623d386f9cb33f7b46fbc14"
 dependencies = [
  "alloy-json-rpc",
  "auto_impl",
@@ -519,7 +513,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-http"
 version = "2.4.1"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#0ace036b77699ffc77e366f3d24af81e96863881"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#b3a94d4f145169e5e623d386f9cb33f7b46fbc14"
 dependencies = [
  "alloy-json-rpc",
  "alloy-transport",
@@ -550,7 +544,7 @@ dependencies = [
 [[package]]
 name = "alloy-tx-macros"
 version = "2.4.1"
-source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#0ace036b77699ffc77e366f3d24af81e96863881"
+source = "git+https://github.com/Rimeeeeee/alloy?branch=feat%2Feip7906-state-diff-integration#b3a94d4f145169e5e623d386f9cb33f7b46fbc14"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -4051,7 +4045,6 @@ dependencies = [
 name = "revm-context"
 version = "43.0.2"
 dependencies = [
- "alloy-eip7906",
  "alloy-eip8141",
  "bitvec",
  "cfg-if",
@@ -4165,7 +4158,6 @@ dependencies = [
 name = "revm-interpreter"
 version = "43.0.1"
 dependencies = [
- "alloy-eip7906",
  "revm-bytecode",
  "revm-context-interface",
  "revm-primitives",

@@ -23,7 +23,6 @@ bytecode.workspace = true
 primitives.workspace = true
 context-interface.workspace = true
 state.workspace = true
-alloy-eip7906.workspace = true
 
 # optional
 serde = { workspace = true, features = ["derive", "rc"], optional = true }
@@ -39,7 +38,6 @@ std = [
 	"context-interface/std",
 	"bytecode/std",
 	"state/std",
-	"alloy-eip7906/std",
 	"serde_json/std",
 ]
 hashbrown = ["primitives/hashbrown"]

@@ -32,7 +32,7 @@ pub mod utility;
 pub use context_interface::cfg::gas::{self, *};
 
 use crate::{interpreter_types::InterpreterTypes, Host, InstructionContext, InstructionExecResult};
-use alloy_eip7906::{EVENTDATACOPY_GAS_COST, TXTRACE_GAS_COST};
+use primitives::eip7906::{EVENTDATACOPY_GAS_COST, TXTRACE_GAS_COST};
 use primitives::hardfork::SpecId;
 
 /// EVM opcode function pointer.
