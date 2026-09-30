@@ -1079,7 +1079,10 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         key: StorageKey,
     ) -> Result<StorageValue, DB::Error> {
         self.load_protocol_account(db, address)?;
-        let account = self.state.get_mut(&address).expect("protocol account loaded");
+        let account = self
+            .state
+            .get_mut(&address)
+            .expect("protocol account loaded");
         let transaction_id = self.transaction_id;
         let is_created = account.is_created();
         let account_id = account.info.account_id;
@@ -1122,7 +1125,10 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             return Ok(());
         }
 
-        let account = self.state.get_mut(&address).expect("protocol account loaded");
+        let account = self
+            .state
+            .get_mut(&address)
+            .expect("protocol account loaded");
         Self::touch_account(&mut self.journal, address, account);
         account
             .storage
@@ -1303,20 +1309,30 @@ mod tests {
         let key = U256::from(7);
         let checkpoint = journal.checkpoint();
 
-        assert_eq!(journal.protocol_storage(&mut db, address, key).unwrap(), U256::ZERO);
+        assert_eq!(
+            journal.protocol_storage(&mut db, address, key).unwrap(),
+            U256::ZERO
+        );
         journal
             .set_protocol_storage(&mut db, address, key, U256::from(3))
             .unwrap();
-        assert_eq!(journal.protocol_storage(&mut db, address, key).unwrap(), U256::from(3));
+        assert_eq!(
+            journal.protocol_storage(&mut db, address, key).unwrap(),
+            U256::from(3)
+        );
         assert!(journal.state[&address].is_cold_transaction_id(journal.transaction_id));
-        assert!(journal.state[&address].storage[&key]
-            .is_cold_transaction_id(journal.transaction_id));
+        assert!(
+            journal.state[&address].storage[&key].is_cold_transaction_id(journal.transaction_id)
+        );
         assert!(!journal.journal.iter().any(|entry| matches!(
             entry,
             JournalEntry::AccountWarmed { .. } | JournalEntry::StorageWarmed { .. }
         )));
 
         journal.checkpoint_revert(checkpoint);
-        assert_eq!(journal.state[&address].storage[&key].present_value, U256::ZERO);
+        assert_eq!(
+            journal.state[&address].storage[&key].present_value,
+            U256::ZERO
+        );
     }
 }
