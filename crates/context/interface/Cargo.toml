@@ -25,6 +25,7 @@ state.workspace = true
 alloy-eip7702 = { workspace = true, features = ["k256"] }
 alloy-eip2930.workspace = true
 alloy-eip8141.workspace = true
+alloy-rlp.workspace = true
 
 # misc
 auto_impl.workspace = true
@@ -40,6 +41,7 @@ std = [
 	"alloy-eip7702/std",
 	"alloy-eip2930/std",
 	"alloy-eip8141/std",
+	"alloy-rlp/std",
 	"database-interface/std",
 	"primitives/std",
 	"state/std",

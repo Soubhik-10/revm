@@ -250,6 +250,23 @@ fn prepare<H: Handler + ?Sized>(
             "EIP-8141 requires frame-capable local context and journal implementations",
         ));
     }
+    let keys = &evm
+        .ctx_ref()
+        .tx()
+        .frame_transaction()
+        .ok_or_else(|| invalid::<H::Error>("missing frame payload"))?
+        .nonce_keys;
+    if keys.is_some() != evm.ctx_ref().cfg().is_eip8250_enabled() {
+        return Err(invalid(
+            "frame nonce payload does not match EIP-8250 activation",
+        ));
+    }
+    if let Some(keys) = keys {
+        alloy_eip8141::validate_nonce_keys(keys).map_err(invalid::<H::Error>)?;
+        if evm.ctx_ref().tx().nonce() == u64::MAX {
+            return Err(InvalidTransaction::NonceOverflowInTransaction.into());
+        }
+    }
     validate_structure::<H>(evm)?;
     validate_signatures::<H>(evm)?;
     validate_sender::<H>(evm)?;
@@ -281,12 +298,16 @@ fn prepare<H: Handler + ?Sized>(
             frame_tx.frames.len(),
         )
     };
-    evm.ctx()
-        .local_mut()
-        .set_frame_transaction(Some(FrameTransactionRuntime::with_capacity(
-            sender,
-            frame_count,
-        )));
+    let legacy_nonce = evm
+        .ctx()
+        .journal_mut()
+        .load_account(sender)
+        .map_err(H::Error::from)?
+        .info
+        .nonce;
+    let mut runtime = FrameTransactionRuntime::with_capacity(sender, frame_count);
+    runtime.legacy_nonce = legacy_nonce;
+    evm.ctx().local_mut().set_frame_transaction(Some(runtime));
     Ok((intrinsic, floor_gas, frame_count))
 }
 
@@ -1009,6 +1030,27 @@ fn validate_sender<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Error
     // sender-state lookup. Invalid transactions may legitimately omit the
     // sender from an attached block access list, so loading it first can
     // incorrectly turn a transaction error into a BAL database error.
+    let keys = evm
+        .ctx_ref()
+        .tx()
+        .frame_transaction()
+        .and_then(|tx| tx.nonce_keys.clone());
+    if !nonce_check_disabled && keys.as_ref().is_some_and(|keys| keys != &[U256::ZERO]) {
+        for key in keys.expect("keyed nonce set") {
+            let current = evm
+                .ctx()
+                .journal_mut()
+                .protocol_sload(
+                    alloy_eip8141::NONCE_MANAGER,
+                    alloy_eip8141::nonce_slot(sender, key),
+                )
+                .map_err(H::Error::from)?;
+            if current != U256::from(nonce) {
+                return Err(invalid("EIP-8250 nonce sequence mismatch"));
+            }
+        }
+        return Ok(());
+    }
     if !nonce_check_disabled {
         let state_nonce = evm
             .ctx()
@@ -1461,6 +1503,323 @@ mod tests {
             assert!(frame_receipts[1].logs.is_empty());
             assert!(!output.state.contains_key(&REVERT_TARGET));
         }
+    }
+
+    #[test]
+    fn keyed_nonce_protocol_access_preserves_warmth_and_reverts() {
+        use alloy_eip8141::NONCE_MANAGER;
+        use context_interface::JournalTr;
+        let mut journal = context::Journal::<_>::new(CacheDB::<EmptyDB>::default());
+        let key = U256::from(1);
+        assert_eq!(
+            journal.protocol_sload(NONCE_MANAGER, key).unwrap(),
+            U256::ZERO
+        );
+        let checkpoint = journal.checkpoint();
+        journal
+            .protocol_sstore(NONCE_MANAGER, key, U256::from(1))
+            .unwrap();
+        assert!(journal.load_account(NONCE_MANAGER).unwrap().is_cold);
+        assert!(journal.sload(NONCE_MANAGER, key).unwrap().is_cold);
+        journal
+            .protocol_sstore(NONCE_MANAGER, key, U256::from(2))
+            .unwrap();
+        assert!(!journal.load_account(NONCE_MANAGER).unwrap().is_cold);
+        assert!(!journal.sload(NONCE_MANAGER, key).unwrap().is_cold);
+        journal.checkpoint_revert(checkpoint);
+        assert_eq!(
+            journal.protocol_sload(NONCE_MANAGER, key).unwrap(),
+            U256::ZERO
+        );
+    }
+
+    #[test]
+    fn keyed_nonce_txparams_preserve_legacy_prestate() {
+        use alloy_eip8141::nonce_calldata;
+        use bytecode::opcode::{MSTORE, RETURN, TXPARAM};
+        let keys = vec![U256::from(1)];
+        // Return nonce parameters from a frame after payment approval.
+        let mut code = vec![];
+        for (offset, param) in [1, 13, 14, 15, 16].into_iter().enumerate() {
+            code.extend([PUSH1, param, TXPARAM, PUSH1, (offset * 32) as u8, MSTORE]);
+        }
+        code.extend([PUSH1, 160, PUSH0, RETURN]);
+        let mut sender = account_with_code([PUSH1, 3, PUSH0, PUSH0, APPROVE]);
+        sender.nonce = 7;
+        let mut db = CacheDB::<EmptyDB>::default();
+        db.insert_account_info(SENDER, sender);
+        db.insert_account_info(STORAGE_TARGET, account_with_code(code));
+        let payload = FrameTransaction {
+            nonce_keys: Some(keys.clone()),
+            nonce_calldata: nonce_calldata(&keys, 0),
+            frames: vec![
+                Frame {
+                    flags: 3,
+                    limits: FrameLimits {
+                        execution: 10_000,
+                        state: NEW_SLOT_STATE_GAS,
+                    },
+                    ..Default::default()
+                },
+                Frame {
+                    mode: FrameMode::Sender,
+                    target: STORAGE_TARGET.into(),
+                    limits: FrameLimits {
+                        execution: 10_000,
+                        state: 0,
+                    },
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| {
+                cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA);
+                cfg.enable_eip8250 = true;
+            })
+            .with_db(db)
+            .build_mainnet();
+        let output = evm.transact(tx_env(SENDER, payload)).unwrap();
+        let ExecutionResult::FrameTransaction { frame_outputs, .. } = output.result else {
+            panic!("frame result")
+        };
+        let mut expected = Vec::new();
+        for value in [
+            U256::ZERO,
+            U256::from(7),
+            U256::from(1),
+            U256::from_be_bytes(
+                primitives::b256!(
+                    "cc69885fda6bcc1a4ace058b4a62bf5e179ea78fd58a1ccd71c22cc9b688792f"
+                )
+                .0,
+            ),
+            U256::from(1),
+        ] {
+            expected.extend(value.to_be_bytes::<32>());
+        }
+        assert_eq!(frame_outputs[1].as_ref(), expected);
+        assert_eq!(output.state[&SENDER].info.nonce, 7);
+    }
+
+    #[test]
+    fn keyed_nonce_domains_are_independent_and_overlap_is_atomic() {
+        use crate::ExecuteCommitEvm;
+        use alloy_eip8141::{nonce_calldata, nonce_slot, NONCE_MANAGER};
+        let mut db = CacheDB::<EmptyDB>::default();
+        let mut sender = account_with_code([PUSH1, 3, PUSH0, PUSH0, APPROVE]);
+        sender.nonce = 7;
+        db.insert_account_info(SENDER, sender);
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| {
+                cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA);
+                cfg.enable_eip8250 = true;
+            })
+            .with_db(db)
+            .build_mainnet();
+        let transaction = |keys: Vec<U256>, nonce: u64| {
+            let payload = FrameTransaction {
+                nonce_calldata: nonce_calldata(&keys, nonce),
+                nonce_keys: Some(keys),
+                frames: vec![Frame {
+                    mode: FrameMode::Verify,
+                    flags: 3,
+                    limits: FrameLimits {
+                        execution: 10_000,
+                        state: 2 * NEW_SLOT_STATE_GAS,
+                    },
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            let mut tx = tx_env(SENDER, payload);
+            tx.nonce = nonce;
+            tx
+        };
+        assert!(evm
+            .transact_commit(transaction(vec![U256::from(1)], 0))
+            .is_ok());
+        assert!(evm
+            .transact_commit(transaction(vec![U256::from(2)], 0))
+            .is_ok());
+        assert!(evm
+            .transact_commit(transaction(vec![U256::from(1), U256::from(3)], 0))
+            .is_err());
+        assert!(evm
+            .transact_commit(transaction(vec![U256::from(1), U256::from(3)], 1))
+            .is_err());
+        let result = evm
+            .transact_commit(transaction(vec![U256::from(1), U256::from(2)], 1))
+            .unwrap();
+        let ExecutionResult::FrameTransaction { frame_receipts, .. } = result else {
+            panic!("frame result")
+        };
+        assert_eq!(frame_receipts[0].gas_used.state, 0);
+        let db = &mut evm.ctx.journaled_state.database;
+        assert_eq!(
+            database_interface::Database::basic(db, SENDER)
+                .unwrap()
+                .unwrap()
+                .nonce,
+            7
+        );
+        assert_eq!(
+            database_interface::Database::storage(
+                db,
+                NONCE_MANAGER,
+                nonce_slot(SENDER, U256::from(1))
+            )
+            .unwrap(),
+            U256::from(2)
+        );
+        assert_eq!(
+            database_interface::Database::storage(
+                db,
+                NONCE_MANAGER,
+                nonce_slot(SENDER, U256::from(3))
+            )
+            .unwrap(),
+            U256::ZERO
+        );
+        assert!(evm
+            .transact_commit(transaction(vec![U256::ZERO], 7))
+            .is_ok());
+        assert_eq!(
+            database_interface::Database::basic(&mut evm.ctx.journaled_state.database, SENDER)
+                .unwrap()
+                .unwrap()
+                .nonce,
+            8
+        );
+        assert!(evm
+            .transact_commit(transaction(vec![U256::from(4)], u64::MAX))
+            .is_err());
+    }
+
+    #[test]
+    fn keyed_nonce_activation_rejects_the_other_payload() {
+        for active in [false, true] {
+            let mut db = CacheDB::<EmptyDB>::default();
+            db.insert_account_info(SENDER, account_with_code([PUSH1, 3, PUSH0, PUSH0, APPROVE]));
+            let mut evm = Context::mainnet()
+                .modify_cfg_chained(|cfg| {
+                    cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA);
+                    cfg.enable_eip8250 = active;
+                })
+                .with_db(db)
+                .build_mainnet();
+            let payload = FrameTransaction {
+                nonce_keys: (!active).then(|| vec![U256::ZERO]),
+                frames: vec![Frame {
+                    flags: 3,
+                    limits: FrameLimits {
+                        execution: 10_000,
+                        state: 0,
+                    },
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            assert!(evm.transact(tx_env(SENDER, payload)).is_err());
+        }
+    }
+
+    #[test]
+    fn keyed_nonce_consumption_and_later_revert() {
+        use alloy_eip8141::{nonce_calldata, nonce_slot, NONCE_MANAGER};
+        let keys = vec![U256::from(1), U256::MAX];
+        for later_revert in [false, true] {
+            let mut db = CacheDB::<EmptyDB>::default();
+            db.insert_account_info(SENDER, account_with_code([PUSH1, 3, PUSH0, PUSH0, APPROVE]));
+            db.insert_account_info(REVERT_TARGET, account_with_code([PUSH0, PUSH0, REVERT]));
+            let mut payload = FrameTransaction {
+                nonce_keys: Some(keys.clone()),
+                nonce_calldata: nonce_calldata(&keys, 0),
+                frames: vec![Frame {
+                    mode: FrameMode::Verify,
+                    flags: 3,
+                    limits: FrameLimits {
+                        execution: 10_000,
+                        state: 2 * NEW_SLOT_STATE_GAS,
+                    },
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            if later_revert {
+                payload.frames.push(Frame {
+                    mode: FrameMode::Sender,
+                    target: REVERT_TARGET.into(),
+                    limits: FrameLimits {
+                        execution: 10_000,
+                        state: 0,
+                    },
+                    ..Default::default()
+                });
+            }
+            let mut evm = Context::mainnet()
+                .modify_cfg_chained(|cfg| {
+                    cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA);
+                    cfg.enable_eip8250 = true;
+                })
+                .with_db(db)
+                .build_mainnet();
+            let output = evm.transact(tx_env(SENDER, payload)).unwrap();
+            assert_eq!(output.state[&SENDER].info.nonce, 0);
+            for key in &keys {
+                assert_eq!(
+                    output.state[&NONCE_MANAGER].storage[&nonce_slot(SENDER, *key)].present_value(),
+                    U256::from(1)
+                );
+            }
+            let ExecutionResult::FrameTransaction { frame_receipts, .. } = output.result else {
+                panic!("frame result")
+            };
+            assert_eq!(frame_receipts[0].gas_used.state, 195_840);
+            if later_revert {
+                assert_eq!(frame_receipts[1].status, FrameStatus::Failure);
+            }
+        }
+    }
+
+    #[test]
+    fn keyed_nonce_state_gas_is_required_before_approval() {
+        use alloy_eip8141::{nonce_calldata, NONCE_MANAGER};
+        let mut db = CacheDB::<EmptyDB>::default();
+        db.insert_account_info(SENDER, account_with_code([PUSH1, 3, PUSH0, PUSH0, APPROVE]));
+        let keys = vec![U256::from(1)];
+        let payload = FrameTransaction {
+            nonce_calldata: nonce_calldata(&keys, 0),
+            nonce_keys: Some(keys),
+            frames: vec![Frame {
+                mode: FrameMode::Verify,
+                flags: 3,
+                limits: FrameLimits {
+                    execution: 10_000,
+                    state: 97_919,
+                },
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| {
+                cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA);
+                cfg.enable_eip8250 = true;
+            })
+            .with_db(db)
+            .build_mainnet();
+        assert!(evm.transact(tx_env(SENDER, payload)).is_err());
+        assert!(!evm
+            .ctx
+            .journaled_state
+            .state
+            .get(&NONCE_MANAGER)
+            .is_some_and(|account| account
+                .storage
+                .values()
+                .any(|slot| !slot.present_value().is_zero())));
     }
 
     #[test]
@@ -2051,97 +2410,116 @@ mod tests {
 
     #[test]
     fn failed_atomic_batch_rolls_back_state_and_skips_remaining_frames() {
-        let approve_code = [PUSH1, 0x03, PUSH0, PUSH0, APPROVE];
-        let store_code = [PUSH1, 0x02, PUSH0, SSTORE, STOP];
-        let revert_code = [PUSH0, PUSH0, REVERT];
-        let mut db = CacheDB::<EmptyDB>::default();
-        db.insert_account_info(SENDER, account_with_code(approve_code));
-        db.insert_account_info(STORAGE_TARGET, account_with_code(store_code));
-        db.insert_account_storage(STORAGE_TARGET, U256::ZERO, U256::from(1))
-            .unwrap();
-        db.insert_account_info(REVERT_TARGET, account_with_code(revert_code));
+        for keyed in [false, true] {
+            let approve_code = [PUSH1, 0x03, PUSH0, PUSH0, APPROVE];
+            let store_code = [PUSH1, 0x02, PUSH0, SSTORE, STOP];
+            let revert_code = [PUSH0, PUSH0, REVERT];
+            let mut db = CacheDB::<EmptyDB>::default();
+            db.insert_account_info(SENDER, account_with_code(approve_code));
+            db.insert_account_info(STORAGE_TARGET, account_with_code(store_code));
+            db.insert_account_storage(STORAGE_TARGET, U256::ZERO, U256::from(1))
+                .unwrap();
+            db.insert_account_info(REVERT_TARGET, account_with_code(revert_code));
 
-        let payload = FrameTransaction {
-            frames: vec![
-                Frame::new(
-                    FrameMode::Default,
-                    0x03,
-                    FrameAddress::default(),
-                    FrameLimits {
-                        execution: 10_000,
-                        state: 0,
-                    },
-                    U256::ZERO,
-                    Bytes::new(),
-                ),
-                Frame::new(
-                    FrameMode::Default,
-                    0x04,
-                    encoded_target(STORAGE_TARGET),
-                    FrameLimits {
-                        execution: 100_000,
-                        state: 0,
-                    },
-                    U256::ZERO,
-                    Bytes::new(),
-                ),
-                Frame::new(
-                    FrameMode::Default,
-                    0x04,
-                    encoded_target(REVERT_TARGET),
-                    FrameLimits {
-                        execution: 10_000,
-                        state: 0,
-                    },
-                    U256::ZERO,
-                    Bytes::new(),
-                ),
-                Frame::new(
-                    FrameMode::Default,
-                    0,
-                    encoded_target(STORAGE_TARGET),
-                    FrameLimits {
-                        execution: 100_000,
-                        state: 0,
-                    },
-                    U256::ZERO,
-                    Bytes::new(),
-                ),
-            ],
-            signatures: Vec::new(),
-            signature_hash: B256::ZERO,
-            ..Default::default()
-        };
-        let mut evm = Context::mainnet()
-            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
-            .with_db(db)
-            .build_mainnet();
+            let payload = FrameTransaction {
+                nonce_keys: keyed.then(|| vec![U256::from(1)]),
+                nonce_calldata: if keyed {
+                    alloy_eip8141::nonce_calldata(&[U256::from(1)], 0)
+                } else {
+                    vec![]
+                },
+                frames: vec![
+                    Frame::new(
+                        FrameMode::Default,
+                        0x03,
+                        FrameAddress::default(),
+                        FrameLimits {
+                            execution: 10_000,
+                            state: if keyed { NEW_SLOT_STATE_GAS } else { 0 },
+                        },
+                        U256::ZERO,
+                        Bytes::new(),
+                    ),
+                    Frame::new(
+                        FrameMode::Default,
+                        0x04,
+                        encoded_target(STORAGE_TARGET),
+                        FrameLimits {
+                            execution: 100_000,
+                            state: 0,
+                        },
+                        U256::ZERO,
+                        Bytes::new(),
+                    ),
+                    Frame::new(
+                        FrameMode::Default,
+                        0x04,
+                        encoded_target(REVERT_TARGET),
+                        FrameLimits {
+                            execution: 10_000,
+                            state: 0,
+                        },
+                        U256::ZERO,
+                        Bytes::new(),
+                    ),
+                    Frame::new(
+                        FrameMode::Default,
+                        0,
+                        encoded_target(STORAGE_TARGET),
+                        FrameLimits {
+                            execution: 100_000,
+                            state: 0,
+                        },
+                        U256::ZERO,
+                        Bytes::new(),
+                    ),
+                ],
+                signatures: Vec::new(),
+                signature_hash: B256::ZERO,
+                ..Default::default()
+            };
+            let mut evm = Context::mainnet()
+                .modify_cfg_chained(|cfg| {
+                    cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA);
+                    cfg.enable_eip8250 = keyed;
+                })
+                .with_db(db)
+                .build_mainnet();
 
-        let output = evm.transact(tx_env(SENDER, payload)).unwrap();
-        let ExecutionResult::FrameTransaction { frame_receipts, .. } = output.result else {
-            panic!("expected frame transaction result")
-        };
-        assert_eq!(
-            frame_receipts
-                .iter()
-                .map(|receipt| receipt.status)
-                .collect::<Vec<_>>(),
-            vec![
-                FrameStatus::Success,
-                FrameStatus::Success,
-                FrameStatus::Failure,
-                FrameStatus::SkippedAtomicBatch,
-            ]
-        );
-        assert!(frame_receipts[1].gas_used.execution > 0);
-        assert_eq!(frame_receipts[3].gas_used.execution, 0);
-        let stored = output
-            .state
-            .get(&STORAGE_TARGET)
-            .and_then(|account| account.storage.get(&U256::ZERO))
-            .map(|slot| slot.present_value)
-            .unwrap_or_default();
-        assert_eq!(stored, U256::from(1));
+            let output = evm.transact(tx_env(SENDER, payload)).unwrap();
+            let ExecutionResult::FrameTransaction { frame_receipts, .. } = output.result else {
+                panic!("expected frame transaction result")
+            };
+            assert_eq!(
+                frame_receipts
+                    .iter()
+                    .map(|receipt| receipt.status)
+                    .collect::<Vec<_>>(),
+                vec![
+                    FrameStatus::Success,
+                    FrameStatus::Success,
+                    FrameStatus::Failure,
+                    FrameStatus::SkippedAtomicBatch,
+                ]
+            );
+            assert!(frame_receipts[1].gas_used.execution > 0);
+            assert_eq!(frame_receipts[3].gas_used.execution, 0);
+            let stored = output
+                .state
+                .get(&STORAGE_TARGET)
+                .and_then(|account| account.storage.get(&U256::ZERO))
+                .map(|slot| slot.present_value)
+                .unwrap_or_default();
+            assert_eq!(stored, U256::from(1));
+            if keyed {
+                use alloy_eip8141::{nonce_slot, NONCE_MANAGER};
+                assert_eq!(
+                    output.state[&NONCE_MANAGER].storage[&nonce_slot(SENDER, U256::from(1))]
+                        .present_value(),
+                    U256::from(1)
+                );
+            }
+        }
     }
 
     #[test]
