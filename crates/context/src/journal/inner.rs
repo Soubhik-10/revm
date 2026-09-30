@@ -139,6 +139,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     /// nonce while preserving the balance.
     #[inline]
     pub fn take_logs(&mut self) -> Vec<Log> {
+        self.eip7906_diff = None;
         // EIP-8246: clear self-destructed accounts that still hold a balance.
         self.eip8246_clear_selfdestructed_accounts();
         mem::take(&mut self.logs)
