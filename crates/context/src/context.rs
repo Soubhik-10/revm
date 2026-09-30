@@ -669,14 +669,7 @@ impl<
                 if !index.is_zero() {
                     return None;
                 }
-                let tx = self.tx();
-                let frame_tx = tx.frame_transaction()?;
-                Some(frame_tx.max_cost_with_params(
-                    tx.caller(),
-                    self.cfg().gas_params(),
-                    tx.total_blob_gas(),
-                    self.block().blob_gasprice().unwrap_or_default(),
-                ))
+                Some(self.local().frame_transaction()?.approval.gas_pre_charge)
             }
             0x15 => {
                 if !index.is_zero() {
@@ -775,10 +768,10 @@ impl<
             return Err(FrameHostError::Revert);
         }
 
-        let charged_state_gas = if approves_payment {
+        let (charged_state_gas, gas_pre_charge) = if approves_payment {
             charge_frame_payer(self, sender, resolved_target, state_gas_left)?
         } else {
-            0
+            (0, current.gas_pre_charge)
         };
 
         let runtime = self
@@ -790,6 +783,7 @@ impl<
             .last_mut()
             .ok_or(FrameHostError::Invalid)?;
         *approval = context_interface::local::FrameApprovalState {
+            gas_pre_charge,
             payer: if approves_payment {
                 Some(resolved_target)
             } else {
@@ -939,7 +933,7 @@ fn charge_frame_payer<CTX: ContextTr>(
     sender: Address,
     payer: Address,
     state_gas_left: u64,
-) -> Result<u64, FrameHostError> {
+) -> Result<(u64, U256), FrameHostError> {
     let tx = ctx.tx();
     let max_cost = tx
         .frame_transaction()
@@ -1020,5 +1014,130 @@ fn charge_frame_payer<CTX: ContextTr>(
         }
     }
 
-    Ok(charged_state_gas)
+    // Fee-disabled simulation may synthesize a balance, but does not debit fees.
+    // With balance checks disabled, a real debit is capped by the available balance.
+    let gas_pre_charge = if fee_charge_disabled {
+        U256::ZERO
+    } else {
+        payer_balance.min(max_cost)
+    };
+    Ok((charged_state_gas, gas_pre_charge))
+}
+
+#[cfg(all(
+    test,
+    feature = "optional_fee_charge",
+    feature = "optional_balance_check"
+))]
+mod precharge_tests {
+    use super::*;
+    use alloy_eip8141::{Frame, FrameLimits, FrameMode};
+    use context_interface::{local::FrameTransactionRuntime, transaction::FrameTransaction};
+    use database::{CacheDB, EmptyDB};
+    use primitives::address;
+
+    #[test]
+    fn precharge_records_actual_sponsored_debit_and_rolls_back_with_approval() {
+        let sender = address!("1000000000000000000000000000000000000001");
+        let payer = address!("2000000000000000000000000000000000000002");
+        for disabled in [false, true] {
+            for funded in [false, true] {
+                for success in [false, true] {
+                    let balance = if funded {
+                        U256::from(1_000_000)
+                    } else {
+                        U256::from(5)
+                    };
+                    let mut db = CacheDB::<EmptyDB>::default();
+                    db.insert_account_info(
+                        sender,
+                        state::AccountInfo {
+                            nonce: 1,
+                            ..Default::default()
+                        },
+                    );
+                    db.insert_account_info(
+                        payer,
+                        state::AccountInfo {
+                            balance,
+                            ..Default::default()
+                        },
+                    );
+                    let mut ctx: Context<BlockEnv, TxEnv, CfgEnv, CacheDB<EmptyDB>> =
+                        Context::new(db, SpecId::BOGOTA);
+                    ctx.cfg.disable_fee_charge = disabled;
+                    ctx.cfg.disable_balance_check = true;
+                    // Include the blob precharge and use a payer distinct from the sender.
+                    ctx.tx.blob_hashes = vec![B256::ZERO];
+                    let payload = FrameTransaction {
+                        max_fee_per_gas: U256::from(1),
+                        max_priority_fee_per_gas: U256::from(1),
+                        max_fee_per_blob_gas: U256::from(1),
+                        frames: vec![
+                            Frame {
+                                mode: FrameMode::Default,
+                                flags: 3,
+                                target: payer.into(),
+                                limits: FrameLimits {
+                                    execution: 10_000,
+                                    state: 0,
+                                },
+                                ..Default::default()
+                            },
+                            Frame {
+                                mode: FrameMode::PostTx,
+                                target: payer.into(),
+                                limits: FrameLimits {
+                                    execution: 10_000,
+                                    state: 0,
+                                },
+                                ..Default::default()
+                            },
+                        ],
+                        ..Default::default()
+                    };
+                    let maximum = payload.max_cost_with_params(
+                        sender,
+                        ctx.cfg.gas_params(),
+                        ctx.tx.total_blob_gas(),
+                        ctx.block.blob_gasprice().unwrap(),
+                    );
+                    ctx.tx.caller = sender;
+                    ctx.tx.frame_transaction = Some(payload.into());
+                    let mut runtime = FrameTransactionRuntime::with_capacity(sender, 2);
+                    runtime.resolved_target = payer;
+                    runtime.approval.sender_approved = true;
+                    runtime.enter_scope();
+                    ctx.local.set_frame_transaction(Some(runtime));
+                    let checkpoint = ctx.journaled_state.checkpoint();
+                    ctx.approve_frame_with_state_gas(payer, U256::from(1), u64::MAX)
+                        .unwrap();
+                    let runtime = ctx.local.frame_transaction_mut().unwrap();
+                    runtime.exit_scope(success);
+                    runtime.commit_root_approval();
+                    runtime.current_frame_index = 1;
+                    if !success {
+                        ctx.journaled_state.checkpoint_revert(checkpoint);
+                    }
+                    let expected = if disabled || !success {
+                        U256::ZERO
+                    } else {
+                        balance.min(maximum)
+                    };
+                    assert_eq!(ctx.txtrace(U256::from(0x14), U256::ZERO), Some(expected));
+                    assert_eq!(ctx.txtrace(U256::from(0x14), U256::from(1)), None);
+                    if success && !disabled {
+                        assert_eq!(
+                            ctx.journaled_state.state[&payer].info.balance,
+                            balance - expected
+                        );
+                    }
+                    assert_eq!(
+                        ctx.local.frame_transaction().unwrap().approval.payer,
+                        success.then_some(payer)
+                    );
+                }
+            }
+        }
+    }
 }

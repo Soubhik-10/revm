@@ -4,7 +4,7 @@ use core::{
     cell::{Ref, RefCell},
     ops::Range,
 };
-use primitives::{Address, HashMap, StorageKey};
+use primitives::{Address, HashMap, StorageKey, U256};
 use std::{rc::Rc, string::String, vec::Vec};
 
 /// EIP-8141 approvals accumulated by successful top-level frames.
@@ -12,6 +12,8 @@ use std::{rc::Rc, string::String, vec::Vec};
 pub struct FrameApprovalState {
     /// Account that approved payment.
     pub payer: Option<Address>,
+    /// Amount actually deducted from the payer at payment approval.
+    pub gas_pre_charge: U256,
     /// Whether execution as the transaction sender has been approved.
     pub sender_approved: bool,
 }
