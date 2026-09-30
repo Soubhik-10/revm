@@ -362,6 +362,9 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         to: Address,
         balance: U256,
     ) -> Result<Option<TransferError>, DB::Error> {
+        if !balance.is_zero() {
+            self.inner.eip7906_diff = None;
+        }
         self.inner.transfer(&mut self.database, from, to, balance)
     }
 
@@ -372,6 +375,9 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         to: Address,
         balance: U256,
     ) -> Option<TransferError> {
+        if !balance.is_zero() {
+            self.inner.eip7906_diff = None;
+        }
         self.inner.transfer_loaded(from, to, balance)
     }
 
@@ -388,6 +394,7 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         old_balance: U256,
         bump_nonce: bool,
     ) {
+        self.inner.eip7906_diff = None;
         self.inner
             .caller_accounting_journal_entry(address, old_balance, bump_nonce);
     }
@@ -408,6 +415,7 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
     #[inline]
     #[expect(deprecated)]
     fn nonce_bump_journal_entry(&mut self, address: Address) {
+        self.inner.eip7906_diff = None;
         self.inner.nonce_bump_journal_entry(address)
     }
 
@@ -936,7 +944,16 @@ mod tests {
             .data
             .set_balance(U256::from(12));
         journal.sstore(ACCOUNT, SLOT, U256::from(4)).unwrap();
+        journal
+            .load_account_mut(OTHER)
+            .unwrap()
+            .data
+            .set_code(TOPIC, Bytecode::new_legacy(Bytes::from_static(&[0x00])));
         journal.prepare_eip7906();
+        assert_eq!(
+            trace(&journal, TxTraceParam::ContractsDeployed, 0),
+            U256::from(1)
+        );
         assert_eq!(
             trace(&journal, TxTraceParam::BalancesChanged, 0),
             U256::from(1)
@@ -948,6 +965,30 @@ mod tests {
             U256::ZERO
         );
         assert_eq!(trace(&journal, TxTraceParam::SlotsChanged, 0), U256::ZERO);
+        assert_eq!(
+            trace(&journal, TxTraceParam::ContractsDeployed, 0),
+            U256::ZERO
+        );
+        assert_eq!(
+            value(
+                &mut journal,
+                TxDiffParam::AddressSlotsCount,
+                address_word(ACCOUNT),
+                U256::ZERO
+            )
+            .unwrap()
+            .data,
+            U256::ZERO
+        );
+        assert_eq!(
+            value(
+                &mut journal,
+                TxDiffParam::AddressSlotIndex,
+                address_word(ACCOUNT),
+                U256::ZERO
+            ),
+            None
+        );
         assert_eq!(
             value(
                 &mut journal,
