@@ -400,6 +400,9 @@ where
         }
 
         let frame_checkpoint = evm.ctx().journal_mut().checkpoint();
+        if frame.mode == FrameMode::PostTx {
+            evm.ctx().journal_mut().prepare_eip7906();
+        }
         let log_start = evm.ctx_ref().journal().logs().len();
         let entry_gas = {
             let gas_params = evm.ctx_ref().cfg().gas_params();

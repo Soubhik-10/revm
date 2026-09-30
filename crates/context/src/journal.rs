@@ -184,6 +184,7 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         key: StorageKey,
         value: StorageValue,
     ) -> Result<StateLoad<SStoreResult>, <Self::Database as Database>::Error> {
+        self.inner.eip7906_diff = None;
         self.inner
             .sstore_assume_account_present(&mut self.database, address, key, value, false)
             .map_err(JournalLoadError::unwrap_db_error)
@@ -271,6 +272,17 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         &self.inner.logs
     }
 
+    fn prepare_eip7906(&mut self) {
+        if self.inner.eip7906_diff.is_none() {
+            self.inner.eip7906_diff = Some(Eip7906Diff::new(
+                &self.inner.state,
+                &self.inner.logs,
+                self.inner.transaction_id,
+                self.inner.journal.len(),
+            ));
+        }
+    }
+
     fn eip7906_txtrace(&self, param: U256, index: U256) -> Option<U256> {
         let selector = TxTraceParam::try_from(u8::try_from(param).ok()?).ok()?;
         let index = usize::try_from(index).ok()?;
@@ -278,7 +290,20 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
             return None;
         }
 
-        eip7906_trace_value(&self.inner.state, &self.inner.logs, selector, index)
+        let fallback;
+        let diff = match &self.inner.eip7906_diff {
+            Some(diff) => diff,
+            None => {
+                fallback = Eip7906Diff::new(
+                    &self.inner.state,
+                    &self.inner.logs,
+                    self.inner.transaction_id,
+                    self.inner.journal.len(),
+                );
+                &fallback
+            }
+        };
+        eip7906_trace_value(diff, &self.inner.logs, selector, index)
     }
 
     fn eip7906_txdiff(
@@ -310,15 +335,23 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
                 .map(Some);
         }
 
-        Ok(eip7906_transaction_local_value(
-            &self.inner.state,
-            &self.inner.logs,
-            selector,
-            address,
-            in2,
-            in3,
+        let fallback;
+        let diff = match &self.inner.eip7906_diff {
+            Some(diff) => diff,
+            None => {
+                fallback = Eip7906Diff::new(
+                    &self.inner.state,
+                    &self.inner.logs,
+                    self.inner.transaction_id,
+                    self.inner.journal.len(),
+                );
+                &fallback
+            }
+        };
+        Ok(
+            eip7906_transaction_local_value(diff, selector, address, in2, in3)
+                .map(|value| StateLoad::new(value, false)),
         )
-        .map(|value| StateLoad::new(value, false)))
     }
 
     fn eip7906_event_data(&self, event_index: U256) -> Option<Bytes> {
@@ -338,6 +371,7 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         skip_cold_load: bool,
     ) -> Result<StateLoad<SelfDestructResult>, JournalLoadError<<Self::Database as Database>::Error>>
     {
+        self.inner.eip7906_diff = None;
         self.inner
             .selfdestruct(&mut self.database, address, target, skip_cold_load)
     }
@@ -430,6 +464,7 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         address: Address,
         balance: U256,
     ) -> Result<(), <Self::Database as Database>::Error> {
+        self.inner.eip7906_diff = None;
         self.inner
             .balance_incr(&mut self.database, address, balance)
     }
@@ -452,6 +487,7 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         address: Address,
         skip_cold_load: bool,
     ) -> Result<StateLoad<Self::JournaledAccount<'_>>, JournalLoadError<DB::Error>> {
+        self.inner.eip7906_diff = None;
         self.inner
             .load_account_mut_optional(&mut self.database, address, skip_cold_load)
     }
@@ -462,6 +498,7 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         address: Address,
         load_code: bool,
     ) -> Result<StateLoad<Self::JournaledAccount<'_>>, DB::Error> {
+        self.inner.eip7906_diff = None;
         self.inner
             .load_account_mut_optional_code(&mut self.database, address, load_code, false)
             .map_err(JournalLoadError::unwrap_db_error)
@@ -547,6 +584,7 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
 
     #[inline]
     fn set_code_with_hash(&mut self, address: Address, code: Bytecode, hash: B256) {
+        self.inner.eip7906_diff = None;
         self.inner.set_code_with_hash(address, code, hash);
     }
 
@@ -558,6 +596,7 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         balance: U256,
         spec_id: SpecId,
     ) -> Result<JournalCheckpoint, TransferError> {
+        self.inner.eip7906_diff = None;
         // Ignore error.
         self.inner
             .create_account_checkpoint(caller, address, balance, spec_id)
@@ -600,6 +639,7 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         skip_cold_load: bool,
     ) -> Result<StateLoad<SStoreResult>, JournalLoadError<<Self::Database as Database>::Error>>
     {
+        self.inner.eip7906_diff = None;
         self.inner.sstore_assume_account_present(
             &mut self.database,
             address,
@@ -625,10 +665,75 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
     }
 }
 
-fn eip7906_balance_changes(state: &EvmState) -> Vec<(Address, U256, U256)> {
+/// Indexed, transaction-local view frozen while the read-only POST_TX suffix runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Eip7906Diff {
+    journal_index: usize,
+    balances: Vec<(Address, U256, U256)>,
+    slots: Vec<(Address, StorageKey, U256, U256)>,
+    deployments: Vec<(Address, B256)>,
+    address_slots: AddressMap<Vec<usize>>,
+    address_events: AddressMap<Vec<usize>>,
+    topic_events: primitives::HashMap<B256, Vec<usize>>,
+    flags: AddressMap<u8>,
+}
+
+impl Eip7906Diff {
+    fn new(
+        state: &EvmState,
+        logs: &[Log],
+        transaction_id: state::TransactionId,
+        journal_index: usize,
+    ) -> Self {
+        let slots = eip7906_storage_changes(state, transaction_id);
+        let mut address_slots = AddressMap::<Vec<usize>>::default();
+        for (index, (address, ..)) in slots.iter().enumerate() {
+            address_slots.entry(*address).or_default().push(index);
+        }
+        let mut address_events = AddressMap::<Vec<usize>>::default();
+        let mut topic_events = primitives::HashMap::<B256, Vec<usize>>::default();
+        for (index, event) in logs.iter().enumerate() {
+            address_events.entry(event.address).or_default().push(index);
+            // A log with a repeated indexed topic still appears only once.
+            for (topic_index, topic) in event.data.topics().iter().enumerate().skip(1) {
+                if !event.data.topics()[1..topic_index].contains(topic) {
+                    topic_events.entry(*topic).or_default().push(index);
+                }
+            }
+        }
+        let flags = state
+            .iter()
+            .filter(|(_, account)| account.transaction_id == transaction_id)
+            .map(|(address, _)| {
+                (
+                    *address,
+                    eip7906_account_change_flags(state, *address, transaction_id),
+                )
+            })
+            .collect();
+        Self {
+            journal_index,
+            balances: eip7906_balance_changes(state, transaction_id),
+            slots,
+            deployments: eip7906_deployments(state, transaction_id),
+            address_slots,
+            address_events,
+            topic_events,
+            flags,
+        }
+    }
+}
+
+fn eip7906_balance_changes(
+    state: &EvmState,
+    transaction_id: state::TransactionId,
+) -> Vec<(Address, U256, U256)> {
     let mut changes = state
         .iter()
         .filter_map(|(address, account)| {
+            if account.transaction_id != transaction_id {
+                return None;
+            }
             let before = account.original_info().balance;
             let after = account.info.balance;
             (before != after).then_some((*address, before, after))
@@ -638,23 +743,35 @@ fn eip7906_balance_changes(state: &EvmState) -> Vec<(Address, U256, U256)> {
     changes
 }
 
-fn eip7906_storage_changes(state: &EvmState) -> Vec<(Address, StorageKey, U256, U256)> {
+fn eip7906_storage_changes(
+    state: &EvmState,
+    transaction_id: state::TransactionId,
+) -> Vec<(Address, StorageKey, U256, U256)> {
     let mut changes = state
         .iter()
         .flat_map(|(address, account)| {
-            account.changed_storage_slots().map(move |(key, slot)| {
-                (*address, *key, slot.original_value(), slot.present_value())
-            })
+            account
+                .changed_storage_slots()
+                .filter(move |(_, slot)| slot.transaction_id == transaction_id)
+                .map(move |(key, slot)| {
+                    (*address, *key, slot.original_value(), slot.present_value())
+                })
         })
         .collect::<Vec<_>>();
     changes.sort_unstable_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
     changes
 }
 
-fn eip7906_deployments(state: &EvmState) -> Vec<(Address, B256)> {
+fn eip7906_deployments(
+    state: &EvmState,
+    transaction_id: state::TransactionId,
+) -> Vec<(Address, B256)> {
     let mut deployments = state
         .iter()
         .filter_map(|(address, account)| {
+            if account.transaction_id != transaction_id {
+                return None;
+            }
             let before = account.original_info().code_hash;
             let after = account.info.code_hash;
             let is_delegation = account
@@ -671,24 +788,24 @@ fn eip7906_deployments(state: &EvmState) -> Vec<(Address, B256)> {
 }
 
 fn eip7906_trace_value(
-    state: &EvmState,
+    diff: &Eip7906Diff,
     logs: &[Log],
     selector: TxTraceParam,
     index: usize,
 ) -> Option<U256> {
     match selector {
-        TxTraceParam::BalancesChanged => Some(U256::from(eip7906_balance_changes(state).len())),
-        TxTraceParam::SlotsChanged => Some(U256::from(eip7906_storage_changes(state).len())),
-        TxTraceParam::ContractsDeployed => Some(U256::from(eip7906_deployments(state).len())),
+        TxTraceParam::BalancesChanged => Some(U256::from(diff.balances.len())),
+        TxTraceParam::SlotsChanged => Some(U256::from(diff.slots.len())),
+        TxTraceParam::ContractsDeployed => Some(U256::from(diff.deployments.len())),
         TxTraceParam::BalanceChangeAddress
         | TxTraceParam::BalanceBefore
-        | TxTraceParam::BalanceAfter => eip7906_balance_trace_value(state, selector, index),
+        | TxTraceParam::BalanceAfter => eip7906_balance_trace_value(diff, selector, index),
         TxTraceParam::SlotChangeAddress
         | TxTraceParam::SlotKey
         | TxTraceParam::SlotValueBefore
-        | TxTraceParam::SlotValueAfter => eip7906_storage_trace_value(state, selector, index),
+        | TxTraceParam::SlotValueAfter => eip7906_storage_trace_value(diff, selector, index),
         TxTraceParam::DeployedAddress | TxTraceParam::DeployedCodeHash => {
-            eip7906_deployment_trace_value(state, selector, index)
+            eip7906_deployment_trace_value(diff, selector, index)
         }
         TxTraceParam::EventsCount => Some(U256::from(logs.len())),
         TxTraceParam::EventAddress
@@ -703,11 +820,11 @@ fn eip7906_trace_value(
 }
 
 fn eip7906_balance_trace_value(
-    state: &EvmState,
+    diff: &Eip7906Diff,
     selector: TxTraceParam,
     index: usize,
 ) -> Option<U256> {
-    let (address, before, after) = *eip7906_balance_changes(state).get(index)?;
+    let (address, before, after) = *diff.balances.get(index)?;
     Some(match selector {
         TxTraceParam::BalanceChangeAddress => U256::from_be_slice(address.as_slice()),
         TxTraceParam::BalanceBefore => before,
@@ -717,11 +834,11 @@ fn eip7906_balance_trace_value(
 }
 
 fn eip7906_storage_trace_value(
-    state: &EvmState,
+    diff: &Eip7906Diff,
     selector: TxTraceParam,
     index: usize,
 ) -> Option<U256> {
-    let (address, key, before, after) = *eip7906_storage_changes(state).get(index)?;
+    let (address, key, before, after) = *diff.slots.get(index)?;
     Some(match selector {
         TxTraceParam::SlotChangeAddress => U256::from_be_slice(address.as_slice()),
         TxTraceParam::SlotKey => key,
@@ -732,11 +849,11 @@ fn eip7906_storage_trace_value(
 }
 
 fn eip7906_deployment_trace_value(
-    state: &EvmState,
+    diff: &Eip7906Diff,
     selector: TxTraceParam,
     index: usize,
 ) -> Option<U256> {
-    let (address, code_hash) = *eip7906_deployments(state).get(index)?;
+    let (address, code_hash) = *diff.deployments.get(index)?;
     Some(match selector {
         TxTraceParam::DeployedAddress => U256::from_be_slice(address.as_slice()),
         TxTraceParam::DeployedCodeHash => U256::from_be_bytes(code_hash.0),
@@ -760,72 +877,33 @@ fn eip7906_event_trace_value(logs: &[Log], selector: TxTraceParam, index: usize)
 }
 
 fn eip7906_transaction_local_value(
-    state: &EvmState,
-    logs: &[Log],
+    diff: &Eip7906Diff,
     selector: TxDiffParam,
     address: Address,
     operand: U256,
     local_index: U256,
 ) -> Option<U256> {
+    let index_value = |indices: Option<&Vec<usize>>| {
+        let index = usize::try_from(local_index).ok()?;
+        indices?.get(index).map(|index| U256::from(*index))
+    };
+    let count = |indices: Option<&Vec<usize>>| Some(U256::from(indices.map_or(0, Vec::len)));
     match selector {
-        TxDiffParam::AddressSlotsCount => {
-            Some(U256::from(state.get(&address).map_or(0, |account| {
-                account.changed_storage_slots().count()
-            })))
-        }
-        TxDiffParam::AddressSlotIndex => eip7906_address_slot_index(state, address, local_index),
-        TxDiffParam::AddressEventsCount => Some(U256::from(
-            logs.iter().filter(|event| event.address == address).count(),
+        TxDiffParam::AddressSlotsCount => count(diff.address_slots.get(&address)),
+        TxDiffParam::AddressSlotIndex => index_value(diff.address_slots.get(&address)),
+        TxDiffParam::AddressEventsCount => count(diff.address_events.get(&address)),
+        TxDiffParam::AddressEventIndex => index_value(diff.address_events.get(&address)),
+        TxDiffParam::AccountChangeFlags => Some(U256::from(
+            diff.flags.get(&address).copied().unwrap_or_default(),
         )),
-        TxDiffParam::AddressEventIndex => {
-            eip7906_event_index(logs, local_index, |event| event.address == address)
-        }
-        TxDiffParam::AccountChangeFlags => {
-            Some(U256::from(eip7906_account_change_flags(state, address)))
-        }
         TxDiffParam::TopicEventsCount => {
-            let topic = B256::from(operand.to_be_bytes());
-            Some(U256::from(
-                logs.iter()
-                    .filter(|event| eip7906_event_has_indexed_topic(event, topic))
-                    .count(),
-            ))
+            count(diff.topic_events.get(&B256::from(operand.to_be_bytes())))
         }
         TxDiffParam::TopicEventIndex => {
-            let topic = B256::from(operand.to_be_bytes());
-            eip7906_event_index(logs, local_index, |event| {
-                eip7906_event_has_indexed_topic(event, topic)
-            })
+            index_value(diff.topic_events.get(&B256::from(operand.to_be_bytes())))
         }
         _ => unreachable!("only transaction-local selectors are dispatched here"),
     }
-}
-
-fn eip7906_address_slot_index(
-    state: &EvmState,
-    address: Address,
-    local_index: U256,
-) -> Option<U256> {
-    let local_index = usize::try_from(local_index).ok()?;
-    eip7906_storage_changes(state)
-        .iter()
-        .enumerate()
-        .filter(|(_, (entry_address, ..))| *entry_address == address)
-        .nth(local_index)
-        .map(|(index, _)| U256::from(index))
-}
-
-fn eip7906_event_index(
-    logs: &[Log],
-    local_index: U256,
-    matches: impl Fn(&Log) -> bool,
-) -> Option<U256> {
-    let local_index = usize::try_from(local_index).ok()?;
-    logs.iter()
-        .enumerate()
-        .filter(|(_, event)| matches(event))
-        .nth(local_index)
-        .map(|(index, _)| U256::from(index))
 }
 
 #[inline]
@@ -833,10 +911,17 @@ fn eip7906_address(value: U256) -> Address {
     Address::from_word(B256::from(value.to_be_bytes()))
 }
 
-fn eip7906_account_change_flags(state: &EvmState, address: Address) -> u8 {
+fn eip7906_account_change_flags(
+    state: &EvmState,
+    address: Address,
+    transaction_id: state::TransactionId,
+) -> u8 {
     let Some(account) = state.get(&address) else {
         return 0;
     };
+    if account.transaction_id != transaction_id {
+        return 0;
+    }
     let original = account.original_info();
     let mut flags = 0;
     if original.nonce != account.info.nonce {
@@ -845,23 +930,16 @@ fn eip7906_account_change_flags(state: &EvmState, address: Address) -> u8 {
     if original.balance != account.info.balance {
         flags |= ACCOUNT_BALANCE_CHANGED;
     }
-    if account.changed_storage_slots().next().is_some() {
+    if account
+        .changed_storage_slots()
+        .any(|(_, slot)| slot.transaction_id == transaction_id)
+    {
         flags |= ACCOUNT_STORAGE_CHANGED;
     }
     if original.code_hash != account.info.code_hash {
         flags |= ACCOUNT_CODE_HASH_CHANGED;
     }
     flags
-}
-
-#[inline]
-fn eip7906_event_has_indexed_topic(event: &Log, topic: B256) -> bool {
-    event
-        .data
-        .topics()
-        .iter()
-        .skip(1)
-        .any(|candidate| *candidate == topic)
 }
 
 #[cfg(test)]
@@ -902,6 +980,131 @@ mod tests {
         journal
             .eip7906_txtrace(U256::from(u8::from(param)), U256::from(index))
             .unwrap()
+    }
+
+    #[test]
+    fn retained_state_is_not_a_current_transaction_diff() {
+        let mut db = CacheDB::<EmptyDB>::default();
+        db.insert_account_info(
+            ACCOUNT,
+            state::AccountInfo {
+                balance: U256::from(10),
+                ..Default::default()
+            },
+        );
+        db.insert_account_storage(ACCOUNT, SLOT, U256::from(3))
+            .unwrap();
+        let mut journal = Journal::new(db);
+        journal
+            .load_account_mut(ACCOUNT)
+            .unwrap()
+            .data
+            .set_balance(U256::from(12));
+        journal.sstore(ACCOUNT, SLOT, U256::from(4)).unwrap();
+        journal.prepare_eip7906();
+        assert_eq!(
+            trace(&journal, TxTraceParam::BalancesChanged, 0),
+            U256::from(1)
+        );
+        journal.commit_tx();
+        assert!(journal.inner.eip7906_diff.is_none());
+        assert_eq!(
+            trace(&journal, TxTraceParam::BalancesChanged, 0),
+            U256::ZERO
+        );
+        assert_eq!(trace(&journal, TxTraceParam::SlotsChanged, 0), U256::ZERO);
+        assert_eq!(
+            value(
+                &mut journal,
+                TxDiffParam::AccountChangeFlags,
+                address_word(ACCOUNT),
+                U256::ZERO
+            )
+            .unwrap()
+            .data,
+            U256::ZERO
+        );
+        // Reloading the account must not reactivate an untouched retained slot.
+        journal.load_account(ACCOUNT).unwrap();
+        assert_eq!(trace(&journal, TxTraceParam::SlotsChanged, 0), U256::ZERO);
+        journal
+            .load_account_mut(ACCOUNT)
+            .unwrap()
+            .data
+            .set_balance(U256::from(15));
+        journal.sstore(ACCOUNT, SLOT, U256::from(7)).unwrap();
+        journal.prepare_eip7906();
+        assert_eq!(
+            trace(&journal, TxTraceParam::BalanceBefore, 0),
+            U256::from(12)
+        );
+        assert_eq!(
+            trace(&journal, TxTraceParam::BalanceAfter, 0),
+            U256::from(15)
+        );
+        assert_eq!(
+            trace(&journal, TxTraceParam::SlotValueBefore, 0),
+            U256::from(4)
+        );
+        assert_eq!(
+            trace(&journal, TxTraceParam::SlotValueAfter, 0),
+            U256::from(7)
+        );
+        journal.discard_tx();
+        assert!(journal.inner.eip7906_diff.is_none());
+        assert_eq!(trace(&journal, TxTraceParam::SlotsChanged, 0), U256::ZERO);
+        journal.load_account(ACCOUNT).unwrap();
+        assert_eq!(
+            trace(&journal, TxTraceParam::BalancesChanged, 0),
+            U256::ZERO
+        );
+        journal.prepare_eip7906();
+        journal.finalize();
+        assert!(journal.inner.eip7906_diff.is_none());
+    }
+
+    #[test]
+    fn frozen_indices_survive_static_reverts_but_not_body_rollback() {
+        let mut journal = Journal::new(CacheDB::<EmptyDB>::default());
+        journal.load_account(ACCOUNT).unwrap();
+        let body = journal.checkpoint();
+        journal.sstore(ACCOUNT, SLOT, U256::from(1)).unwrap();
+        journal.log(Log {
+            address: ACCOUNT,
+            data: LogData::new(vec![B256::ZERO, TOPIC, TOPIC], Bytes::new()).unwrap(),
+        });
+        journal.prepare_eip7906();
+        let slots_ptr = journal.inner.eip7906_diff.as_ref().unwrap().slots.as_ptr();
+        for _ in 0..20 {
+            let child = journal.checkpoint();
+            journal.load_account(OTHER).unwrap();
+            journal.checkpoint_revert(child);
+            journal.prepare_eip7906();
+            assert_eq!(
+                journal.inner.eip7906_diff.as_ref().unwrap().slots.as_ptr(),
+                slots_ptr
+            );
+            assert_eq!(
+                trace(&journal, TxTraceParam::SlotsChanged, 0),
+                U256::from(1)
+            );
+            assert_eq!(
+                value(
+                    &mut journal,
+                    TxDiffParam::TopicEventsCount,
+                    U256::from_be_bytes(TOPIC.0),
+                    U256::ZERO
+                )
+                .unwrap()
+                .data,
+                U256::from(1)
+            );
+        }
+        journal.checkpoint_revert(body);
+        assert!(journal.inner.eip7906_diff.is_none());
+        journal.prepare_eip7906();
+        assert_eq!(trace(&journal, TxTraceParam::SlotsChanged, 0), U256::ZERO);
+        assert_eq!(trace(&journal, TxTraceParam::EventsCount, 0), U256::ZERO);
     }
 
     #[test]
@@ -958,6 +1161,7 @@ mod tests {
             data: LogData::new(vec![B256::ZERO, TOPIC, TOPIC], Bytes::new()).unwrap(),
         });
 
+        journal.prepare_eip7906();
         let expected_trace = [
             (TxTraceParam::BalancesChanged, 0, U256::from(1)),
             (TxTraceParam::SlotsChanged, 0, U256::from(2)),

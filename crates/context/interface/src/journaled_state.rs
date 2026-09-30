@@ -131,6 +131,12 @@ pub trait JournalTr {
     /// Returns the logs from journal.
     fn logs(&self) -> &[Log];
 
+    /// Freeze indexed EIP-7906 views before the read-only POST_TX suffix.
+    ///
+    /// Implementations may reuse the view across static descendants. Transaction
+    /// boundaries and execution-body rollback must invalidate it.
+    fn prepare_eip7906(&mut self) {}
+
     /// Returns one EIP-7906 transaction-trace value.
     ///
     /// Journals that do not retain the transaction baseline return `None`. The

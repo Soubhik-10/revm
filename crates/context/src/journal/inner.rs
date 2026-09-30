@@ -60,6 +60,9 @@ pub struct JournalCfg {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct JournalInner<ENTRY> {
+    /// Frozen EIP-7906 indices for the read-only POST_TX suffix.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub(crate) eip7906_diff: Option<super::Eip7906Diff>,
     /// The current state
     pub state: EvmState,
     /// Transient storage that is discarded after every transaction.
@@ -107,6 +110,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     /// In ordinary case this is precompile or beneficiary.
     pub fn new() -> JournalInner<ENTRY> {
         Self {
+            eip7906_diff: None,
             state: HashMap::default(),
             transient_storage: TransientStorage::default(),
             logs: Vec::new(),
@@ -160,7 +164,9 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             cfg,
             warm_addresses,
             selfdestructed_addresses,
+            eip7906_diff,
         } = self;
+        *eip7906_diff = None;
         // Cfg and state are not changed. They are always set again before execution.
         let _ = cfg;
         let _ = state;
@@ -192,7 +198,9 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             cfg,
             warm_addresses,
             selfdestructed_addresses,
+            eip7906_diff,
         } = self;
+        *eip7906_diff = None;
         let is_spurious_dragon_enabled = cfg.spec.is_enabled_in(SPURIOUS_DRAGON);
         // iterate over all journals entries and revert our global state
         journal.drain(..).rev().for_each(|entry| {
@@ -226,7 +234,9 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             cfg,
             warm_addresses,
             selfdestructed_addresses,
+            eip7906_diff,
         } = self;
+        *eip7906_diff = None;
         // Clear coinbase address warming for next tx
         warm_addresses.clear_coinbase_and_access_list();
         selfdestructed_addresses.clear();
@@ -629,6 +639,13 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     /// Reverts all changes to state until given checkpoint.
     #[inline]
     pub fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) {
+        // Static descendants may revert warm accesses without changing the frozen
+        // view. Reverting the execution body, however, invalidates its indices.
+        if self.eip7906_diff.as_ref().is_some_and(|diff| {
+            checkpoint.journal_i < diff.journal_index || checkpoint.log_i < self.logs.len()
+        }) {
+            self.eip7906_diff = None;
+        }
         let is_spurious_dragon_enabled = self.cfg.spec.is_enabled_in(SPURIOUS_DRAGON);
         let state = &mut self.state;
         let transient_storage = &mut self.transient_storage;
@@ -1221,6 +1238,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     /// Pushes log into subroutine.
     #[inline]
     pub fn log(&mut self, log: Log) {
+        self.eip7906_diff = None;
         self.logs.push(log);
     }
 
