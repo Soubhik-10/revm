@@ -1,6 +1,8 @@
 use crate::{Inspector, InspectorEvmTr, JournalExt};
 use context::journaled_state::JournalCheckpoint;
-use context::{result::ExecutionResult, ContextTr, JournalEntry, JournalTr};
+use context::{
+    result::ExecutionResult, ContextTr, JournalEntry, JournalTr, Transaction, TransactionType,
+};
 use handler::{
     eip8141::{self, DefaultFrameStage, FrameValidationResult},
     evm::FrameTr,
@@ -90,6 +92,27 @@ where
         &mut self,
         evm: &mut Self::Evm,
     ) -> Result<ExecutionResult<Self::HaltReason>, Self::Error> {
+        if evm.ctx_ref().tx().tx_type() == TransactionType::Eip8141 {
+            return eip8141::run_with_callbacks(
+                self,
+                evm,
+                |handler, evm, frame| handler.inspect_run_exec_loop(evm, frame),
+                |_, evm, stage, frame_input, result| {
+                    let (context, inspector) = evm.ctx_inspector();
+                    match stage {
+                        DefaultFrameStage::Start => {
+                            *result = frame_start(context, inspector, frame_input);
+                        }
+                        DefaultFrameStage::End => {
+                            if let Some(result) = result {
+                                frame_end(context, inspector, frame_input, result);
+                            }
+                        }
+                    }
+                },
+            );
+        }
+
         let init_and_floor_gas = self.validate(evm)?;
         // Create the transaction-level gas tracker from the validated
         // intrinsic gas (mirrors `Handler::run_without_catch_error`).
@@ -480,6 +503,78 @@ mod tests {
         assert_eq!(inspector.call_end_count(), 4);
         assert_eq!(inspector.get_count(0xaa), 2);
         assert_eq!(inspector.get_count(0xfe), 0);
+    }
+
+    #[test]
+    fn inspected_frame_transaction_uses_frame_executor() {
+        let sender = primitives::address!("1000000000000000000000000000000000000001");
+        let target = primitives::address!("2000000000000000000000000000000000000002");
+        let transaction = FrameTransaction {
+            frames: vec![
+                Frame::new(
+                    FrameMode::Default,
+                    0x03,
+                    FrameAddress::default(),
+                    FrameLimits {
+                        execution: 3_000,
+                        state: 0,
+                    },
+                    U256::ZERO,
+                    Bytes::new(),
+                ),
+                Frame::new(
+                    FrameMode::Sender,
+                    0,
+                    target.into(),
+                    FrameLimits {
+                        execution: 3_000,
+                        state: 0,
+                    },
+                    U256::ZERO,
+                    Bytes::new(),
+                ),
+            ],
+            ..Default::default()
+        };
+        let gas_limit = transaction.gas_limit(sender).unwrap();
+        let tx = TxEnv::builder()
+            .tx_type(Some(0x06))
+            .caller(sender)
+            .kind(TxKind::Call(sender))
+            .gas_limit(gas_limit)
+            .gas_priority_fee(Some(0))
+            .frame_transaction(transaction)
+            .build()
+            .unwrap();
+
+        let mut db = CacheDB::<EmptyDB>::default();
+        db.insert_account_info(
+            sender,
+            AccountInfo::default().with_code(Bytecode::new_legacy(Bytes::from_static(&[
+                0x60, 0x03, 0x5f, 0x5f, 0xaa, 0x00,
+            ]))),
+        );
+        db.insert_account_info(
+            target,
+            AccountInfo::default().with_code(Bytecode::new_legacy(Bytes::from_static(&[0x00]))),
+        );
+        let mut inspector = CountInspector::new();
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+            .with_db(db)
+            .build_mainnet_with_inspector(&mut inspector);
+        evm.ctx.set_tx(tx);
+
+        let mut handler: MainnetHandler<
+            _,
+            context::result::EVMError<core::convert::Infallible>,
+            _,
+        > = MainnetHandler::default();
+        let result = handler.inspect_run(&mut evm).unwrap();
+        assert!(matches!(result, ExecutionResult::FrameTransaction { .. }));
+        drop(evm);
+        assert_eq!(inspector.call_count(), 2);
+        assert_eq!(inspector.call_end_count(), 2);
     }
 }
 
