@@ -33,6 +33,12 @@ pub struct GasTracker {
     state_gas_spilled: u64,
     /// Refunded gas. Used to refund the gas to the caller at the end of execution.
     refunded: i64,
+    /// Whether state gas is an explicit frame-local budget.
+    ///
+    /// EIP-8141 frames do not use the legacy EIP-8037 spill behavior: a state
+    /// gas charge that exceeds this budget must halt the frame instead of
+    /// consuming execution gas.
+    state_gas_isolated: bool,
 }
 
 impl GasTracker {
@@ -46,6 +52,21 @@ impl GasTracker {
             state_gas_spent: 0,
             state_gas_spilled: 0,
             refunded: 0,
+            state_gas_isolated: false,
+        }
+    }
+
+    /// Creates a tracker with an explicit, non-spilling state gas budget.
+    #[inline]
+    pub const fn new_isolated_state_gas(gas_limit: u64, remaining: u64, state_gas: u64) -> Self {
+        Self {
+            gas_limit,
+            remaining,
+            reservoir: state_gas,
+            state_gas_spent: 0,
+            state_gas_spilled: 0,
+            refunded: 0,
+            state_gas_isolated: true,
         }
     }
 
@@ -86,10 +107,41 @@ impl GasTracker {
         self.reservoir
     }
 
+    /// Returns whether state gas is an explicit non-spilling budget.
+    #[inline]
+    pub const fn state_gas_isolated(&self) -> bool {
+        self.state_gas_isolated
+    }
+
     /// Sets the reservoir gas.
     #[inline]
     pub const fn set_reservoir(&mut self, val: u64) {
         self.reservoir = val;
+    }
+
+    /// Adopts a reservoir returned by a child frame and reconciles it with any
+    /// outstanding state gas spilled into regular gas.
+    ///
+    /// A successful child can refill state gas charged by an ancestor (for
+    /// example, by clearing a slot created by a sibling). Since the child does
+    /// not inherit the ancestor's [`Self::state_gas_spilled`] counter, that
+    /// refill initially lands in the child's reservoir. On return it must first
+    /// restore the parent's regular gas in last-in-first-out order; only the
+    /// excess remains in the reservoir.
+    ///
+    /// This only reconciles the funding pools. The child's signed
+    /// `state_gas_spent` has already accounted for the refill and is merged
+    /// separately by the frame handler.
+    #[inline]
+    pub const fn absorb_returned_reservoir(&mut self, reservoir: u64) {
+        let to_remaining = if reservoir < self.state_gas_spilled {
+            reservoir
+        } else {
+            self.state_gas_spilled
+        };
+        self.remaining = self.remaining.saturating_add(to_remaining);
+        self.state_gas_spilled -= to_remaining;
+        self.reservoir = reservoir - to_remaining;
     }
 
     /// Returns the state gas spent.
@@ -161,6 +213,15 @@ impl GasTracker {
     #[inline]
     #[must_use = "In case of not enough gas, the interpreter should halt with an out-of-gas error"]
     pub const fn record_state_cost(&mut self, cost: u64) -> bool {
+        if self.state_gas_isolated {
+            if self.reservoir < cost {
+                return false;
+            }
+            self.state_gas_spent = self.state_gas_spent.saturating_add(cost as i64);
+            self.reservoir -= cost;
+            return true;
+        }
+
         if self.reservoir >= cost {
             self.state_gas_spent = self.state_gas_spent.saturating_add(cost as i64);
             self.reservoir -= cost;
@@ -269,6 +330,26 @@ mod tests {
             GasTracker::new_used_gas(10, 11, 3),
             GasTracker::new(10, 0, 3)
         );
+    }
+
+    #[test]
+    fn returned_reservoir_restores_spilled_state_gas_first() {
+        let mut gas = GasTracker::new(1_000, 600, 0);
+        assert!(gas.record_state_cost(400));
+
+        gas.absorb_returned_reservoir(250);
+
+        assert_eq!(gas.remaining(), 450);
+        assert_eq!(gas.reservoir(), 0);
+        assert_eq!(gas.state_gas_spilled(), 150);
+        assert_eq!(gas.state_gas_spent(), 400);
+
+        gas.absorb_returned_reservoir(200);
+
+        assert_eq!(gas.remaining(), 600);
+        assert_eq!(gas.reservoir(), 50);
+        assert_eq!(gas.state_gas_spilled(), 0);
+        assert_eq!(gas.state_gas_spent(), 400);
     }
 }
 

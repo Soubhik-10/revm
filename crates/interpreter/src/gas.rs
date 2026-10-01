@@ -65,6 +65,15 @@ impl Gas {
         }
     }
 
+    /// Creates gas with separate execution and non-spilling state budgets.
+    #[inline]
+    pub const fn new_with_regular_gas_and_isolated_state_gas(limit: u64, state_gas: u64) -> Self {
+        Self {
+            tracker: GasTracker::new_isolated_state_gas(limit, limit, state_gas),
+            memory: MemoryGas::new(),
+        }
+    }
+
     /// Creates a new `Gas` struct with the given gas limit, but without any gas remaining.
     #[inline]
     pub const fn new_spent_with_reservoir(limit: u64, reservoir: u64) -> Self {
@@ -150,6 +159,12 @@ impl Gas {
     #[inline]
     pub const fn reservoir(&self) -> u64 {
         self.tracker.reservoir()
+    }
+
+    /// Returns whether state gas is an explicit non-spilling budget.
+    #[inline]
+    pub const fn state_gas_isolated(&self) -> bool {
+        self.tracker.state_gas_isolated()
     }
 
     /// Sets the state gas reservoir (used when propagating from child frame).

@@ -2,6 +2,7 @@
 mod alloy_types;
 pub mod eip2930;
 pub mod eip7702;
+pub mod eip8141;
 mod either;
 pub mod transaction_type;
 
@@ -11,6 +12,7 @@ pub use alloy_types::{
 };
 pub use eip2930::AccessListItemTr;
 pub use eip7702::AuthorizationTr;
+pub use eip8141::FrameTransaction;
 pub use transaction_type::TransactionType;
 
 use crate::result::InvalidTransaction;
@@ -44,6 +46,14 @@ pub trait Transaction {
     ///
     /// Depending on this field other functions should be called.
     fn tx_type(&self) -> u8;
+
+    /// Returns the EIP-8141 execution payload for frame transactions.
+    ///
+    /// This is `None` for every other transaction type. The payload intentionally contains no
+    /// envelope/RLP concerns; consensus clients construct it after decoding the transaction.
+    fn frame_transaction(&self) -> Option<&FrameTransaction> {
+        None
+    }
 
     /// Caller aka Author aka transaction signer.
     ///

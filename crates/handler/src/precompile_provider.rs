@@ -347,6 +347,9 @@ mod tests {
                  instead of halting with PrecompileOOG"
             ),
             ExecutionResult::Revert { .. } => panic!("expected Halt(PrecompileOOG), got Revert"),
+            ExecutionResult::FrameTransaction { .. } => {
+                panic!("expected Halt(PrecompileOOG), got frame transaction")
+            }
         }
     }
 }

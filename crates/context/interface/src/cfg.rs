@@ -70,6 +70,11 @@ pub trait Cfg {
     /// Returns whether the fee charge is disabled.
     fn is_fee_charge_disabled(&self) -> bool;
 
+    /// Allows empty protocol signature placeholders during RPC simulation only.
+    fn allow_frame_signature_placeholders(&self) -> bool {
+        false
+    }
+
     /// Returns whether EIP-7708 (ETH transfers emit logs) is disabled.
     fn is_eip7708_disabled(&self) -> bool;
 

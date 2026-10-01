@@ -182,6 +182,8 @@ impl OpCode {
                 | OpCode::CODECOPY
                 | OpCode::CALLDATACOPY
                 | OpCode::RETURNDATACOPY
+                | OpCode::FRAMEDATACOPY
+                | OpCode::SIGDATACOPY
                 | OpCode::CALL
                 | OpCode::CALLCODE
                 | OpCode::DELEGATECALL
@@ -570,18 +572,19 @@ opcodes! {
     // 0xA7
     // 0xA8
     // 0xA9
-    // 0xAA
+    0xAA => APPROVE => stack_io(3, 0), terminating;
     // 0xAB
     // 0xAC
     // 0xAD
     // 0xAE
     // 0xAF
-    // 0xB0
-    // 0xB1
-    // 0xB2
-    // 0xB3
-    // 0xB4
-    // 0xB5
+    0xB0 => TXPARAM => stack_io(1, 1);
+    0xB1 => FRAMEDATALOAD => stack_io(2, 1);
+    0xB2 => FRAMEDATACOPY => stack_io(4, 0);
+    0xB3 => FRAMEPARAM => stack_io(2, 1);
+    // Selectors 0..=3 have a 2 -> 1 effect.
+    0xB4 => SIGPARAM => stack_io(2, 1);
+    0xB5 => SIGDATACOPY => stack_io(4, 0);
     // 0xB6
     // 0xB7
     // 0xB8
@@ -710,6 +713,8 @@ mod tests {
             0x80..=0x8f,
             0x90..=0x9f,
             0xa0..=0xa4,
+            0xaa..=0xaa,
+            0xb0..=0xb5,
             0xf0..=0xf5,
             0xfa..=0xfa,
             0xfd..=0xfd,
@@ -729,12 +734,12 @@ mod tests {
         for _ in OPCODE_INFO.into_iter().flatten() {
             opcode_num += 1;
         }
-        assert_eq!(opcode_num, 154);
+        assert_eq!(opcode_num, 161);
     }
 
     #[test]
     fn test_terminating_opcodes() {
-        let terminating = [REVERT, RETURN, INVALID, SELFDESTRUCT, STOP];
+        let terminating = [APPROVE, REVERT, RETURN, INVALID, SELFDESTRUCT, STOP];
         let mut opcodes = [false; 256];
         for terminating in terminating.iter() {
             opcodes[*terminating as usize] = true;

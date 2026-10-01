@@ -4,7 +4,6 @@ use crate::{
     frame::handle_reservoir_remaining_gas,
     post_execution::{self, build_result_gas},
     pre_execution::{self, apply_eip7702_auth_list, PreExecutionOutput},
-    system_call::SYSTEM_CALL_REGULAR_GAS_LIMIT,
     validation, EvmTr, FrameResult, ItemOrResult,
 };
 use context::{
@@ -130,7 +129,7 @@ pub trait Handler {
     ) -> Result<ExecutionResult<Self::HaltReason>, Self::Error> {
         // dummy values that are not used.
         let init_and_floor_gas = InitialAndFloorGas::new(0, 0);
-        let mut gas = self.system_call_gas(evm);
+        let mut gas = self.tx_gas(evm, &init_and_floor_gas);
         // System calls skip pre-execution, so the checkpoint that
         // [`Handler::execution`] settles is opened here.
         let checkpoint = evm.ctx().journal_mut().checkpoint();
@@ -166,6 +165,9 @@ pub trait Handler {
         &mut self,
         evm: &mut Self::Evm,
     ) -> Result<ExecutionResult<Self::HaltReason>, Self::Error> {
+        if evm.ctx_ref().tx().tx_type() == context_interface::TransactionType::Eip8141 {
+            return crate::eip8141::run(self, evm);
+        }
         let init_and_floor_gas = self.validate(evm)?;
         // Create the transaction-level gas tracker from the validated
         // intrinsic gas, mirroring how frames create their gas at frame init.
@@ -176,7 +178,6 @@ pub trait Handler {
         // means the runtime gas phase ran out of gas: the transaction is
         // included as an out-of-gas halt without entering execution.
         let pre_execution = self.pre_execution(evm, &mut gas)?;
-
         let refund = pre_execution.map(|pe| pe.eip7702_refund).unwrap_or(0) as i64;
 
         let mut exec_result = None;
@@ -219,29 +220,6 @@ pub trait Handler {
         let (remaining, reservoir) = init_and_floor_gas
             .initial_gas_and_reservoir(tx_gas_limit, ctx.cfg().tx_gas_limit_cap());
         GasTracker::new(tx_gas_limit, remaining, reservoir)
-    }
-
-    /// Creates the transaction-level [`GasTracker`] for a system call.
-    ///
-    /// System calls have no intrinsic gas and are not subject to the EIP-7825
-    /// `TX_MAX_GAS_LIMIT` cap. Under EIP-8037 the base
-    /// [`SYSTEM_CALL_REGULAR_GAS_LIMIT`] is the regular budget (`gas_left`) and
-    /// everything above it, the margin sized for [`SYSTEM_MAX_SSTORES_PER_CALL`]
-    /// fresh storage writes, is placed in the state-gas reservoir, so `GAS`
-    /// inside a system contract reports the regular budget only. Without
-    /// EIP-8037 the whole gas limit is regular gas.
-    ///
-    /// [`SYSTEM_MAX_SSTORES_PER_CALL`]: crate::system_call::SYSTEM_MAX_SSTORES_PER_CALL
-    #[inline]
-    fn system_call_gas(&self, evm: &mut Self::Evm) -> GasTracker {
-        let ctx = evm.ctx_ref();
-        let gas_limit = ctx.tx().gas_limit();
-        let reservoir = if ctx.cfg().is_amsterdam_eip8037_enabled() {
-            gas_limit.saturating_sub(SYSTEM_CALL_REGULAR_GAS_LIMIT)
-        } else {
-            0
-        };
-        GasTracker::new(gas_limit, gas_limit - reservoir, reservoir)
     }
 
     /// Prepares the EVM state for execution.

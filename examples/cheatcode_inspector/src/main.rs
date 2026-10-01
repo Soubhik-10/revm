@@ -13,7 +13,7 @@ use revm::{
         BlockEnv, Cfg, CfgEnv, ContextTr, Evm, LocalContext, TxEnv,
     },
     context_interface::{
-        journaled_state::{AccountLoad, JournalCheckpoint, TransferError},
+        journaled_state::{AccountLoad, JournalCheckpoint, TransferError, WarmAccessSnapshot},
         result::EVMError,
         Block, JournalTr, Transaction,
     },
@@ -72,6 +72,10 @@ impl JournalTr for Backend {
 
     fn db_and_state_mut(&mut self) -> (&mut Self::Database, &mut Self::State) {
         self.journaled_state.db_and_state_mut()
+    }
+
+    fn supports_eip8141(&self) -> bool {
+        self.journaled_state.supports_eip8141()
     }
 
     fn sload(
@@ -214,6 +218,18 @@ impl JournalTr for Backend {
 
     fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) {
         self.journaled_state.checkpoint_revert(checkpoint)
+    }
+
+    fn warm_access_snapshot(&self) -> WarmAccessSnapshot {
+        self.journaled_state.warm_access_snapshot()
+    }
+
+    fn restore_warm_access_snapshot(&mut self, snapshot: &WarmAccessSnapshot) {
+        self.journaled_state.restore_warm_access_snapshot(snapshot)
+    }
+
+    fn clear_transient_storage(&mut self) {
+        self.journaled_state.clear_transient_storage()
     }
 
     fn create_account_checkpoint(

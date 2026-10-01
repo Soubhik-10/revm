@@ -146,6 +146,7 @@ impl Test {
                 Some(add) => TxKind::Call(add),
                 None => TxKind::Create,
             },
+            frame_transaction: None,
         };
 
         Ok(tx)
