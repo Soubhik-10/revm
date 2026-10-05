@@ -101,6 +101,21 @@ pub trait JournalTr {
         _skip_cold_load: bool,
     ) -> Result<StateLoad<SStoreResult>, JournalLoadError<<Self::Database as Database>::Error>>;
 
+    /// Reads protocol storage without warming the account or slot.
+    fn protocol_sload(
+        &mut self,
+        address: Address,
+        key: StorageKey,
+    ) -> Result<StorageValue, <Self::Database as Database>::Error>;
+
+    /// Journals a protocol storage write without warming the account or slot.
+    fn protocol_sstore(
+        &mut self,
+        address: Address,
+        key: StorageKey,
+        value: StorageValue,
+    ) -> Result<(), <Self::Database as Database>::Error>;
+
     /// Loads transient storage value.
     fn tload(&mut self, address: Address, key: StorageKey) -> StorageValue;
 

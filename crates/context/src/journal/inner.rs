@@ -18,7 +18,7 @@ use primitives::{
     hints_util::unlikely,
     Address, Bytes, HashMap, Log, LogData, StorageKey, StorageValue, B256, KECCAK_EMPTY, U256,
 };
-use state::{Account, EvmState, TransactionId, TransientStorage};
+use state::{Account, EvmState, EvmStorageSlot, TransactionId, TransientStorage};
 use std::vec::Vec;
 
 /// Configuration for the journal that affects EVM execution behavior.
@@ -1071,6 +1071,103 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         account.sstore_concrete_error(key, new, skip_cold_load)
     }
 
+    /// Loads protocol-managed storage without changing EIP-2929 warmth.
+    pub fn protocol_storage<DB: Database>(
+        &mut self,
+        db: &mut DB,
+        address: Address,
+        key: StorageKey,
+    ) -> Result<StorageValue, DB::Error> {
+        self.load_protocol_account(db, address)?;
+        let account = self.state.get_mut(&address).expect("protocol account loaded");
+        let transaction_id = self.transaction_id;
+        let is_created = account.is_created();
+        let account_id = account.info.account_id;
+        let slot = match account.storage.entry(key) {
+            Entry::Occupied(entry) => {
+                let slot = entry.into_mut();
+                if slot.transaction_id != transaction_id {
+                    slot.original_value = slot.present_value;
+                    slot.transaction_id = transaction_id;
+                    slot.mark_cold();
+                }
+                slot
+            }
+            Entry::Vacant(entry) => {
+                let value = if is_created {
+                    StorageValue::ZERO
+                } else if let Some(account_id) = account_id {
+                    db.storage_by_account_id(address, account_id, key)?
+                } else {
+                    db.storage(address, key)?
+                };
+                let mut slot = EvmStorageSlot::new(value, transaction_id);
+                slot.mark_cold();
+                entry.insert(slot)
+            }
+        };
+        Ok(slot.present_value)
+    }
+
+    /// Writes protocol-managed storage without changing EIP-2929 warmth.
+    pub fn set_protocol_storage<DB: Database>(
+        &mut self,
+        db: &mut DB,
+        address: Address,
+        key: StorageKey,
+        value: StorageValue,
+    ) -> Result<(), DB::Error> {
+        let previous = self.protocol_storage(db, address, key)?;
+        if previous == value {
+            return Ok(());
+        }
+
+        let account = self.state.get_mut(&address).expect("protocol account loaded");
+        Self::touch_account(&mut self.journal, address, account);
+        account
+            .storage
+            .get_mut(&key)
+            .expect("protocol storage loaded")
+            .present_value = value;
+        self.journal
+            .push(ENTRY::storage_changed(address, key, previous));
+        Ok(())
+    }
+
+    /// Loads an account for protocol bookkeeping while preserving its cold/warm state.
+    fn load_protocol_account<DB: Database>(
+        &mut self,
+        db: &mut DB,
+        address: Address,
+    ) -> Result<(), DB::Error> {
+        let transaction_id = self.transaction_id;
+        match self.state.entry(address) {
+            Entry::Occupied(mut entry) => {
+                let account = entry.get_mut();
+                if account.transaction_id != transaction_id {
+                    if account.is_selfdestructed_locally() {
+                        account.selfdestruct();
+                        account.unmark_selfdestructed_locally();
+                    }
+                    account.set_current_info_as_original();
+                    account.unmark_created_locally();
+                    account.transaction_id = transaction_id;
+                    account.mark_cold();
+                }
+            }
+            Entry::Vacant(entry) => {
+                let mut account = db
+                    .basic(address)?
+                    .map(Account::from)
+                    .unwrap_or_else(|| Account::new_not_existing(transaction_id));
+                account.transaction_id = transaction_id;
+                account.mark_cold();
+                entry.insert(account);
+            }
+        }
+        Ok(())
+    }
+
     /// Read transient storage tied to the account.
     ///
     /// EIP-1153: Transient storage opcodes
@@ -1196,5 +1293,30 @@ mod tests {
         let state_load = result.unwrap();
         assert!(!state_load.is_cold); // Should be warm
         assert_eq!(state_load.data, U256::ZERO); // Empty slot
+    }
+
+    #[test]
+    fn protocol_storage_is_cold_and_checkpoint_revertible() {
+        let mut journal = JournalInner::<JournalEntry>::new();
+        let mut db = EmptyDB::new();
+        let address = address!("0000000000000000000000000000000000008250");
+        let key = U256::from(7);
+        let checkpoint = journal.checkpoint();
+
+        assert_eq!(journal.protocol_storage(&mut db, address, key).unwrap(), U256::ZERO);
+        journal
+            .set_protocol_storage(&mut db, address, key, U256::from(3))
+            .unwrap();
+        assert_eq!(journal.protocol_storage(&mut db, address, key).unwrap(), U256::from(3));
+        assert!(journal.state[&address].is_cold_transaction_id(journal.transaction_id));
+        assert!(journal.state[&address].storage[&key]
+            .is_cold_transaction_id(journal.transaction_id));
+        assert!(!journal.journal.iter().any(|entry| matches!(
+            entry,
+            JournalEntry::AccountWarmed { .. } | JournalEntry::StorageWarmed { .. }
+        )));
+
+        journal.checkpoint_revert(checkpoint);
+        assert_eq!(journal.state[&address].storage[&key].present_value, U256::ZERO);
     }
 }

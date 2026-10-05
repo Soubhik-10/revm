@@ -14,6 +14,10 @@ use std::vec::Vec;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct FrameTransaction {
+    /// Nonce keys, absent for the pre-EIP-8250 payload.
+    pub nonce_keys: Option<Vec<U256>>,
+    /// Canonical nonce calldata supplied by the consensus decoder.
+    pub nonce_calldata: Vec<u8>,
     /// Ordered top-level frames.
     pub frames: Vec<Frame>,
     /// Signature and witness entries exposed to validation code.
@@ -91,9 +95,12 @@ impl FrameTransaction {
                 })
             })
         };
-        let frame_tokens = self.frames.iter().fold(0u64, |total, frame| {
-            total.saturating_add(tokens(&frame.data))
-        });
+        let frame_tokens = self
+            .frames
+            .iter()
+            .fold(tokens(&self.nonce_calldata), |total, frame| {
+                total.saturating_add(tokens(&frame.data))
+            });
         self.signatures
             .iter()
             .fold(frame_tokens, |total, signature| {
@@ -106,9 +113,12 @@ impl FrameTransaction {
 
     /// Returns the byte length of the charged calldata fields.
     pub fn calldata_len(&self) -> u64 {
-        let frame_len = self.frames.iter().fold(0u64, |total, frame| {
-            total.saturating_add(frame.data.len() as u64)
-        });
+        let frame_len = self
+            .frames
+            .iter()
+            .fold(self.nonce_calldata.len() as u64, |total, frame| {
+                total.saturating_add(frame.data.len() as u64)
+            });
         self.signatures.iter().fold(frame_len, |total, signature| {
             total
                 .saturating_add(signature.signer.as_bytes().len() as u64)
