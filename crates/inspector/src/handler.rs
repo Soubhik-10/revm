@@ -388,7 +388,7 @@ mod tests {
         FrameSignature {
             scheme: SignatureScheme::Secp256k1,
             signer: signer_field,
-            msg: SignatureMessage::TransactionHash,
+            msg: SignatureMessage::default(),
             signature: signature_bytes(&signer.sign_hash_sync(&message).unwrap()),
         }
     }
@@ -427,7 +427,7 @@ mod tests {
                 Frame::new(
                     FrameMode::Sender,
                     0,
-                    suffix_target.into(),
+                    FrameAddress::from(suffix_target),
                     FrameLimits {
                         execution: 3_000,
                         state: 0,
@@ -438,7 +438,7 @@ mod tests {
                 Frame::new(
                     FrameMode::Sender,
                     0,
-                    suffix_target.into(),
+                    FrameAddress::from(suffix_target),
                     FrameLimits {
                         execution: 3_000,
                         state: 0,
