@@ -3,8 +3,7 @@
 use crate::{EvmTr, FrameResult, Handler};
 use alloy_eip8141::{
     has_valid_post_tx_suffix, FrameGasUsed, FrameMode, FrameReceipt, FrameStatus, SignatureScheme,
-    ENTRY_POINT, EXPIRY_VERIFIER, EXPIRY_VERIFIER_RUNTIME, FRAME_FLAGS_MASK, MAX_FRAMES,
-    SECP256K1N, SECP256R1N,
+    ENTRY_POINT, FRAME_FLAGS_MASK, MAX_FRAMES, SECP256K1N, SECP256R1N,
 };
 use context::{ContextTr, LocalContextTr};
 use context_interface::{
@@ -19,7 +18,6 @@ use interpreter::{
     FrameInput, InstructionResult, InterpreterResult, SharedMemory,
 };
 use primitives::{keccak256, Address, Bytes, KECCAK_EMPTY, U256};
-use state::Bytecode as StateBytecode;
 use std::{boxed::Box, vec::Vec};
 
 struct ExecutedFrames {
@@ -239,7 +237,7 @@ fn run_frame<H: Handler + ?Sized>(
     handler.run_exec_loop(evm, frame)
 }
 
-fn no_default_frame<H: Handler + ?Sized>(
+const fn no_default_frame<H: Handler + ?Sized>(
     _: &mut H,
     _: &mut H::Evm,
     _: DefaultFrameStage,
@@ -661,8 +659,7 @@ where
                 .ctx_ref()
                 .journal()
                 .precompile_addresses()
-                .contains(&target)
-            && target != EXPIRY_VERIFIER;
+                .contains(&target);
 
         if uses_default_code {
             let mut override_result = None;
@@ -1183,14 +1180,9 @@ fn frame_input<H: Handler + ?Sized>(
             0
         };
     let target_code_hash = account.info.code_hash();
-    let mut bytecode_address = target;
-    let mut bytecode = account.info.code.clone().unwrap_or_default();
-    let mut bytecode_hash = target_code_hash;
-    if frame.mode == FrameMode::Verify && target == EXPIRY_VERIFIER {
-        bytecode_address = EXPIRY_VERIFIER;
-        bytecode = StateBytecode::new_legacy(Bytes::copy_from_slice(&EXPIRY_VERIFIER_RUNTIME));
-        bytecode_hash = keccak256(EXPIRY_VERIFIER_RUNTIME);
-    }
+    let bytecode_address = target;
+    let bytecode = account.info.code.clone().unwrap_or_default();
+    let bytecode_hash = target_code_hash;
     let sender = evm.ctx_ref().tx().caller();
     let caller = if frame.mode == FrameMode::Sender {
         sender
@@ -1424,6 +1416,88 @@ mod tests {
             code.extend_from_slice(&[PUSH1, memory_offset]);
         }
         code.push(MSTORE);
+    }
+
+    #[test]
+    fn expiry_frame_executes_deployed_code() {
+        use alloy_eip8141::{EXPIRY_VERIFIER, EXPIRY_VERIFIER_RUNTIME};
+
+        for (runtime, valid) in [
+            (
+                Some(Bytes::copy_from_slice(&EXPIRY_VERIFIER_RUNTIME)),
+                false,
+            ),
+            (Some(Bytes::from_static(&[STOP])), true),
+            (None, false),
+        ] {
+            let mut db = CacheDB::<EmptyDB>::default();
+            db.insert_account_info(SENDER, account_with_code([PUSH1, 3, PUSH0, PUSH0, APPROVE]));
+            if let Some(runtime) = runtime {
+                db.insert_account_info(EXPIRY_VERIFIER, account_with_code(runtime));
+            }
+            let payload = FrameTransaction {
+                frames: vec![
+                    Frame::new(
+                        FrameMode::Verify,
+                        0,
+                        encoded_target(EXPIRY_VERIFIER),
+                        FrameLimits {
+                            execution: 10_000,
+                            state: 0,
+                        },
+                        U256::ZERO,
+                        Bytes::copy_from_slice(&0u64.to_be_bytes()),
+                    ),
+                    payment_frame(),
+                ],
+                ..Default::default()
+            };
+            let mut evm = Context::mainnet()
+                .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+                .modify_block_chained(|block| block.timestamp = U256::from(1))
+                .with_db(db)
+                .build_mainnet();
+            // Only the deployed canonical code should reject the expired deadline.
+            // Empty-code VERIFY dispatch uses the default approval rules and fails with scope 0.
+            assert_eq!(evm.transact(tx_env(SENDER, payload)).is_ok(), valid);
+        }
+    }
+
+    #[test]
+    fn deployed_expiry_verifier_accepts_equal_and_future_timestamp() {
+        use alloy_eip8141::{EXPIRY_VERIFIER, EXPIRY_VERIFIER_RUNTIME};
+
+        for expiry in [1u64, 2] {
+            let mut db = CacheDB::<EmptyDB>::default();
+            db.insert_account_info(SENDER, account_with_code([PUSH1, 3, PUSH0, PUSH0, APPROVE]));
+            db.insert_account_info(
+                EXPIRY_VERIFIER,
+                account_with_code(Bytes::copy_from_slice(&EXPIRY_VERIFIER_RUNTIME)),
+            );
+            let payload = FrameTransaction {
+                frames: vec![
+                    Frame::new(
+                        FrameMode::Verify,
+                        0,
+                        encoded_target(EXPIRY_VERIFIER),
+                        FrameLimits {
+                            execution: 10_000,
+                            state: 0,
+                        },
+                        U256::ZERO,
+                        Bytes::copy_from_slice(&expiry.to_be_bytes()),
+                    ),
+                    payment_frame(),
+                ],
+                ..Default::default()
+            };
+            let mut evm = Context::mainnet()
+                .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+                .modify_block_chained(|block| block.timestamp = U256::from(1))
+                .with_db(db)
+                .build_mainnet();
+            assert!(evm.transact(tx_env(SENDER, payload)).is_ok());
+        }
     }
 
     #[test]
