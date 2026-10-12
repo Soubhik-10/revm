@@ -505,6 +505,22 @@ where
                         runtime.state_gas_used[index] = 0;
                     }
                 }
+                for _ in frame_index + 1..frame_count {
+                    receipts.push(FrameReceipt {
+                        status: FrameStatus::SkippedAtomicBatch,
+                        gas_used: FrameGasUsed {
+                            execution: 0,
+                            state: 0,
+                        },
+                        logs: Vec::new(),
+                    });
+                    frame_refunds.push(0);
+                    frame_outputs.push(Bytes::new());
+                    let runtime = evm.ctx().local_mut().frame_transaction_mut().unwrap();
+                    runtime.statuses.push(FrameStatus::SkippedAtomicBatch);
+                    runtime.execution_gas_used.push(0);
+                    runtime.state_gas_used.push(0);
+                }
                 return Ok(ExecutedFrames {
                     receipts,
                     refunds: frame_refunds,
@@ -864,6 +880,9 @@ fn finish_transaction<H: Handler + ?Sized>(
     settle_fees::<H>(evm, payer, result_gas.frame_tx_gas_used())?;
     take_error::<H::Error, _>(evm.ctx().error())?;
 
+    // Finalize delayed SELFDESTRUCT cleanup after the assertions have observed
+    // the execution body, but before commit_tx clears the destruction list.
+    let _ = evm.ctx().journal_mut().take_logs();
     evm.ctx().journal_mut().commit_tx();
     evm.ctx().local_mut().clear();
     evm.frame_stack().clear();
@@ -1308,7 +1327,7 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use bytecode::opcode::{
         APPROVE, CALLDATALOAD, CALLER, EVENTDATACOPY, FRAMEDATACOPY, LOG0, MSTORE, PUSH0, PUSH1,
-        PUSH20, RETURN, REVERT, SIGDATACOPY, SSTORE, STOP, TXDIFF, TXTRACE,
+        PUSH20, RETURN, REVERT, SIGDATACOPY, SSTORE, STOP, TXTRACE,
     };
     use context::{
         result::EVMError, transaction::FrameTransaction, Context, ContextSetters, TxEnv,
@@ -1402,14 +1421,15 @@ mod tests {
         in3: u8,
         memory_offset: u8,
     ) {
-        code.extend_from_slice(&[PUSH1, param, PUSH20]);
-        code.extend_from_slice(address.as_slice());
         if in3 == 0 {
             code.push(PUSH0);
         } else {
             code.extend_from_slice(&[PUSH1, in3]);
         }
-        code.push(TXDIFF);
+        code.push(PUSH20);
+        code.extend_from_slice(address.as_slice());
+        // Use the spec byte directly so a registry mismatch cannot pass unnoticed.
+        code.extend_from_slice(&[PUSH1, param, 0xb7]);
         if memory_offset == 0 {
             code.push(PUSH0);
         } else {
@@ -3223,7 +3243,7 @@ mod tests {
         db.insert_account_info(
             REVERT_TARGET,
             account_with_code([
-                PUSH1, 0x01, PUSH0, TXTRACE, PUSH0, MSTORE, PUSH1, 32, PUSH0, RETURN,
+                PUSH0, PUSH1, 0x01, 0xb6, PUSH0, MSTORE, PUSH1, 32, PUSH0, RETURN,
             ]),
         );
         let payload = FrameTransaction {
@@ -3421,6 +3441,138 @@ mod tests {
     }
 
     #[test]
+    fn post_tx_failure_emits_receipts_for_the_entire_suffix() {
+        for failure in [vec![PUSH0, PUSH0, REVERT], vec![0xfe]] {
+            let mut db = CacheDB::<EmptyDB>::default();
+            db.insert_account_info(
+                SENDER,
+                account_with_code([PUSH1, 0x03, PUSH0, PUSH0, APPROVE]),
+            );
+            db.insert_account_info(
+                STORAGE_TARGET,
+                account_with_code([PUSH1, 1, PUSH0, SSTORE, STOP]),
+            );
+            db.insert_account_info(REVERT_TARGET, account_with_code(failure));
+            let payload = FrameTransaction {
+                frames: vec![
+                    payment_frame(),
+                    frame(
+                        FrameMode::Sender,
+                        0,
+                        encoded_target(STORAGE_TARGET),
+                        100_000,
+                        NEW_SLOT_STATE_GAS,
+                    ),
+                    post_tx_frame(VALUE_TARGET),
+                    post_tx_frame(REVERT_TARGET),
+                    post_tx_frame(STORAGE_TARGET),
+                    post_tx_frame(REVERT_TARGET),
+                ],
+                ..Default::default()
+            };
+            let mut evm = Context::mainnet()
+                .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+                .with_db(db)
+                .build_mainnet();
+            let output = evm.transact(tx_env(SENDER, payload)).unwrap();
+            let ExecutionResult::FrameTransaction {
+                success,
+                frame_receipts,
+                frame_outputs,
+                ..
+            } = output.result
+            else {
+                panic!("expected frame transaction result");
+            };
+            assert!(!success);
+            assert_eq!(frame_receipts.len(), 6);
+            assert_eq!(frame_outputs.len(), 6);
+            assert_eq!(frame_receipts[2].status, FrameStatus::Success);
+            assert_eq!(frame_receipts[3].status, FrameStatus::Failure);
+            for receipt in &frame_receipts[4..] {
+                assert_eq!(receipt.status, FrameStatus::SkippedAtomicBatch);
+                assert_eq!(receipt.gas_used.execution, 0);
+                assert_eq!(receipt.gas_used.state, 0);
+                assert!(receipt.logs.is_empty());
+            }
+            assert_eq!(frame_receipts[1].gas_used.state, 0);
+            assert_eq!(output.state[&SENDER].info.nonce, 1);
+            assert_eq!(
+                output.state[&STORAGE_TARGET].storage[&U256::ZERO].present_value(),
+                U256::ZERO
+            );
+        }
+    }
+
+    #[test]
+    fn frame_transaction_finalizes_selfdestruct_after_post_tx() {
+        let created = STORAGE_TARGET.create(1);
+        // Initcode returns SSTORE(0, 1); SELFDESTRUCT(ADDRESS).
+        let initcode = [
+            0x60, 6, 0x60, 10, 0x5f, 0x39, 0x60, 6, 0x5f, 0xf3, 0x60, 1, 0x5f, 0x55, 0x30, 0xff,
+        ];
+        let mut factory = vec![0x6f]; // PUSH16 initcode
+        factory.extend_from_slice(&initcode);
+        factory.extend_from_slice(&[PUSH0, MSTORE, PUSH1, 16, PUSH1, 16, PUSH1, 1, 0xf0, 0x50]);
+        factory.extend_from_slice(&[PUSH0, PUSH0, PUSH0, PUSH0, PUSH0, PUSH20]);
+        factory.extend_from_slice(created.as_slice());
+        factory.extend_from_slice(&[0x5a, 0xf1, 0x50, STOP]);
+
+        let mut db = CacheDB::<EmptyDB>::default();
+        db.insert_account_info(
+            SENDER,
+            account_with_code([PUSH1, 0x03, PUSH0, PUSH0, APPROVE]),
+        );
+        let mut factory_account = account_with_code(factory);
+        factory_account.nonce = 1;
+        factory_account.balance = U256::from(100);
+        db.insert_account_info(STORAGE_TARGET, factory_account);
+        // A created-and-destroyed contract remains visible to POST_TX before cleanup.
+        db.insert_account_info(
+            REVERT_TARGET,
+            account_with_code([
+                PUSH0, PUSH1, 2, 0xb6, PUSH0, MSTORE, PUSH1, 32, PUSH0, RETURN,
+            ]),
+        );
+        let payload = FrameTransaction {
+            frames: vec![
+                payment_frame(),
+                frame(
+                    FrameMode::Sender,
+                    0,
+                    encoded_target(STORAGE_TARGET),
+                    500_000,
+                    5_000_000,
+                ),
+                post_tx_frame(REVERT_TARGET),
+            ],
+            ..Default::default()
+        };
+        let mut evm = Context::mainnet()
+            .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+            .with_db(db)
+            .build_mainnet();
+        let output = evm.transact(tx_env(SENDER, payload)).unwrap();
+        assert!(output.result.is_success());
+        let ExecutionResult::FrameTransaction {
+            frame_outputs,
+            frame_receipts,
+            ..
+        } = output.result
+        else {
+            panic!("expected frame transaction result");
+        };
+        assert_eq!(frame_receipts[1].status, FrameStatus::Success);
+        assert_eq!(U256::from_be_slice(&frame_outputs[2]), U256::from(1));
+        let account = &output.state[&created];
+        assert_eq!(account.info.balance, U256::from(1));
+        assert_eq!(account.info.nonce, 0);
+        assert_eq!(account.info.code_hash, KECCAK_EMPTY);
+        assert_eq!(account.storage[&U256::ZERO].present_value(), U256::ZERO);
+        assert!(!account.is_selfdestructed());
+    }
+
+    #[test]
     fn eventdatacopy_copies_event_data() {
         let mut db = CacheDB::<EmptyDB>::default();
         db.insert_account_info(
@@ -3433,18 +3585,7 @@ mod tests {
         );
         db.insert_account_info(
             REVERT_TARGET,
-            account_with_code([
-                PUSH1,
-                1,
-                PUSH0,
-                PUSH0,
-                PUSH0,
-                EVENTDATACOPY,
-                PUSH1,
-                1,
-                PUSH0,
-                RETURN,
-            ]),
+            account_with_code([PUSH1, 1, PUSH0, PUSH0, PUSH0, 0xb8, PUSH1, 1, PUSH0, RETURN]),
         );
         let payload = FrameTransaction {
             frames: vec![

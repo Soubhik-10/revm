@@ -3,11 +3,11 @@
 //! [EIP-7906]: <https://eips.ethereum.org/EIPS/eip-7906>
 
 /// `TXTRACE` opcode byte.
-pub const TXTRACE_OPCODE: u8 = 0xB7;
+pub const TXTRACE_OPCODE: u8 = 0xB6;
 /// `TXDIFF` opcode byte.
-pub const TXDIFF_OPCODE: u8 = 0xB8;
+pub const TXDIFF_OPCODE: u8 = 0xB7;
 /// `EVENTDATACOPY` opcode byte.
-pub const EVENTDATACOPY_OPCODE: u8 = 0xB9;
+pub const EVENTDATACOPY_OPCODE: u8 = 0xB8;
 
 /// Fixed gas charged by `TXTRACE` and transaction-local `TXDIFF` queries.
 pub const TXTRACE_GAS_COST: u64 = 100;

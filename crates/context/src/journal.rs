@@ -104,7 +104,7 @@ impl<DB: Database, ENTRY: JournalEntryTr> Journal<DB, ENTRY> {
     ) -> Result<Option<StateLoad<U256>>, JournalLoadError<DB::Error>> {
         let load = self
             .inner
-            .sload(&mut self.database, address, key, skip_cold_load)?;
+            .eip7906_sload(&mut self.database, address, key, skip_cold_load)?;
         let value = if selector == TxDiffParam::SlotValueBefore {
             let Some(slot) = self
                 .inner
@@ -1441,12 +1441,18 @@ mod tests {
             .eip7906_txdiff(selector(TxDiffParam::SlotValueBefore), address, SLOT, true)
             .unwrap_err();
         assert!(error.is_cold_load_skipped());
+        assert!(journal.inner.state.is_empty());
 
         let cold = value(&mut journal, TxDiffParam::SlotValueBefore, address, SLOT).unwrap();
         assert!(cold.is_cold);
         assert_eq!(cold.data, U256::from(55));
+        assert!(journal.inner.is_account_cold(UNTOUCHED));
         let warm = value(&mut journal, TxDiffParam::SlotValueAfter, address, SLOT).unwrap();
         assert!(!warm.is_cold);
         assert_eq!(warm.data, U256::from(55));
+        assert!(journal.inner.is_account_cold(UNTOUCHED));
+        let account = value(&mut journal, TxDiffParam::BalanceAfter, address, U256::ZERO).unwrap();
+        assert!(account.is_cold);
+        assert!(!journal.inner.is_account_cold(UNTOUCHED));
     }
 }

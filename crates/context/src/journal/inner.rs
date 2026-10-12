@@ -1018,6 +1018,29 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         ))
     }
 
+    /// Loads an EIP-7906 slot without warming its account address.
+    pub fn eip7906_sload<DB: Database>(
+        &mut self,
+        db: &mut DB,
+        address: Address,
+        key: StorageKey,
+        skip_cold_load: bool,
+    ) -> Result<StateLoad<StorageValue>, JournalLoadError<DB::Error>> {
+        let slot_cold = self
+            .state
+            .get(&address)
+            .and_then(|account| account.storage.get(&key))
+            .is_none_or(|slot| slot.is_cold_transaction_id(self.transaction_id))
+            && !self.warm_addresses.is_storage_warm(&address, &key);
+        // An unaffordable lookup must not even read the account from the DB:
+        // those reads are also used to construct the block access list.
+        if slot_cold && skip_cold_load {
+            return Err(JournalLoadError::ColdLoadSkipped);
+        }
+        self.load_protocol_account(db, address)?;
+        self.sload_assume_account_present(db, address, key, skip_cold_load)
+    }
+
     /// Loads storage slot.
     #[inline]
     pub fn sload<DB: Database>(

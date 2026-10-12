@@ -586,10 +586,10 @@ opcodes! {
     // Selectors 0..=3 have a 2 -> 1 effect.
     0xB4 => SIGPARAM => stack_io(2, 1);
     0xB5 => SIGDATACOPY => stack_io(4, 0);
-    // 0xB6 is reserved by the frame-transaction family registry.
-    0xB7 => TXTRACE => stack_io(2, 1);
-    0xB8 => TXDIFF => stack_io(3, 1);
-    0xB9 => EVENTDATACOPY => stack_io(4, 0);
+    0xB6 => TXTRACE => stack_io(2, 1);
+    0xB7 => TXDIFF => stack_io(3, 1);
+    0xB8 => EVENTDATACOPY => stack_io(4, 0);
+    // 0xB9
     // 0xBA
     // 0xBB
     // 0xBC
@@ -716,7 +716,7 @@ mod tests {
             0xa0..=0xa4,
             0xaa..=0xaa,
             0xb0..=0xb5,
-            0xb7..=0xb9,
+            0xb6..=0xb8,
             0xf0..=0xf5,
             0xfa..=0xfa,
             0xfd..=0xfd,

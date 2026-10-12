@@ -160,11 +160,11 @@ pub fn sigdatacopy<IT: ITy, H: Host + ?Sized>(mut context: Ictx<'_, H, IT>) -> R
     copy_data(&mut context, memory_offset, data_offset, len, &data)
 }
 
-/// EIP-7906 `TXTRACE` (0xb7).
+/// EIP-7906 `TXTRACE` (0xb6).
 pub fn txtrace<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
     check!(context.interpreter, BOGOTA);
-    // `in2` is on top of the stack, matching EIP-8141's FRAMEPARAM selector order.
-    popn!([index, param], context.interpreter);
+    // Unlike FRAMEPARAM, the selector is on top of the stack.
+    popn!([param, index], context.interpreter);
     let value = context
         .host
         .txtrace(param, index)
@@ -173,11 +173,11 @@ pub fn txtrace<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
     Ok(())
 }
 
-/// EIP-7906 `TXDIFF` (0xb8).
+/// EIP-7906 `TXDIFF` (0xb7).
 pub fn txdiff<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
     check!(context.interpreter, BOGOTA);
-    // Stack top: in3, in2, param.
-    popn!([in3, in2, param], context.interpreter);
+    // Stack top: param, in2, in3.
+    popn!([param, in2, in3], context.interpreter);
     let selector = u8::try_from(param)
         .ok()
         .and_then(|value| TxDiffParam::try_from(value).ok())
@@ -201,7 +201,7 @@ pub fn txdiff<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
     Ok(())
 }
 
-/// EIP-7906 `EVENTDATACOPY` (0xb9).
+/// EIP-7906 `EVENTDATACOPY` (0xb8).
 pub fn eventdatacopy<IT: ITy, H: Host + ?Sized>(context: Ictx<'_, H, IT>) -> Result {
     check!(context.interpreter, BOGOTA);
     // Stack top: event_index, mem_offset, data_offset, length.
