@@ -2043,6 +2043,229 @@ mod tests {
     }
 
     #[test]
+    fn nested_call_revert_restores_approval_context() {
+        use bytecode::opcode::{
+            ADDRESS, CALL, CALLDATASIZE, EQ, GAS, ISZERO, JUMPDEST, JUMPI, POP, PUSH2,
+        };
+        for (middle_reverts, outer_approves) in [(true, false), (false, false), (true, true)] {
+            let mut code = vec![
+                CALLDATASIZE,
+                ISZERO,
+                PUSH2,
+                0,
+                0,
+                JUMPI,
+                CALLDATASIZE,
+                PUSH1,
+                2,
+                EQ,
+                PUSH2,
+                0,
+                0,
+                JUMPI,
+            ];
+            // The middle invocation calls the approving invocation with empty calldata.
+            code.extend([PUSH0, PUSH0, PUSH0, PUSH0, PUSH0, ADDRESS, GAS, CALL, POP]);
+            if middle_reverts {
+                code.extend([PUSH0, PUSH0, REVERT]);
+            } else {
+                code.push(STOP);
+            }
+            let outer = (code.len() as u16).to_be_bytes();
+            code[11..13].copy_from_slice(&outer);
+            code.extend([JUMPDEST, PUSH1, 1, PUSH0, SSTORE]);
+            // The outer invocation calls the middle invocation with one calldata byte.
+            code.extend([
+                PUSH0, PUSH0, PUSH1, 1, PUSH0, PUSH0, ADDRESS, GAS, CALL, POP,
+            ]);
+            if outer_approves {
+                code.extend([PUSH1, 3, PUSH0, PUSH0, APPROVE]);
+            } else {
+                code.push(STOP);
+            }
+            let inner = (code.len() as u16).to_be_bytes();
+            code[3..5].copy_from_slice(&inner);
+            code.extend([JUMPDEST, PUSH1, 3, PUSH0, PUSH0, APPROVE]);
+            let mut db = CacheDB::<EmptyDB>::default();
+            let mut sender = account_with_code(code);
+            sender.nonce = 1;
+            sender.balance = U256::from(10u64.pow(18));
+            db.insert_account_info(SENDER, sender);
+            let payload = FrameTransaction {
+                frames: vec![Frame {
+                    mode: FrameMode::Default,
+                    flags: 3,
+                    limits: FrameLimits {
+                        execution: 400_000,
+                        state: NEW_SLOT_STATE_GAS,
+                    },
+                    data: Bytes::from_static(&[1, 1]),
+                    ..Default::default()
+                }],
+                max_fee_per_gas: U256::from(1),
+                ..Default::default()
+            };
+            let mut tx = tx_env(SENDER, payload);
+            tx.nonce = 1;
+            let mut evm = Context::mainnet()
+                .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+                .with_db(db)
+                .build_mainnet();
+            let output = evm.transact(tx);
+            if middle_reverts && !outer_approves {
+                let error = output.unwrap_err();
+                assert!(
+                    error.to_string().contains("did not approve a payer"),
+                    "{error}"
+                );
+                assert_eq!(evm.ctx.db().cache.accounts[&SENDER].info.nonce, 1);
+            } else {
+                let output = output.unwrap();
+                let ExecutionResult::FrameTransaction {
+                    payer,
+                    frame_receipts,
+                    ..
+                } = output.result
+                else {
+                    panic!("expected frame transaction")
+                };
+                assert_eq!(payer, SENDER);
+                assert_eq!(frame_receipts[0].status, FrameStatus::Success);
+                assert_eq!(output.state[&SENDER].info.nonce, 2);
+                assert_eq!(
+                    output.state[&SENDER].info.balance,
+                    U256::from(10u64.pow(18))
+                );
+                assert_eq!(
+                    output.state[&SENDER].storage[&U256::ZERO].present_value(),
+                    U256::from(1)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn reverted_call_restores_receipt_refill_and_charge_ownership() {
+        use bytecode::opcode::{
+            ADDRESS, CALL, CALLDATASIZE, EQ, GAS, ISZERO, JUMPDEST, JUMPI, POP, PUSH2,
+        };
+        for clear_after_revert in [false, true] {
+            let mut code = vec![
+                CALLDATASIZE,
+                ISZERO,
+                PUSH2,
+                0,
+                0,
+                JUMPI,
+                CALLDATASIZE,
+                PUSH1,
+                1,
+                EQ,
+                PUSH2,
+                0,
+                0,
+                JUMPI,
+                PUSH0,
+                PUSH0,
+                SSTORE,
+                CALLDATASIZE,
+                PUSH1,
+                3,
+                EQ,
+                PUSH2,
+                0,
+                0,
+                JUMPI,
+                PUSH0,
+                PUSH0,
+                REVERT,
+            ];
+            let create = (code.len() as u16).to_be_bytes();
+            code[3..5].copy_from_slice(&create);
+            code.extend([JUMPDEST, PUSH1, 1, PUSH0, SSTORE, STOP]);
+            let outer = (code.len() as u16).to_be_bytes();
+            code[11..13].copy_from_slice(&outer);
+            // Clear the first frame's slot in a nested call, then revert that call.
+            code.extend([
+                JUMPDEST, PUSH0, PUSH0, PUSH1, 2, PUSH0, PUSH0, ADDRESS, GAS, CALL, POP, PUSH1, 1,
+                PUSH1, 1, SSTORE, STOP,
+            ]);
+            let stop = (code.len() as u16).to_be_bytes();
+            code[22..24].copy_from_slice(&stop);
+            code.extend([JUMPDEST, STOP]);
+            let mut db = CacheDB::<EmptyDB>::default();
+            db.insert_account_info(SENDER, account_with_code([PUSH1, 3, PUSH0, PUSH0, APPROVE]));
+            db.insert_account_info(STORAGE_TARGET, account_with_code(code));
+            let mut payload = FrameTransaction {
+                frames: vec![
+                    payment_frame(),
+                    frame(
+                        FrameMode::Default,
+                        0,
+                        encoded_target(STORAGE_TARGET),
+                        100_000,
+                        NEW_SLOT_STATE_GAS,
+                    ),
+                    Frame {
+                        mode: FrameMode::Default,
+                        target: encoded_target(STORAGE_TARGET),
+                        limits: FrameLimits {
+                            execution: 100_000,
+                            state: NEW_SLOT_STATE_GAS,
+                        },
+                        data: Bytes::from_static(&[1]),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            };
+            if clear_after_revert {
+                payload.frames.push(Frame {
+                    mode: FrameMode::Default,
+                    target: encoded_target(STORAGE_TARGET),
+                    limits: FrameLimits {
+                        execution: 100_000,
+                        state: 0,
+                    },
+                    data: Bytes::from_static(&[1, 1, 1]),
+                    ..Default::default()
+                });
+            }
+            let mut evm = Context::mainnet()
+                .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+                .with_db(db)
+                .build_mainnet();
+            let output = evm.transact(tx_env(SENDER, payload)).unwrap();
+            let ExecutionResult::FrameTransaction { frame_receipts, .. } = output.result else {
+                panic!("expected frame transaction")
+            };
+            assert!(frame_receipts
+                .iter()
+                .all(|receipt| receipt.status == FrameStatus::Success));
+            assert_eq!(
+                frame_receipts[1].gas_used.state,
+                if clear_after_revert {
+                    0
+                } else {
+                    NEW_SLOT_STATE_GAS
+                }
+            );
+            assert_eq!(frame_receipts[2].gas_used.state, NEW_SLOT_STATE_GAS);
+            if clear_after_revert {
+                assert_eq!(frame_receipts[3].gas_used.state, 0);
+            }
+            assert_eq!(
+                output.state[&STORAGE_TARGET].storage[&U256::ZERO].present_value(),
+                U256::from(!clear_after_revert as u8)
+            );
+            assert_eq!(
+                output.state[&STORAGE_TARGET].storage[&U256::from(1)].present_value(),
+                U256::from(1)
+            );
+        }
+    }
+
+    #[test]
     fn approve_opcode_sets_payer_and_bumps_sender_nonce() {
         // APPROVE expects offset, length, scope from the top of the stack.
         let approve_code = [PUSH1, 0x03, PUSH0, PUSH0, APPROVE];

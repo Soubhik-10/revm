@@ -152,6 +152,19 @@ impl FrameTransaction {
         self.intrinsic_gas_with_params(sender, &GasParams::new_spec(SpecId::AMSTERDAM))
     }
 
+    /// Prices each non-zero nonce key's cold storage read and write under EIP-8250.
+    pub fn keyed_nonce_access_gas_with_params(&self, gas_params: &GasParams) -> Option<u64> {
+        let count = match self.nonce_keys.as_deref() {
+            None | Some([U256::ZERO]) => return Some(0),
+            Some(keys) => keys.len() as u64,
+        };
+        gas_params
+            .warm_storage_read_cost()
+            .checked_add(gas_params.cold_storage_additional_cost())?
+            .checked_add(gas_params.sstore_set_without_load_cost())?
+            .checked_mul(count)
+    }
+
     /// Calculates intrinsic gas using the active fork's gas parameters.
     pub fn intrinsic_gas_with_params(
         &self,
@@ -164,6 +177,7 @@ impl FrameTransaction {
             .checked_mul(gas_params.tx_token_cost())?;
         FRAME_TX_INTRINSIC_COST
             .checked_add(frame_cost)?
+            .checked_add(self.keyed_nonce_access_gas_with_params(gas_params)?)?
             .checked_add(calldata_cost)?
             .checked_add(self.signature_verification_gas()?)
             .and_then(|gas| gas.checked_add(self.value_transfer_gas(sender, gas_params)))
@@ -205,6 +219,7 @@ impl FrameTransaction {
             .checked_mul(gas_params.tx_floor_cost_per_token())?;
         FRAME_TX_INTRINSIC_COST
             .checked_add(frame_cost)?
+            .checked_add(self.keyed_nonce_access_gas_with_params(gas_params)?)?
             .checked_add(self.signature_verification_gas()?)?
             .checked_add(calldata_floor)?
             .checked_add(self.value_transfer_gas(sender, gas_params))
@@ -267,6 +282,69 @@ mod tests {
     use super::*;
     use alloy_eip8141::{FrameMode, SignatureScheme};
     use primitives::Bytes;
+
+    #[test]
+    fn keyed_nonce_access_is_charged_in_intrinsic_and_floor_gas() {
+        let params = GasParams::new_spec(SpecId::BOGOTA);
+        for floor_binding in [false, true] {
+            let baseline = FrameTransaction {
+                frames: vec![Frame {
+                    limits: alloy_eip8141::FrameLimits {
+                        execution: if floor_binding { 0 } else { 100_000 },
+                        state: 123,
+                    },
+                    data: Bytes::from(vec![1; if floor_binding { 1_000 } else { 0 }]),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            for count in [0, 1, 2, 16] {
+                let mut tx = baseline.clone();
+                tx.nonce_keys = Some(if count == 0 {
+                    vec![U256::ZERO]
+                } else {
+                    (1..=count).map(U256::from).collect()
+                });
+                let access = count * 12_100;
+                assert_eq!(
+                    tx.intrinsic_gas(Address::ZERO),
+                    baseline
+                        .intrinsic_gas(Address::ZERO)
+                        .map(|gas| gas + access)
+                );
+                assert_eq!(
+                    tx.calldata_floor_gas(Address::ZERO),
+                    baseline
+                        .calldata_floor_gas(Address::ZERO)
+                        .map(|gas| gas + access)
+                );
+                assert_eq!(
+                    tx.gas_limit(Address::ZERO),
+                    baseline.gas_limit(Address::ZERO).map(|gas| gas + access)
+                );
+                // Nonce sequence and first-use state gas are independent of this intrinsic charge.
+                assert_eq!(tx.keyed_nonce_access_gas_with_params(&params), Some(access));
+            }
+        }
+    }
+
+    #[test]
+    fn keyed_nonce_access_uses_the_active_schedule_and_checks_overflow() {
+        use crate::cfg::gas_params::GasId;
+        let tx = FrameTransaction {
+            nonce_keys: Some(vec![U256::from(1), U256::from(2)]),
+            ..Default::default()
+        };
+        let mut params = GasParams::new_spec(SpecId::BOGOTA);
+        params.override_gas([
+            (GasId::warm_storage_read_cost(), 10),
+            (GasId::cold_storage_additional_cost(), 20),
+            (GasId::sstore_set_without_load_cost(), 30),
+        ]);
+        assert_eq!(tx.keyed_nonce_access_gas_with_params(&params), Some(120));
+        params.override_gas([(GasId::sstore_set_without_load_cost(), u64::MAX / 2)]);
+        assert_eq!(tx.keyed_nonce_access_gas_with_params(&params), None);
+    }
 
     #[test]
     fn gas_accounting_matches_execution_specs_schedule() {
