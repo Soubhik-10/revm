@@ -155,7 +155,8 @@ impl FrameTransaction {
     /// Prices each non-zero nonce key's cold storage read and write under EIP-8250.
     pub fn keyed_nonce_access_gas_with_params(&self, gas_params: &GasParams) -> Option<u64> {
         let count = match self.nonce_keys.as_deref() {
-            None | Some([U256::ZERO]) => return Some(0),
+            None => return Some(0),
+            Some([key]) if key.is_zero() => return Some(0),
             Some(keys) => keys.len() as u64,
         };
         gas_params
