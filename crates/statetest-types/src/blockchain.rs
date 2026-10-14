@@ -321,6 +321,8 @@ pub enum ForkSpec {
     BPO2ToAmsterdamAtTime15k,
     /// Amsterdam
     Amsterdam,
+    /// Bogota
+    Bogota,
 }
 
 /// Possible seal engines
@@ -517,6 +519,7 @@ mod test {
             ("\"Osaka\"", ForkSpec::Osaka),
             ("\"BPO1ToBPO2AtTime15k\"", ForkSpec::BPO1ToBPO2AtTime15k),
             ("\"Amsterdam\"", ForkSpec::Amsterdam),
+            ("\"Bogota\"", ForkSpec::Bogota),
         ];
 
         for (json, expected) in fork_specs {
