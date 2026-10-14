@@ -980,6 +980,14 @@ fn validate_structure<H: Handler + ?Sized>(evm: &mut H::Evm) -> Result<(), H::Er
         if frame.mode == FrameMode::PostTx && frame.is_atomic_batch() {
             return Err(invalid("EIP-7906 atomic flag is invalid on POST_TX frames"));
         }
+        if frame.mode == FrameMode::PostTx
+            && index > 0
+            && frame_tx.frames[index - 1].is_atomic_batch()
+        {
+            return Err(invalid(
+                "EIP-7906 atomic batch cannot end on a POST_TX frame",
+            ));
+        }
         let target = frame
             .target_address()
             .or_else(|| frame.target.is_empty().then_some(tx.caller()));
@@ -3294,6 +3302,44 @@ mod tests {
     }
 
     #[test]
+    fn post_tx_cannot_terminate_an_atomic_batch() {
+        for preceding_sender in [false, true] {
+            let mut frames = vec![payment_frame()];
+            if preceding_sender {
+                frames.push(frame(
+                    FrameMode::Sender,
+                    0,
+                    encoded_target(VALUE_TARGET),
+                    10_000,
+                    0,
+                ));
+            }
+            frames.push(frame(
+                FrameMode::Sender,
+                0x04,
+                encoded_target(REVERT_TARGET),
+                10_000,
+                0,
+            ));
+            frames.push(post_tx_frame(VALUE_TARGET));
+            let payload = FrameTransaction {
+                frames,
+                ..Default::default()
+            };
+            let mut evm = Context::mainnet()
+                .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::BOGOTA))
+                .with_db(CacheDB::<EmptyDB>::default())
+                .build_mainnet();
+
+            assert!(matches!(
+                evm.transact(tx_env(SENDER, payload)),
+                Err(EVMError::Transaction(InvalidTransaction::Str(message)))
+                    if message == "EIP-7906 atomic batch cannot end on a POST_TX frame"
+            ));
+        }
+    }
+
+    #[test]
     fn post_tx_requires_a_trailing_non_atomic_suffix() {
         let invalid_frames = [
             vec![
@@ -3398,7 +3444,7 @@ mod tests {
     }
 
     #[test]
-    fn post_tx_failure_reverts_the_body_and_an_open_atomic_batch() {
+    fn post_tx_failure_reverts_the_body_after_an_atomic_batch() {
         let mut db = CacheDB::<EmptyDB>::default();
         db.insert_account_info(
             SENDER,
@@ -3409,6 +3455,7 @@ mod tests {
             account_with_code([PUSH1, 1, PUSH0, SSTORE, STOP]),
         );
         db.insert_account_info(REVERT_TARGET, account_with_code([PUSH0, PUSH0, REVERT]));
+        db.insert_account_info(VALUE_TARGET, account_with_code([STOP]));
         let payload = FrameTransaction {
             frames: vec![
                 payment_frame(),
@@ -3418,6 +3465,13 @@ mod tests {
                     encoded_target(STORAGE_TARGET),
                     100_000,
                     NEW_SLOT_STATE_GAS,
+                ),
+                frame(
+                    FrameMode::Sender,
+                    0,
+                    encoded_target(VALUE_TARGET),
+                    10_000,
+                    0,
                 ),
                 post_tx_frame(REVERT_TARGET),
             ],
@@ -3442,7 +3496,8 @@ mod tests {
         assert!(!success);
         assert_eq!(frame_receipts[0].status, FrameStatus::Success);
         assert_eq!(frame_receipts[1].status, FrameStatus::Success);
-        assert_eq!(frame_receipts[2].status, FrameStatus::Failure);
+        assert_eq!(frame_receipts[2].status, FrameStatus::Success);
+        assert_eq!(frame_receipts[3].status, FrameStatus::Failure);
         assert_eq!(output.state[&SENDER].info.nonce, 1);
         assert!(!output.state.get(&STORAGE_TARGET).is_some_and(|account| {
             account
