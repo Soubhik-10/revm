@@ -21,3 +21,6 @@ pub const CODE_DEPOSIT_PER_BYTE: u64 = 1;
 ///
 /// Reference: [EIP-8037: State Creation Gas Cost Increase](https://eips.ethereum.org/EIPS/eip-8037).
 pub const CPSB_GLAMSTERDAM: u64 = 1530;
+
+/// Maximum total transaction gas limit, including the state-gas reservoir.
+pub const MAX_TX_TOTAL_GAS_LIMIT: u64 = u32::MAX as u64;

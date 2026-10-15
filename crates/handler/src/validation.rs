@@ -6,7 +6,7 @@ use context_interface::{
 };
 use core::cmp;
 use interpreter::InitialAndFloorGas;
-use primitives::{eip4844, hardfork::SpecId, B256};
+use primitives::{eip4844, eip8037::MAX_TX_TOTAL_GAS_LIMIT, hardfork::SpecId, B256};
 
 /// Validates the execution environment including block and transaction parameters.
 pub fn validate_env<CTX: ContextTr, ERROR: From<InvalidHeader> + From<InvalidTransaction>>(
@@ -147,16 +147,17 @@ pub fn validate_tx_env<CTX: ContextTr>(
         }
     }
 
-    // tx gas cap is not enforced if state gas is enabled.
-    if !context.cfg().is_amsterdam_eip8037_enabled() {
-        // EIP-7825: Transaction Gas Limit Cap
-        let cap = context.cfg().tx_gas_limit_cap();
-        if tx.gas_limit() > cap {
-            return Err(InvalidTransaction::TxGasLimitGreaterThanCap {
-                gas_limit: tx.gas_limit(),
-                cap,
-            });
-        }
+    // EIP-8037 caps the full gas limit separately from the execution-gas cap.
+    let cap = if context.cfg().is_amsterdam_eip8037_enabled() {
+        MAX_TX_TOTAL_GAS_LIMIT
+    } else {
+        context.cfg().tx_gas_limit_cap()
+    };
+    if tx.gas_limit() > cap {
+        return Err(InvalidTransaction::TxGasLimitGreaterThanCap {
+            gas_limit: tx.gas_limit(),
+            cap,
+        });
     }
 
     let disable_priority_fee_check = context.cfg().is_priority_fee_check_disabled();
@@ -782,5 +783,49 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn total_transaction_gas_limit_cap() {
+        for spec in [SpecId::AMSTERDAM, SpecId::BOGOTA] {
+            for gas_limit in [u32::MAX as u64, u32::MAX as u64 + 1] {
+                let ctx = Context::mainnet()
+                    .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(spec))
+                    .modify_block_chained(|block| block.gas_limit = u64::MAX)
+                    .modify_tx_chained(|tx| tx.gas_limit = gas_limit);
+                let expected = if gas_limit > u32::MAX as u64 {
+                    Err(InvalidTransaction::TxGasLimitGreaterThanCap {
+                        gas_limit,
+                        cap: u32::MAX as u64,
+                    })
+                } else {
+                    Ok(())
+                };
+                assert_eq!(super::validate_tx_env(ctx, spec), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn total_transaction_gas_limit_preserves_pre_amsterdam_rules() {
+        let gas_limit = u32::MAX as u64 + 1;
+        for spec in [SpecId::PRAGUE, SpecId::OSAKA] {
+            let ctx = Context::mainnet()
+                .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(spec))
+                .modify_block_chained(|block| block.gas_limit = u64::MAX)
+                .modify_tx_chained(|tx| tx.gas_limit = gas_limit);
+            let result = super::validate_tx_env(ctx, spec);
+            if spec == SpecId::PRAGUE {
+                assert_eq!(result, Ok(()));
+            } else {
+                assert_eq!(
+                    result,
+                    Err(InvalidTransaction::TxGasLimitGreaterThanCap {
+                        gas_limit,
+                        cap: 16_777_216,
+                    })
+                );
+            }
+        }
     }
 }
